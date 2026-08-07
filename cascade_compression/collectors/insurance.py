@@ -51,8 +51,13 @@ class InsuranceSignal:
         if etype == "claim_filed" and amount > 25000:
             return "medium"
         if etype == "claim_filed" and any(w in desc for w in
-                ("staged", "inflated", "phantom", "identity", "duplicate", "mismatch")):
+                ("staged", "inflated", "phantom", "identity", "duplicate", "mismatch",
+                 "po box", "npi", "impossible", "pre-existing", "attorney",
+                 "aftermarket", "oem", "soft tissue", "upcoded", "bundled",
+                 "ssn", "vin", "classified", "manufacturing", "clerical")):
             return "high"
+        if etype == "claim_filed" and amount > 10000:
+            return "medium"
         return "info"
 
 
