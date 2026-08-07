@@ -11,4 +11,23 @@ venv/
 .coverage
 htmlcov/
 *.egg
+
+# Secrets
 .env
+.env.*
+*.secrets*
+credentials*
+*secret*
+!cascade_compression/collectors/*.py
+
+# State
+*.state.json
+cascade-state-*.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
