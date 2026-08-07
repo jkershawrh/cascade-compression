@@ -1,4 +1,4 @@
-# GCL + Immutable Ledger Integration Plan
+# GCL + Immutable Ledger Integration Plan (Revised — All Systems Agnostic)
 
 ## Methodology: CDD → TDD → EDD → BDD
 
