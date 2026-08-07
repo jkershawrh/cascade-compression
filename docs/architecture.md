@@ -6,7 +6,7 @@ Cascade compression is a three-tier signal processing framework that reduces inf
 
 ```
                                 DOMAIN PACK
-                         ┌─────────────────────┐
+                         ┌────────────────────-─┐
                          │  Collector           │
                          │  (reads data source) │
                          └──────────┬───────────┘
@@ -15,67 +15,67 @@ Cascade compression is a three-tier signal processing framework that reduces inf
                                     │
                                     ▼
 ┌───────────────────────────────────────────────────────────────────┐
-│                        CASCADE FRAMEWORK                         │
-│                                                                  │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │                    NANO TIER (85-99%)                       │ │
-│  │                                                             │ │
-│  │  Stage 1: Noise Elimination          Stage 2: Pattern       │ │
-│  │  ┌──────────────┐                    ┌──────────────────┐   │ │
-│  │  │ Deduplicator │ content hash,      │ Pattern          │   │ │
-│  │  │              │ 60s window         │ Classifier       │   │ │
-│  │  ├──────────────┤                    │ (7 regex)        │   │ │
-│  │  │ Transient    │ type+severity      ├──────────────────┤   │ │
-│  │  │ Suppressor   │ filter, fail-open  │ Threshold        │   │ │
-│  │  ├──────────────┤                    │ Classifier       │   │ │
-│  │  │ Severity     │ drops info unless  │ (CPU/mem/disk)   │   │ │
-│  │  │ Gate         │ escalation match   └──────────────────┘   │ │
-│  │  └──────────────┘                                           │ │
-│  │                                                             │ │
-│  │  Stage 3: Learned Agents (discovered at runtime)            │ │
-│  │  ┌────────────────────┐  ┌─────────────────────┐           │ │
-│  │  │ Repeat Flood       │  │ Dominant Noise       │           │ │
-│  │  │ Suppressor         │  │ Suppressor           │           │ │
-│  │  └────────────────────┘  └─────────────────────┘           │ │
-│  └─────────────────────────────┬───────────────────────────────┘ │
-│                                │                                 │
+│                        CASCADE FRAMEWORK                          │
+│                                                                   │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │                    NANO TIER (85-99%)                       │  │
+│  │                                                             │  │
+│  │  Stage 1: Noise Elimination          Stage 2: Pattern       │  │
+│  │  ┌──────────────┐                    ┌──────────────────┐   │  │
+│  │  │ Deduplicator │ content hash,      │ Pattern          │   │  │
+│  │  │              │ 60s window         │ Classifier       │   │  │
+│  │  ├──────────────┤                    │ (7 regex)        │   │  │
+│  │  │ Transient    │ type+severity      ├──────────────────┤   │  │
+│  │  │ Suppressor   │ filter, fail-open  │ Threshold        │   │  │
+│  │  ├──────────────┤                    │ Classifier       │   │  │
+│  │  │ Severity     │ drops info unless  │ (CPU/mem/disk)   │   │  │
+│  │  │ Gate         │ escalation match   └──────────────────┘   │  │
+│  │  └──────────────┘                                           │  │
+│  │                                                             │  │
+│  │  Stage 3: Learned Agents (discovered at runtime)            │  │
+│  │  ┌────────────────────┐  ┌─────────────────────┐            │  │ 
+│  │  │ Repeat Flood       │  │ Dominant Noise      │            │  │
+│  │  │ Suppressor         │  │ Suppressor          │            │  │
+│  │  └────────────────────┘  └─────────────────────┘            │  │
+│  └─────────────────────────────┬───────────────────────────────┘  │
+│                                │                                  │
 │                          Survivors (1-15%)                        │
-│                                │                                 │
-│  ┌─────────────────────────────▼───────────────────────────────┐ │
-│  │                   MICRO TIER (10-12%)                       │ │
-│  │                                                             │ │
-│  │  LLM Classification (granite-8b / phi4-mini on CPU)         │ │
-│  │  ┌──────────────────────────────────────────────┐           │ │
-│  │  │ routine_noise | known_pattern |              │           │ │
-│  │  │ needs_attention | real_incident              │           │ │
-│  │  └──────────────────────────────────────────────┘           │ │
-│  │                                                             │ │
-│  │  Five Inference Lanes:                                      │ │
-│  │  Classification | Extraction | Generation | Reasoning |     │ │
-│  │  Embedding                                                  │ │
-│  └─────────────────────────────┬───────────────────────────────┘ │
-│                                │                                 │
+│                                │                                  │
+│  ┌─────────────────────────────▼───────────────────────────────┐  │
+│  │                   MICRO TIER (10-12%)                       │  │
+│  │                                                             │  │
+│  │  LLM Classification (granite-8b / phi4-mini on CPU)         │  │
+│  │  ┌──────────────────────────────────────────────┐           │  │
+│  │  │ routine_noise | known_pattern |              │           │  │
+│  │  │ needs_attention | real_incident              │           │  │
+│  │  └──────────────────────────────────────────────┘           │  │
+│  │                                                             │  │
+│  │  Five Inference Lanes:                                      │  │
+│  │  Classification | Extraction | Generation | Reasoning |     │  │
+│  │  Embedding                                                  │  │
+│  └─────────────────────────────┬───────────────────────────────┘  │
+│                                │                                  │
 │                     Important signals only                        │
-│                                │                                 │
-│  ┌─────────────────────────────▼───────────────────────────────┐ │
-│  │                   MACRO TIER (3-5%)                         │ │
-│  │                                                             │ │
-│  │  Larger models for complex reasoning                        │ │
-│  │  (granite-8b, mistral-7b, phi4-full-14b)                   │ │
-│  └─────────────────────────────────────────────────────────────┘ │
-│                                                                  │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │  SELF-TUNING                                                │ │
-│  │                                                             │ │
-│  │  Corpus Analyzer ──→ discovers patterns ──→ proposes agents │ │
-│  │  Promotion Engine ──→ validates agents ──→ promotes/demotes │ │
-│  │  LLM feedback ──→ confirms noise types ──→ activates agents │ │
-│  └─────────────────────────────────────────────────────────────┘ │
+│                                │                                  │
+│  ┌─────────────────────────────▼───────────────────────────────┐  │
+│  │                   MACRO TIER (3-5%)                         │  │
+│  │                                                             │  │
+│  │  Larger models for complex reasoning                        │  │
+│  │  (granite-8b, mistral-7b, phi4-full-14b)                    │  │
+│  └─────────────────────────────────────────────────────────────┘  │
+│                                                                   │
+│  ┌─────────────────────────────────────────────────────────────┐  │
+│  │  SELF-TUNING                                                │  │
+│  │                                                             │  │
+│  │  Corpus Analyzer ──→ discovers patterns ──→ proposes agents │  │
+│  │  Promotion Engine ──→ validates agents ──→ promotes/demotes │  │
+│  │  LLM feedback ──→ confirms noise types ──→ activates agents │  │
+│  └─────────────────────────────────────────────────────────────┘  │ 
 └───────────────────────────────────────────────────────────────────┘
                                 │
                                 ▼
                     ┌───────────────────────┐
-                    │      GOVERNANCE        │
+                    │      GOVERNANCE       │
                     │                       │
                     │  Immutable Ledger     │
                     │  (integrations/       │
