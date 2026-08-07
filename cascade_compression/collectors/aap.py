@@ -14,10 +14,10 @@ from typing import List, Optional
 
 log = logging.getLogger(__name__)
 
-AAP_DB_HOST = os.getenv("AAP_DB_HOST", "cron-aap2-postgres-15.cron-aap2.svc")
+AAP_DB_HOST = os.getenv("AAP_DB_HOST", "")
 AAP_DB_PORT = os.getenv("AAP_DB_PORT", "5432")
-AAP_DB_USER = os.getenv("AAP_DB_USER", "automationcontroller")
-AAP_DB_PASS = os.getenv("AAP_DB_PASS", "xUvpRnsYSDcM7SD1Y1i7VKOMuYHeV6AB")
+AAP_DB_USER = os.getenv("AAP_DB_USER", "")
+AAP_DB_PASS = os.getenv("AAP_DB_PASS", "")
 AAP_DB_NAME = os.getenv("AAP_DB_NAME", "automationcontroller")
 AAP_DB_URL = f"postgresql://{AAP_DB_USER}:{AAP_DB_PASS}@{AAP_DB_HOST}:{AAP_DB_PORT}/{AAP_DB_NAME}"
 
