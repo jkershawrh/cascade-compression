@@ -14,7 +14,7 @@ The cascade framework handles everything else: pipeline, agents, promotion, rout
 
 ### Step 1: Write the Collector
 
-A collector reads from your data source and produces `AAPSignal`-like objects (or any object with the required fields).
+Extend `BaseCollector` from `collectors/base.py`. It requires three methods: `connect()`, `collect()` (new signals since last poll), and `collect_all()` (full replay).
 
 Required fields per signal:
 ```python
@@ -138,20 +138,40 @@ The more historical data, the smarter the cascade on day one.
 
 ## Wiring Into the Cascade Bridge
 
-The cascade bridge (`cascade_bridge.py`) connects your collector to the framework. Follow the AAP pattern:
+The cascade bridge (`bridge.py`) connects your collector to the framework. Two options:
+
+### Option 1: CLI (recommended)
+
+Create a domain config file in `domains/your_domain.py`:
 
 ```python
-# 1. Create a bridge with a domain-specific LLM prompt
-AAP_PHI4_SYSTEM = """Your prompt here..."""
+DOMAIN = "your_domain"
+SYSTEM_PROMPT = """You are classifying your-domain signals.
+Classify as exactly one of: routine_noise, known_pattern,
+needs_attention, real_incident. Answer with one word only."""
+LLM_MODEL = "granite-3-2-8b-instruct-cpu"
+COLLECTOR_CLASS = YourCollector
+```
 
-# 2. Initialize the cascade pipeline with default agents
-pipeline = CascadePipeline(default_agents())
+Then run:
+```bash
+cascade-run --domain your_domain --llm-url https://maas/v1 --llm-key sk-...
+cascade-replay --domain your_domain --data historical.csv --llm-url https://maas/v1
+```
 
-# 3. Register dynamic agents
-pipeline.register(RepeatFloodSuppressor(max_repeats=3, window_seconds=300))
-pipeline.register(DominantNoiseSuppressor(window_seconds=300))
+### Option 2: Python API
 
-# 4. Start the collector loop
+```python
+from cascade_compression.bridge import CascadeBridge
+
+bridge = CascadeBridge(
+    llm_url="https://maas/v1",
+    llm_key="sk-...",
+    llm_model="granite-3-2-8b-instruct-cpu",
+    system_prompt=YOUR_PROMPT,
+    domain="your_domain",
+)
+
 collector = YourCollector(poll_interval=30)
 while running:
     signals = collector.collect()
@@ -212,19 +232,43 @@ def test_llm_classifies_correctly():
 
 ## Existing Domain Packs
 
-| Domain | Collector | Signals | Tested |
-|--------|-----------|---------|--------|
-| Kubernetes | `connectors/kubernetes.py` | pods, events, nodes | 3.3M signals, 70% compression |
-| AAP | `collectors/aap.py` | jobs, task events, activity stream | 441K signals, 98% compression |
+| Domain | Collector | Signal Types | Compression | Key Metric | Source |
+|--------|-----------|-------------|-------------|------------|--------|
+| Kubernetes | `collectors/kubernetes.py` | pods, events, nodes | 72.9% | 37.3% noise rate, 0 FN | Live |
+| AAP | `collectors/aap.py` | jobs, task events, activity stream | 96.0% | 0 FN | Live |
+| Finance | `collectors/finance.py` | transactions, fraud, compliance | 61.1% | 92.7% fraud survival, 100% compliance | Synthetic |
+| Healthcare | `collectors/healthcare.py` | patient alerts, clinical, compliance | 91.0% | 96.6% critical, 99.0% compliance | Synthetic |
+| Insurance | `collectors/insurance.py` | claims, fraud indicators, policy | 81.2% | 100% fraud, 99.8% compliance | Synthetic |
+| Retail | `collectors/retail.py` | POS, shrinkage, inventory | 88.3% | 100% shrinkage, 100% compliance | Synthetic |
+| Telecom | `collectors/telecom.py` | network events, incidents, SLA | 94.3% | 92.1% incidents, 80.7% compliance | Synthetic |
+
+## Synthetic Generators
+
+For domains without live data sources, synthetic generators in `benchmarks/` produce realistic signal streams for benchmarking and bootstrapping:
+
+| Generator | File | Signals |
+|-----------|------|---------|
+| Finance | `benchmarks/synthetic_finance.py` | Transactions, wire transfers, fraud patterns, compliance events |
+| Healthcare | `benchmarks/synthetic_healthcare.py` | Patient vitals, lab results, medication alerts, HIPAA events |
+| Insurance | `benchmarks/synthetic_insurance.py` | Claims, policy changes, fraud indicators, NAIC compliance |
+| Retail | `benchmarks/synthetic_retail.py` | POS transactions, returns, shrinkage patterns, inventory |
+| Telecom | `benchmarks/synthetic_telecom.py` | Network faults, traffic anomalies, SLA breaches, incidents |
+
+Use via replay:
+```bash
+cascade-replay --domain finance --data synthetic --llm-url https://maas/v1
+```
 
 ## Domain Pack Checklist
 
-- [ ] Collector reads from data source
+- [ ] Collector extends `BaseCollector` (in `collectors/base.py`)
+- [ ] `connect()` initializes connection to data source
 - [ ] `collect()` returns new signals since last poll
 - [ ] `collect_all()` returns all historical signals for replay
 - [ ] Signals have valid `signal_type`, `severity`, `evidence`
+- [ ] Domain config in `domains/your_domain.py` with `DOMAIN`, `SYSTEM_PROMPT`, `COLLECTOR_CLASS`
 - [ ] Prompt is one paragraph, four classification buckets
-- [ ] Historical data accessible for replay bootstrapping
+- [ ] Historical data or synthetic generator available for replay
 - [ ] Integration test passes with cascade pipeline
 - [ ] LLM classification test passes with at least 70% accuracy
 - [ ] No changes to cascade framework code

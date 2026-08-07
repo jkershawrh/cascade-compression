@@ -75,13 +75,15 @@ Cascade compression is a three-tier signal processing framework that reduces inf
                                 │
                                 ▼
                     ┌───────────────────────┐
-                    │   GOVERNANCE (planned) │
+                    │      GOVERNANCE        │
                     │                       │
                     │  Immutable Ledger     │
-                    │  (decision log)       │
+                    │  (integrations/       │
+                    │   ledger.py)          │
                     │                       │
-                    │  GCL Falsification    │
-                    │  (independent audit)  │
+                    │  Precision Metric     │
+                    │  (metrics/            │
+                    │   precision.py)       │
                     └───────────────────────┘
 ```
 
@@ -98,6 +100,25 @@ cascade_compression/
 │   ├── promotion.py      PromotionEngine — validates and promotes/demotes agents
 │   ├── corpus_analyzer.py CorpusAnalyzer — discovers patterns in signal streams
 │   └── service.py        FastAPI cascade service (sits in front of model services)
+│
+├── collectors/           DATA SOURCE ADAPTERS
+│   ├── base.py           BaseCollector ABC (connect, collect, collect_all)
+│   ├── kubernetes.py     K8s API — pods, events, nodes
+│   ├── aap.py            AAP DB — jobs, task events, activity stream
+│   ├── finance.py        Transactions, fraud signals, compliance events
+│   ├── healthcare.py     Patient alerts, clinical events, compliance
+│   ├── insurance.py      Claims, fraud indicators, policy events
+│   ├── retail.py         POS transactions, shrinkage, inventory
+│   └── telecom.py        Network events, incidents, SLA metrics
+│
+├── domains/              DOMAIN PACK CONFIGS
+│   ├── kubernetes.py     K8s prompt, model, collector class
+│   ├── aap.py            AAP prompt, model, collector class
+│   ├── finance.py        Finance prompt, model, collector class
+│   ├── healthcare.py     Healthcare prompt, model, collector class
+│   ├── insurance.py      Insurance prompt, model, collector class
+│   ├── retail.py         Retail prompt, model, collector class
+│   └── telecom.py        Telecom prompt, model, collector class
 │
 ├── routing/              MODEL SELECTION — benchmark-graded
 │   ├── corpora.py        RoutingCorpora — 19 models, 5 lanes, 6 industries, fallback chains
@@ -117,11 +138,25 @@ cascade_compression/
 │   ├── scenarios.py      4 pre-built FSI scenarios
 │   └── api.py            FastAPI on port 8090
 │
-└── benchmarks/           BENCHMARK HARNESS
-    ├── harness.py        9 optimization levers, async benchmark runner
-    ├── metrics.py        SampleResult, AggregatedMetrics (p50/p95/p99)
-    ├── rubric.py         Red/yellow/green matrix evaluator
-    └── industry_prompts.py ISO 20022, TMF621, ACORD, GS1, HL7 FHIR prompts
+├── integrations/         EXTERNAL SYSTEMS
+│   └── ledger.py         Immutable ledger client (hash-chained decision log)
+│
+├── metrics/              QUALITY METRICS
+│   └── precision.py      Precision metric — FN/FP tracking across domains
+│
+├── benchmarks/           BENCHMARK HARNESS
+│   ├── harness.py        9 optimization levers, async benchmark runner
+│   ├── metrics.py        SampleResult, AggregatedMetrics (p50/p95/p99)
+│   ├── rubric.py         Red/yellow/green matrix evaluator
+│   ├── industry_prompts.py ISO 20022, TMF621, ACORD, GS1, HL7 FHIR prompts
+│   ├── synthetic_finance.py    Synthetic signal generator for finance
+│   ├── synthetic_healthcare.py Synthetic signal generator for healthcare
+│   ├── synthetic_insurance.py  Synthetic signal generator for insurance
+│   ├── synthetic_retail.py     Synthetic signal generator for retail
+│   └── synthetic_telecom.py    Synthetic signal generator for telecom
+│
+├── bridge.py             STANDALONE BRIDGE — collector → pipeline → LLM
+└── cli.py                CLI ENTRYPOINTS — cascade-run, cascade-replay
 ```
 
 ## Data Flow
@@ -170,31 +205,28 @@ Signal Source (K8s API, AAP DB, transaction feed, etc.)
 ## Multi-Domain Deployment
 
 ```
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│ K8s Collector │  │ AAP Collector│  │ FSI Collector │
-│ (pods,events, │  │ (jobs,tasks, │  │ (transactions,│
-│  nodes)       │  │  activity)   │  │  market data) │
-└──────┬───────┘  └──────┬───────┘  └──────┬───────┘
-       │                 │                 │
-       ▼                 ▼                 ▼
-┌──────────────┐  ┌──────────────┐  ┌──────────────┐
-│ K8s Cascade  │  │ AAP Cascade  │  │ FSI Cascade  │
-│ (own agents, │  │ (own agents, │  │ (own agents, │
-│  own state)  │  │  own state)  │  │  own state)  │
-└──────┬───────┘  └──────┬───────┘  └──────┬───────┘
-       │                 │                 │
-       └────────┬────────┘────────┬────────┘
-                │                 │
-                ▼                 ▼
-        Correlation Engine    Immutable Ledger
-        (links by ID, time)   (decision audit trail)
+┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌─────────┐ ┌─────────┐
+│ K8s     │ │ AAP     │ │ Finance │ │Healthcare│ │Insurance │ │ Retail  │ │ Telecom │
+│Collector│ │Collector│ │Collector│ │Collector │ │Collector │ │Collector│ │Collector│
+└────┬────┘ └────┬────┘ └────┬────┘ └────┬─────┘ └────┬─────┘ └────┬────┘ └────┬────┘
+     │           │           │           │            │            │           │
+     ▼           ▼           ▼           ▼            ▼            ▼           ▼
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│                              CascadeBridge (bridge.py)                             │
+│    Each domain gets its own pipeline instance, agents, state, and LLM prompt       │
+└───────────────────────────────────────┬────────────────────────────────────────────┘
+                                        │
+                              ┌─────────┴─────────┐
+                              ▼                   ▼
+                      Immutable Ledger     Precision Metrics
+                      (decision audit)     (FN/FP tracking)
 ```
 
-Each cascade instance is fully isolated — own agents, own state, own LLM prompt. The framework code is shared. Domain packs provide:
+The CLI (`cascade-run`, `cascade-replay`) wires this automatically from `--domain` flag. Each cascade instance is fully isolated — own agents, own state, own LLM prompt. The framework code is shared. Domain packs provide:
 
-1. **Collector** — reads the data source, maps to Signal protocol
-2. **Prompt** — one paragraph telling the LLM what the classification buckets mean
-3. **Data** — historical signals for replay bootstrapping
+1. **Collector** (`collectors/`) — reads the data source, maps to Signal protocol via `BaseCollector`
+2. **Domain config** (`domains/`) — prompt, model name, collector class
+3. **Data** — historical signals for replay, or synthetic generators (`benchmarks/synthetic_*.py`)
 
 ## Resource Footprint
 
