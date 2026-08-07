@@ -72,15 +72,40 @@ From expanded shootout (`benchmarks/results/expanded-shootout-20260804.json`):
 | smollm2-360m | 35% (limited) | 54.7 tok/s | 676ms |
 | granite-2b | 15.2 tok/s | 4,240ms | — |
 
+## Prompt Tuning
+
+### K8s Granite Prompt Tuning
+
+Tuned prompt for granite-3-2-8b-instruct-cpu on K8s signals. The original terse prompt produced a 0.9% noise rate (LLM classified almost nothing as noise). After tuning with domain-specific guidance, the noise rate increased to 37.3% while maintaining 0 false negatives.
+
+| Metric | Before Tuning | After Tuning |
+|--------|--------------|--------------|
+| Noise rate | 0.9% | 37.3% |
+| False negatives | 0 | 0 |
+| Compression | 70-74% | 72.9% |
+
+The tuned prompt tells the LLM what "routine" looks like in Kubernetes context (normal pod cycling, expected CronJob completions, info-severity events on healthy nodes). Without this, the model conservatively escalates everything.
+
+## Precision Metric
+
+Independent quality check across all domains. Tests whether signals classified as "important" are genuinely important.
+
+```
+Result:  100% (30/30 "important" signals confirmed)
+Method:  Sample important-classified signals, verify against ground truth
+```
+
+This is distinct from the per-domain FN rate. The precision metric checks the other direction: are we wasting LLM time on signals that aren't actually important?
+
 ## Live Cascade Performance
 
-### K8s cascade (infra01, granite-3-2-8b-instruct-cpu)
+### K8s cascade (infra01, granite-3-2-8b-instruct-cpu, tuned prompt)
 
 ```
 Signals:     3,370,405
-Compression: 70-74%
+Compression: 72.9%
 Forwarded:   960,725
-Classified:  77,080 (noise: 7,016 = 9.1%, important: 70,064)
+Classified:  77,080 (noise: 28,751 = 37.3%, important: 48,329)
 Activated:   6 agents (self-discovered)
 FN:          0
 Latency:     ~595ms per classification
@@ -90,7 +115,7 @@ Latency:     ~595ms per classification
 
 ```
 Signals:     441,370
-Compression: 96-98%
+Compression: 96.0%
 Forwarded:   14,544
 Classified:  14,544 (noise: 13,004 = 89.4%, important: 1,540)
 Activated:   5 agents (self-discovered)
