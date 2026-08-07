@@ -23,9 +23,13 @@ dev = [
     "pytest-cov",
     "pytest-asyncio",
 ]
+aap = ["psycopg2-binary>=2.9"]
+finance = ["psycopg2-binary>=2.9"]
 
 [project.scripts]
 compile-corpora = "cascade_compression.routing.compile_corpora:main"
+cascade-run = "cascade_compression.cli:run"
+cascade-replay = "cascade_compression.cli:replay"
 
 [tool.setuptools.packages.find]
 include = ["cascade_compression*"]
