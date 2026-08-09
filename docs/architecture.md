@@ -75,11 +75,15 @@ Cascade compression is a three-tier signal processing framework that reduces inf
                                 │
                                 ▼
                     ┌───────────────────────┐
-                    │      GOVERNANCE       │
+                    │   GOVERNANCE (opt.)   │
                     │                       │
                     │  Immutable Ledger     │
-                    │  (integrations/       │
-                    │   ledger.py)          │
+                    │  (append-only, hash-  │
+                    │   chained decisions)  │
+                    │                       │
+                    │  Audit Loop (GCL)     │
+                    │  (1% sample, LLM      │
+                    │   adversary probe)    │
                     │                       │
                     │  Precision Metric     │
                     │  (metrics/            │

@@ -101,10 +101,26 @@ This is distinct from the per-domain FN rate. The precision metric checks the ot
 
 ### K8s cascade (infra01, granite-3-2-8b-instruct-cpu, tuned prompt)
 
+**Peak sustained run:**
+```
+Signals:     68.7M
+Compression: 99.5%
+Agents:      23 activated, 37 total (all green on rubric)
+FN:          0
+```
+
+**Current sustained run (30+ hours, multi-cluster):**
+```
+Decisions:   176K+ written to immutable ledger
+Latency:     581ms avg, no degradation over 30+ hours
+Agents:      self-tuning, continue to activate and stabilize
+FN:          0
+```
+
+**Earlier run (3.3M signals, tuned prompt validation):**
 ```
 Signals:     3,370,405
 Compression: 72.9%
-Forwarded:   960,725
 Classified:  77,080 (noise: 28,751 = 37.3%, important: 48,329)
 Activated:   6 agents (self-discovered)
 FN:          0
@@ -114,10 +130,8 @@ Latency:     ~595ms per classification
 ### AAP cascade (infra01, granite-3-2-8b-instruct-cpu)
 
 ```
-Signals:     441,370
+Signals:     1.0M+
 Compression: 96.0%
-Forwarded:   14,544
-Classified:  14,544 (noise: 13,004 = 89.4%, important: 1,540)
 Activated:   5 agents (self-discovered)
 FN:          0
 Latency:     ~610ms per classification

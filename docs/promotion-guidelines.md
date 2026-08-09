@@ -183,8 +183,16 @@ AgentMetrics:
 
 ## Live Examples
 
-### K8s cascade (observed on infra01, 2026-08-06)
+### K8s cascade (observed on infra01)
 
+**Peak run (68.7M signals):**
+```
+23 nano agents activated, 37 total — all green on rubric
+99.5% compression
+0 false negatives
+```
+
+**Earlier run (3.3M signals, initial tuning):**
 ```
 Activated agents (self-discovered):
   event_deprecatedannotation  — 6,074 noise confirmations
@@ -194,18 +202,19 @@ Activated agents (self-discovered):
   task_runner_on_skipped      — 12 noise confirmations
   task_warning                — 6 noise confirmations
 
-Result: 70-74% compression on 3.3M signals
+Result: 70-74% compression
 ```
 
-### AAP cascade (observed on infra01, 2026-08-06)
+### AAP cascade (observed on infra01)
 
 ```
+Signals:   1.0M+
 Activated agents (self-discovered):
-  task_runner_on_skipped      — 1,496 noise confirmations (pending activation)
+  task_runner_on_skipped      — 1,496 noise confirmations
   task_runner_on_ok           — 10 noise confirmations
   task_verbose                — 8 noise confirmations
 
-Result: 96-98% compression on 441K signals
+Result: 96% compression, 0 false negatives
 ```
 
 These agents were not written by a human. The cascade discovered them from watching the signal stream and validating against the LLM.
