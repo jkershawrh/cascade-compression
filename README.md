@@ -32,7 +32,7 @@ The cascade framework processes `Signal` objects — it doesn't care where they 
 
 | Domain | Collector | Compression | Key Metric | Source |
 |--------|-----------|-------------|------------|--------|
-| Kubernetes | `KubernetesCollector` | 72.9% | 37.3% noise rate, 0 FN | Live (infra01) |
+| Kubernetes | `KubernetesCollector` | 99.5% (68.7M peak) | 37.3% noise rate, 0 FN | Live (infra01) |
 | AAP (Ansible) | `AAPCollector` | 96.0% | 0 FN | Live (infra01/prod0) |
 | Finance | `FinanceCollector` | 61.1% | 92.7% fraud survival, 100% compliance | Synthetic |
 | Healthcare | `HealthcareCollector` | 91.0% | 96.6% critical, 99.0% compliance | Synthetic |
@@ -47,7 +47,7 @@ The cascade framework processes `Signal` objects — it doesn't care where they 
 python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
 
 # Test
-make test-all          # 382 tests across cascade, routing, infra, TCO, domains
+make test-all          # 401 tests across cascade, routing, infra, TCO, domains
 
 # Run via CLI
 cascade-run --domain aap --llm-url https://maas/v1 --llm-key sk-...
@@ -73,7 +73,7 @@ make test-cascade      # Pipeline, safety, promotion (nano agents)
 make test-routing      # Corpora, strategies, bootstrapper, task mapping
 make test-infra        # Pressure scaler, fleet manager
 make test-tco          # Contracts, calculations, scenarios, API
-make test-all          # All 382 tests
+make test-all          # All 401 tests
 ```
 
 ## Package Structure
@@ -106,8 +106,8 @@ frontend/            Single-page TCO dashboard
 - Model shootout (13 models, 20 real classification tasks)
 - 4-hour soak tests (5 RPS sustained, drift detection)
 - Five-lane simulation with routing
-- K8s live cascade: 3.3M signals, 72.9% compression, tuned granite prompt
-- AAP live cascade: 441K signals, 96% compression, 0 FN
+- K8s live cascade: 68.7M peak (99.5% compression), 176K+ current sustained run with granite-8b
+- AAP live cascade: 1M+ signals, 96% compression, 0 FN
 - Precision metric: 100% (30/30 "important" signals confirmed)
 
 ### Model Leaderboard (20-signal AAP test, CPU)
@@ -129,6 +129,15 @@ frontend/            Single-page TCO dashboard
 
 Full system footprint: 16.5 CPU, 15.8 GB including governance (GCL + ledger). One Xeon 6 at 13% utilization. 3-year TCO: $33K vs $266K GPU vs $540K cloud API.
 
+## Governance (Optional)
+
+The cascade integrates with two optional companion systems for regulated industries:
+
+- **Immutable Ledger** — append-only, hash-chained decision log (Rust gRPC + PostgreSQL)
+- **Independent Audit Loop (GCL)** — samples 1% of drops, challenges with deterministic checks + LLM adversary probe, writes verdicts back to ledger
+
+Both deployed on infra01, running autonomously. 500K+ auditable entries, 10% genuine disagreement rate confirmed by LLM probe. Adds 3.5 CPU / 2.8 GB (27% overhead).
+
 ## Known Gaps
 
 - **Placeholder throughput**: some model throughput numbers are estimated. Replace with RHAIIS 3.5 benchmarks when available.
@@ -137,6 +146,7 @@ Full system footprint: 16.5 CPU, 15.8 GB including governance (GCL + ledger). On
 
 ## Next Steps
 
-- Whitepaper with benchmark proof points
+- Supply/demand inference orchestration (cascade + fleet-llm-d)
 - Constrained decoding to rescue 0% models (they know the answer, can't format it)
 - RHAIIS 3.5 throughput benchmarks to replace estimates
+- Ledger retention policy for long-running deployments
