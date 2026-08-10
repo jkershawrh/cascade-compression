@@ -45,8 +45,9 @@ These point-in-time experiments predate the current safety gates. Consult the ra
 | Insurance | Synthetic | 81.2% | 100% fraud, 99.8% compliance |
 | Retail | Synthetic | 88.3% | 100% shrinkage, 100% compliance |
 | Telecom | Synthetic | 94.3% | 92.1% incidents |
+| **Memory** | Live (2,485 claims) | N/A | 22 institutional topics across 63 projects |
 
-Each domain is a "domain pack" — a collector, a one-paragraph prompt, and historical data. The cascade framework stays untouched.
+Each domain is a "domain pack" — a collector, a one-paragraph prompt, and historical data. The cascade framework stays untouched. The memory domain pack extracts institutional knowledge from agent memory files across any agentic framework.
 
 ## Three Tiers
 
@@ -89,7 +90,7 @@ cascade_compression/
   bridge.py          Orchestrator — collector → pipeline → LLM → feedback
   cli.py             cascade-run, cascade-replay entrypoints
   cascade/           Pipeline, agents, promotion, corpus analyzer
-  collectors/        7 domain collectors (k8s, aap, finance, healthcare, insurance, retail, telecom)
+  collectors/        8 domain collectors (k8s, aap, finance, healthcare, insurance, retail, telecom, memory)
   domains/           Domain pack configs (prompt, model, collector class)
   routing/           Benchmark-graded model selection (19 models, 5 lanes)
   infra/             Pressure-aware scaler, fleet manager
