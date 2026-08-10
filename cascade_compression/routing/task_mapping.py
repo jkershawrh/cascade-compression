@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Optional
 
 import yaml
 
+from ..resources import resource_path
+
 # ---------------------------------------------------------------------------
 # Generic task -> benchmark shape mapping
 # ---------------------------------------------------------------------------
@@ -48,8 +50,7 @@ def _load_verticals(path: Optional[str] = None) -> Dict[str, Any]:
         return _verticals_cache
 
     if path is None:
-        config_dir = Path(__file__).resolve().parent.parent.parent / "config"
-        path = str(config_dir / "verticals.yaml")
+        path = str(resource_path("config", "verticals.yaml"))
 
     p = Path(path)
     if not p.exists():

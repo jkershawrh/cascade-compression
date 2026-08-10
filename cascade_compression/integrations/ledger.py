@@ -8,7 +8,7 @@ Uses the generic decision-record.json schema — not cascade-specific.
 import hashlib
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict
 from uuid import uuid4
 
 log = logging.getLogger(__name__)
@@ -97,8 +97,12 @@ def write_decisions(
         if ledger_token:
             headers["Authorization"] = f"Bearer {ledger_token}"
 
-        client = httpx.Client(timeout=10, verify=False)
-        client.post(f"{ledger_url.rstrip('/')}/api/receipts", json=entry, headers=headers)
-        client.close()
+        with httpx.Client(timeout=10) as client:
+            response = client.post(
+                f"{ledger_url.rstrip('/')}/api/receipts",
+                json=entry,
+                headers=headers,
+            )
+            response.raise_for_status()
     except Exception as e:
         log.debug("Ledger write failed: %s", str(e)[:60])

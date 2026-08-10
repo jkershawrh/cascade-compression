@@ -6,13 +6,40 @@ Maps transactions to the cascade Signal protocol. Supports:
 - Database polling (when configured)
 """
 
+import csv
 import json
 import logging
+from pathlib import Path
 from typing import List
 
 from .base import BaseCollector
 
 log = logging.getLogger(__name__)
+
+_FLOAT_FIELDS = {"amount"}
+_INTEGER_FIELDS = {"velocity_1h", "velocity_24h"}
+_BOOLEAN_FIELDS = {
+    "is_recurring",
+    "is_first_time_merchant",
+    "is_first_time_country",
+}
+
+
+def _coerce_csv_row(row: dict) -> dict:
+    """Convert CSV strings used by FinanceSignal into their runtime types."""
+    converted = dict(row)
+    for field in _FLOAT_FIELDS:
+        if converted.get(field) not in (None, ""):
+            converted[field] = float(converted[field])
+    for field in _INTEGER_FIELDS:
+        if converted.get(field) not in (None, ""):
+            converted[field] = int(converted[field])
+    for field in _BOOLEAN_FIELDS:
+        if converted.get(field) not in (None, ""):
+            converted[field] = str(converted[field]).strip().lower() in {
+                "1", "true", "yes", "y"
+            }
+    return converted
 
 
 class FinanceSignal:
@@ -132,8 +159,21 @@ class FinanceCollector(BaseCollector):
 
         if self._data_path:
             try:
-                with open(self._data_path) as f:
-                    self._transactions = json.load(f)
+                data_path = Path(self._data_path)
+                with open(data_path, newline="") as f:
+                    if data_path.suffix.lower() == ".csv":
+                        transactions = [_coerce_csv_row(row) for row in csv.DictReader(f)]
+                    else:
+                        transactions = json.load(f)
+                if isinstance(transactions, dict):
+                    transactions = transactions.get("transactions")
+                if not isinstance(transactions, list) or not all(
+                    isinstance(item, dict) for item in transactions
+                ):
+                    raise ValueError(
+                        "finance replay data must be a list of transaction objects"
+                    )
+                self._transactions = transactions
                 log.info("Finance collector loaded %d transactions from %s",
                          len(self._transactions), self._data_path)
                 return True
@@ -142,7 +182,10 @@ class FinanceCollector(BaseCollector):
                 return False
 
         if self._synthetic_count:
-            from cascade_compression.benchmarks.synthetic_finance import generate, asdict
+            from cascade_compression.benchmarks.synthetic_finance import (
+                asdict,
+                generate,
+            )
             txns = generate(self._synthetic_count)
             self._transactions = [asdict(t) for t in txns]
             log.info("Finance collector generated %d synthetic transactions", len(self._transactions))

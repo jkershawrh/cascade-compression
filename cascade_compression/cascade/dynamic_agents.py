@@ -11,10 +11,12 @@ observed patterns and only activate after promotion validates them.
 from __future__ import annotations
 
 import time
-from collections import Counter, defaultdict
+from collections import defaultdict
 from typing import Dict, List
 
-from .protocol import CascadeAgent, CascadeDecision, Outcome, Signal
+from .protocol import CascadeDecision, Outcome, Signal
+
+_SUPPRESSIBLE_SEVERITIES = {"info", "low"}
 
 
 class RepeatFloodSuppressor:
@@ -46,7 +48,10 @@ class RepeatFloodSuppressor:
         decisions = []
 
         for s in signals:
-            if s.signal_type not in self._signal_types:
+            if (
+                s.signal_type not in self._signal_types
+                or s.severity not in _SUPPRESSIBLE_SEVERITIES
+            ):
                 continue
 
             key = f"{s.signal_type}:{s.source}:{s.namespace}"
@@ -98,7 +103,10 @@ class DominantNoiseSuppressor:
 
         decisions = []
         for s in signals:
-            if s.signal_type not in self._noise_types:
+            if (
+                s.signal_type not in self._noise_types
+                or s.severity not in _SUPPRESSIBLE_SEVERITIES
+            ):
                 continue
 
             key = f"{s.signal_type}:{s.source}:{s.namespace}"

@@ -4,8 +4,8 @@ Strict validation. All models match the contracts/schemas/*.json definitions.
 """
 
 from typing import Optional
-from pydantic import BaseModel, Field, model_validator
 
+from pydantic import BaseModel, Field, model_validator
 
 # --- Input models ---
 
@@ -95,6 +95,13 @@ class HardwareComparison(BaseModel):
     notes: list[str] = Field(default_factory=list)
 
 
+class UnsupportedHardwareOption(BaseModel):
+    """Hardware option omitted because required throughput is unavailable."""
+    hardware_id: str
+    hardware_name: str
+    reason: str
+
+
 class TCOResult(BaseModel):
     """Full TCO comparison result."""
     workload_id: str
@@ -102,6 +109,7 @@ class TCOResult(BaseModel):
     daily_volume: int
     cascade_summary: CascadeSummary
     comparisons: list[HardwareComparison]
+    unsupported_options: list[UnsupportedHardwareOption] = Field(default_factory=list)
 
 
 # --- Scenario model ---

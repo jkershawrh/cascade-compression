@@ -15,7 +15,7 @@ import time
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .promotion import AgentMetrics, RuleAgent
 from .protocol import Signal
@@ -111,7 +111,6 @@ class CorpusAnalyzer:
 
         # --- Pattern 1: Repeat flooding ---
         # Group by signal_type (not source+namespace) to avoid duplicates
-        repeat_by_type = Counter(s["signal_type"] for s in buf)
         repeat_by_instance = Counter()
         repeat_samples = defaultdict(list)
         for s in buf:
@@ -219,7 +218,7 @@ class CorpusAnalyzer:
 
         if c.pattern_type == "repeat_flood":
             parts = c.key.split(":", 2)
-            sig_type = parts[0]
+            sig_type = parts[1]
             name = f"suppress_{sig_type}_repeat"
 
             rule = RuleAgent({
