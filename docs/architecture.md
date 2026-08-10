@@ -117,56 +117,147 @@ Signal(
 
 The framework doesn't know what domain produced the signal. Domain-specific knowledge lives in three pluggable components: collector, prompt, and signal mapping.
 
-### Three-Tier Pipeline
+### Cascade Engine
 
 ```
-┌───────────────────────────────────────────────────────────────────┐
-│                        CASCADE PIPELINE                           │
-│                                                                   │
-│  ┌─────────────────────────────────────────────────────────────┐  │
-│  │                    NANO TIER (85-99%)                       │  │
-│  │                                                             │  │
-│  │  Stage 1: Noise Elimination                                 │  │
-│  │  ┌──────────────┐ ┌───────────────┐ ┌──────────────┐       │  │
-│  │  │ Deduplicator │ │   Transient   │ │   Severity   │       │  │
-│  │  │ SHA256 hash  │ │  Suppressor   │ │     Gate     │       │  │
-│  │  │  60s window  │ │  fail-open    │ │ drops info   │       │  │
-│  │  └──────────────┘ └───────────────┘ └──────────────┘       │  │
-│  │                                                             │  │
-│  │  Stage 2: Pattern Classification                            │  │
-│  │  ┌──────────────────┐ ┌───────────────────┐                │  │
-│  │  │ Pattern (7 regex)│ │ Threshold (CPU/   │                │  │
-│  │  │ OOM, disk, auth  │ │  mem/disk limits) │                │  │
-│  │  └──────────────────┘ └───────────────────┘                │  │
-│  │                                                             │  │
-│  │  Stage 3: Learned Agents (discovered at runtime)            │  │
-│  │  ┌────────────────────┐ ┌──────────────────────┐           │  │
-│  │  │  Repeat Flood      │ │  Dominant Noise      │           │  │
-│  │  │  Suppressor        │ │  Suppressor          │           │  │
-│  │  └────────────────────┘ └──────────────────────┘           │  │
-│  └─────────────────────────────┬───────────────────────────────┘  │
-│                                │                                  │
-│                          Survivors (1-15%)                        │
-│                                │                                  │
-│  ┌─────────────────────────────▼───────────────────────────────┐  │
-│  │                   MICRO TIER                                │  │
-│  │                                                             │  │
-│  │  LLM Classification (granite-8b / phi4-mini on CPU)         │  │
-│  │  ┌──────────────────────────────────────────────┐           │  │
-│  │  │ routine_noise | known_pattern |              │           │  │
-│  │  │ needs_attention | real_incident              │           │  │
-│  │  └──────────────────────────────────────────────┘           │  │
-│  └─────────────────────────────┬───────────────────────────────┘  │
-│                                │                                  │
-│  ┌─────────────────────────────▼───────────────────────────────┐  │
-│  │  SELF-TUNING ENGINE                                         │  │
-│  │                                                             │  │
-│  │  Corpus Analyzer ──→ discovers patterns ──→ proposes agents │  │
-│  │  Promotion Engine ──→ validates agents ──→ promotes/demotes │  │
-│  │  LLM feedback ──→ confirms noise types ──→ activates agents │  │
-│  └─────────────────────────────────────────────────────────────┘  │
-└───────────────────────────────────────────────────────────────────┘
+                    1,000 signals/batch
+                           │
+    ═══════════════════════╪═══════════════════════════════════════
+    ║  STAGE 1: NOISE ELIMINATION                                ║
+    ║                                                            ║
+    ║  ┌──────────────┐     ┌───────────────┐   ┌────────────┐  ║
+    ║  │ Deduplicator │     │   Transient   │   │  Severity  │  ║
+    ║  │              │     │  Suppressor   │   │    Gate    │  ║
+    ║  │ SHA256 hash  │     │              │   │            │  ║
+    ║  │ of content   │     │ Knows which  │   │ Drops info │  ║
+    ║  │ 60s window   │     │ types are    │   │ severity   │  ║
+    ║  │              │     │ transient    │   │ unless     │  ║
+    ║  │ Same signal  │     │ at low sev   │   │ escalation │  ║
+    ║  │ within 60s?  │     │              │   │ keywords   │  ║
+    ║  │ → DEDUPE     │     │ Fail-open:   │   │ match      │  ║
+    ║  │              │     │ oomkill,     │   │            │  ║
+    ║  │ ~150 removed │     │ panic,       │   │ ~450       │  ║
+    ║  │              │     │ security     │   │ removed    │  ║
+    ║  │              │     │ always pass  │   │            │  ║
+    ║  │              │     │              │   │            │  ║
+    ║  │              │     │ ~200 removed │   │            │  ║
+    ║  └──────┬───────┘     └──────┬───────┘   └─────┬──────┘  ║
+    ║         └────────────────────┴─────────────────┘          ║
+    ║                          │                                 ║
+    ║                    200 signals remain                      ║
+    ═══════════════════════════╪═══════════════════════════════════
+    ║  STAGE 2: PATTERN CLASSIFICATION                           ║
+    ║                                                            ║
+    ║  ┌────────────────────────┐  ┌─────────────────────────┐   ║
+    ║  │  Pattern Classifier    │  │  Threshold Classifier   │   ║
+    ║  │                        │  │                         │   ║
+    ║  │  7 regex patterns:     │  │  Numeric extraction:    │   ║
+    ║  │  • OOM / memory        │  │  • CPU > 80%            │   ║
+    ║  │  • Disk pressure       │  │  • Memory > 95%         │   ║
+    ║  │  • CPU saturation      │  │  • Disk > 90%           │   ║
+    ║  │  • Network errors      │  │                         │   ║
+    ║  │  • Crash / restart     │  │  Tags signals,          │   ║
+    ║  │  • Auth failures       │  │  never drops            │   ║
+    ║  │  • Scaling events      │  │                         │   ║
+    ║  │                        │  │                         │   ║
+    ║  │  Tags signals,         │  │                         │   ║
+    ║  │  never drops            │  │                         │   ║
+    ║  └────────────┬───────────┘  └────────────┬────────────┘   ║
+    ║               └──────────────────────────-┘                ║
+    ║                          │                                 ║
+    ║                   200 signals remain (tagged)              ║
+    ═══════════════════════════╪═══════════════════════════════════
+    ║  STAGE 3: LEARNED AGENTS (empty at startup)                ║
+    ║                                                            ║
+    ║  These agents don't exist on day 1. The cascade discovers  ║
+    ║  them from the LLM feedback loop (see below).              ║
+    ║                                                            ║
+    ║  ┌────────────────────────┐  ┌─────────────────────────┐   ║
+    ║  │  Repeat Flood          │  │  Dominant Noise         │   ║
+    ║  │  Suppressor            │  │  Suppressor             │   ║
+    ║  │                        │  │                         │   ║
+    ║  │  Same signal_type      │  │  Signal type identified │   ║
+    ║  │  N+ times within       │  │  as consistent noise    │   ║
+    ║  │  a time window         │  │  by LLM feedback        │   ║
+    ║  │  → SUPPRESS            │  │  → SUPPRESS             │   ║
+    ║  │                        │  │                         │   ║
+    ║  │  After activation:     │  │  After activation:      │   ║
+    ║  │  ~50 removed           │  │  ~50 removed            │   ║
+    ║  └────────────┬───────────┘  └────────────┬────────────┘   ║
+    ║               └──────────────────────────-┘                ║
+    ║                          │                                 ║
+    ║                   100 signals survive                      ║
+    ═══════════════════════════╪═══════════════════════════════════
+                               │
+                        NANO TIER RESULT
+                     900 handled (90%)
+                     100 survivors → LLM
+                               │
+    ═══════════════════════════╪═══════════════════════════════════
+    ║  MICRO TIER: LLM CLASSIFICATION                            ║
+    ║                                                            ║
+    ║  granite-8b / phi4-mini on CPU (~600ms per signal)         ║
+    ║                                                            ║
+    ║  System prompt (domain-specific, one paragraph):           ║
+    ║  "Classify as: routine_noise | known_pattern |             ║
+    ║   needs_attention | real_incident. One word only."          ║
+    ║                                                            ║
+    ║            100 signals classified                           ║
+    ║            ┌──────────────────────────────────────┐         ║
+    ║            │  routine_noise    42  ─── noise ───┐ │         ║
+    ║            │  known_pattern    31  ─── noise ───┤ │         ║
+    ║            │  needs_attention  22  ─── keep ────┤ │         ║
+    ║            │  real_incident     5  ─── alert ───┘ │         ║
+    ║            └──────────────────────────────────────┘         ║
+    ═══════════════════════════╪═══════════════════════════════════
+                               │
+                        LLM says "noise"
+                        for 73 signals
+                               │
+    ═══════════════════════════╪═══════════════════════════════════
+    ║  SELF-TUNING FEEDBACK LOOP                                 ║
+    ║                                                            ║
+    ║  ┌──────────────────────────────────────────────────────┐  ║
+    ║  │  Corpus Analyzer                                      │  ║
+    ║  │  Watches signal stream (10K buffer)                   │  ║
+    ║  │                                                       │  ║
+    ║  │  Detects:                                             │  ║
+    ║  │  • Repeat floods (same type N+ times in window)       │  ║
+    ║  │  • Dominant types (>5% of traffic)                    │  ║
+    ║  │  • Mono-severity (>80% at one severity)               │  ║
+    ║  │                                                       │  ║
+    ║  │  "event_deprecatedannotation appeared 6,074 times     │  ║
+    ║  │   and LLM classified it as noise every time"          │  ║
+    ║  │                                                       │  ║
+    ║  │  → Proposes draft agent                               │  ║
+    ║  └──────────────────────┬───────────────────────────────┘  ║
+    ║                         │                                  ║
+    ║  ┌──────────────────────▼───────────────────────────────┐  ║
+    ║  │  Promotion Engine                                     │  ║
+    ║  │                                                       │  ║
+    ║  │  draft ──→ candidate ──→ nano ──→ micro ──→ macro     │  ║
+    ║  │         50 samples    200 samples  500      1000      │  ║
+    ║  │         60% accuracy  75% acc.     85%      85%       │  ║
+    ║  │                                                       │  ║
+    ║  │  At nano tier: ACTIVATED                              │  ║
+    ║  │  Agent runs in Stage 3 from now on                    │  ║
+    ║  │  LLM never sees matching signals again                │  ║
+    ║  │                                                       │  ║
+    ║  │  Accuracy drops? → automatic demotion                 │  ║
+    ║  │  False negative? → immediate demotion                 │  ║
+    ║  └──────────────────────────────────────────────────────┘  ║
+    ║                                                            ║
+    ║  Cycle repeats every 30s. After ~1 hour:                   ║
+    ║  • 5-23 agents self-discovered                             ║
+    ║  • Compression rises from 60% → 96-99%                    ║
+    ║  • LLM calls drop proportionally                           ║
+    ║  • No human intervention at any point                      ║
+    ═════════════════════════════════════════════════════════════
 ```
+
+**Numbers above are representative.** Actual compression varies by domain:
+K8s peaks at 99.5% (68.7M signals), AAP at 96%, finance cold-start at 61%.
+The cascade improves continuously — cold-start numbers are the floor.
 
 ### CascadeBridge — The Orchestrator
 
