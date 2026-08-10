@@ -370,6 +370,28 @@ class MemoryCollector(BaseCollector):
                     },
                 })
 
+        # Workload sources — agentic system decision logs
+        ledger_url = config.get("ledger_url", "")
+        if ledger_url:
+            from . import memory_parsers_workload as wparsers
+            self._sources.append({
+                "name": f"ledger({ledger_url})",
+                "scanner": wparsers.scan_ledger_decisions,
+                "kwargs": {
+                    "ledger_url": ledger_url,
+                    "bearer_token": config.get("ledger_token", ""),
+                    "max_pages": config.get("ledger_max_pages", 10),
+                },
+            })
+
+        for log_path in config.get("jsonl_logs", []):
+            from . import memory_parsers_workload as wparsers
+            self._sources.append({
+                "name": f"jsonl({log_path})",
+                "scanner": wparsers.scan_jsonl_logs,
+                "kwargs": {"log_path": log_path},
+            })
+
         self._connected = len(self._sources) > 0
         if self._connected:
             log.info("Memory collector connected: %s",
