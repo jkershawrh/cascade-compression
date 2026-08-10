@@ -8,6 +8,7 @@ import logging
 import os
 import ssl
 from typing import Iterator, Optional
+from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
 from .base import BaseCollector
@@ -97,6 +98,9 @@ class KubernetesCollector(BaseCollector):
         self._api_url = config.get("api_url", "").rstrip("/")
         if not self._api_url:
             self._api_url = self._detect_in_cluster()
+        if urlparse(self._api_url).scheme != "https":
+            logger.warning("Kubernetes API URL must use HTTPS")
+            return False
         self._token = config.get("token", "") or self._load_sa_token()
         self._namespaces = config.get("namespaces", [])
         self._exclude_ns = config.get("exclude_namespaces", [
@@ -227,10 +231,8 @@ class KubernetesCollector(BaseCollector):
             ca_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
             if os.path.exists(ca_path):
                 ctx.load_verify_locations(ca_path)
-            else:
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-            with urlopen(req, timeout=15, context=ctx) as resp:
+            # URL scheme is restricted to HTTPS in connect().
+            with urlopen(req, timeout=15, context=ctx) as resp:  # nosec B310
                 return json.loads(resp.read())
         except Exception as e:
             logger.debug("K8s GET %s: %s", path, str(e)[:100])

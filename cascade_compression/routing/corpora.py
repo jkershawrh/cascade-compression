@@ -12,6 +12,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from ..resources import resource_path
+
 # ---------------------------------------------------------------------------
 # Grade helpers
 # ---------------------------------------------------------------------------
@@ -377,8 +379,7 @@ def load_corpora(path: Optional[str] = None) -> RoutingCorpora:
         return _corpora_instance
 
     if path is None:
-        config_dir = Path(__file__).resolve().parent.parent.parent / "config"
-        path = str(config_dir / "corpora.json")
+        path = str(resource_path("config", "corpora.json"))
 
     p = Path(path)
     if not p.exists():

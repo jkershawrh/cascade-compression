@@ -1,5 +1,7 @@
 # Agent Promotion Guidelines
 
+> Historical run examples in this document are not release guarantees. The current runtime reports false-negative telemetry as unmeasured until ground-truth feedback is supplied and requires zero important classifications in its promotion sample.
+
 ## Overview
 
 The cascade discovers and promotes agents automatically. No human writes rules. The system watches signal patterns, proposes agents, validates them against real data, and promotes or demotes them based on performance.

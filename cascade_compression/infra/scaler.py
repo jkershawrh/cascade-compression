@@ -18,6 +18,7 @@ from typing import List, Literal, Optional, Set
 import yaml
 from pydantic import BaseModel, Field
 
+from ..resources import resource_path
 from ..routing.corpora import CORPORA_TO_ENDPOINT, RoutingCorpora
 
 # ---------------------------------------------------------------------------
@@ -183,8 +184,9 @@ def build_model_roster(corpora: RoutingCorpora) -> list[ModelFootprint]:
 
 def _load_thresholds_from_yaml() -> PressureThresholds:
     """Load thresholds from ``config/scaler.yaml`` next to the package."""
-    config_path = Path(__file__).resolve().parent.parent.parent / "config" / "scaler.yaml"
-    if not config_path.exists():
+    try:
+        config_path = resource_path("config", "scaler.yaml")
+    except FileNotFoundError:
         return PressureThresholds()
 
     with open(config_path) as f:
@@ -465,12 +467,15 @@ class InferenceScaler:
         inf_budget = _grade_higher(inference_budget_pct, t.inference_budget_green, t.inference_budget_yellow)
         models_avail = _grade_higher(models_available_pct, t.models_available_green, t.models_available_yellow)
 
-        all_grades = [cpu_some, cpu_full, mem_some, mem_used, io_some, inf_budget, models_avail]
-        overall = _worst_grade(*all_grades)
+        # Availability is an outcome of scaling, not resource pressure. Including
+        # it here creates a positive-feedback loop where an eviction requests
+        # another eviction and prevents restoration.
+        pressure_grades = [cpu_some, cpu_full, mem_some, mem_used, io_some, inf_budget]
+        overall = _worst_grade(*pressure_grades)
 
         # Determine action
-        reds = sum(1 for g in all_grades if g == "red")
-        yellows = sum(1 for g in all_grades if g == "yellow")
+        reds = sum(1 for g in pressure_grades if g == "red")
+        yellows = sum(1 for g in pressure_grades if g == "yellow")
 
         if reds >= 2:
             action: Action = "shed_aggressive"

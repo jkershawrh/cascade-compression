@@ -12,6 +12,8 @@ from typing import Dict, Literal, Optional
 import yaml
 from pydantic import BaseModel
 
+from ..resources import resource_path
+
 Grade = Literal["green", "yellow", "red"]
 
 
@@ -57,8 +59,7 @@ DEFAULT_STRATEGY = InferenceStrategy()
 def _load_strategies(path: Optional[str] = None) -> Dict[str, InferenceStrategy]:
     """Load strategy definitions from strategies.yaml."""
     if path is None:
-        config_dir = Path(__file__).resolve().parent.parent.parent / "config"
-        path = str(config_dir / "strategies.yaml")
+        path = str(resource_path("config", "strategies.yaml"))
 
     p = Path(path)
     if not p.exists():

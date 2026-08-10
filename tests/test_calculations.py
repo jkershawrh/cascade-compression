@@ -4,28 +4,28 @@ Tests that the TCO calculation engine produces mathematically correct results.
 These are the RED tests — written before implementation.
 """
 
-import math
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from cascade_compression.tco.calculator import (
+    UnsupportedThroughputError,
     calculate_cascade,
-    calculate_hardware_tco,
     calculate_cloud_tco,
     calculate_full_comparison,
+    calculate_hardware_tco,
 )
 from cascade_compression.tco.models import (
-    WorkloadProfile,
+    Assumptions,
+    ModelByTier,
     SignalDistribution,
     TokensPerSignal,
-    ModelByTier,
-    Assumptions,
+    WorkloadProfile,
 )
-
 
 # --- Helper to build a test workload ---
 
@@ -100,18 +100,18 @@ class TestCascadeCalculation:
         assert cascade.inference_signals_per_day == 15000
 
     def test_compression_ratio(self):
-        """Compression ratio = inference_signals / total_signals."""
+        """Compression ratio = signals handled without inference / total."""
         workload = make_workload(daily_volume=100000, routine_pct=85,
                                   ambiguous_pct=12, complex_pct=3)
         cascade = calculate_cascade(workload)
-        assert cascade.compression_ratio == pytest.approx(0.15, abs=0.001)
+        assert cascade.compression_ratio == pytest.approx(0.85, abs=0.001)
 
     def test_high_routine_compression(self):
-        """92% routine gives 0.08 compression ratio."""
+        """92% routine gives 0.92 compression ratio."""
         workload = make_workload(daily_volume=1000000, routine_pct=92,
                                   ambiguous_pct=6, complex_pct=2)
         cascade = calculate_cascade(workload)
-        assert cascade.compression_ratio == pytest.approx(0.08, abs=0.001)
+        assert cascade.compression_ratio == pytest.approx(0.92, abs=0.001)
 
     def test_rounding_with_odd_percentages(self):
         """Signal counts are integers even with percentages that don't divide evenly."""
@@ -336,7 +336,18 @@ class TestEdgeCases:
                                   ambiguous_pct=0, complex_pct=0)
         cascade = calculate_cascade(workload)
         assert cascade.inference_signals_per_day == 0
-        assert cascade.compression_ratio == 0.0
+        assert cascade.compression_ratio == 1.0
+
+    def test_missing_throughput_is_rejected(self, h100_profile):
+        workload = make_workload(
+            micro_model="granite-350m",
+            macro_model="granite-4.1-8b",
+        )
+        cascade = calculate_cascade(workload)
+        with pytest.raises(UnsupportedThroughputError, match="granite-350m"):
+            calculate_hardware_tco(
+                cascade, workload, h100_profile, DEFAULT_ASSUMPTIONS
+            )
 
     def test_minimum_volume(self, xeon6_profile):
         """Volume of 1 signal/day should work."""

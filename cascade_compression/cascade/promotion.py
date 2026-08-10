@@ -21,10 +21,10 @@ from typing import Any, Dict, List, Optional
 log = logging.getLogger(__name__)
 
 DEFAULT_THRESHOLDS = {
-    "candidate": {"min_samples": 50, "min_accuracy": 0.60, "max_false_positive": 0.30},
+    "candidate": {"min_samples": 50, "min_accuracy": 0.60, "max_false_positive": 0.30, "max_false_negative": 0.20},
     "nano": {"min_samples": 200, "min_accuracy": 0.75, "max_false_positive": 0.15, "max_false_negative": 0.20},
-    "micro": {"min_samples": 500, "min_accuracy": 0.85, "max_false_positive": 0.10, "human_reviewed": True},
-    "macro": {"min_samples": 1000, "min_accuracy": 0.85, "max_false_positive": 0.05, "human_reviewed": True},
+    "micro": {"min_samples": 500, "min_accuracy": 0.85, "max_false_positive": 0.10, "max_false_negative": 0.10, "human_reviewed": True},
+    "macro": {"min_samples": 1000, "min_accuracy": 0.85, "max_false_positive": 0.05, "max_false_negative": 0.05, "human_reviewed": True},
 }
 
 TIER_ORDER = ["draft", "candidate", "nano", "micro", "macro"]
@@ -151,7 +151,12 @@ class PromotionEngine:
         agent.false_negative_rate = fn / (fn + tp) if (fn + tp) > 0 else 0.0
         agent.coverage = classified / total if total > 0 else 0.0
 
-        if agent.accuracy >= 0.75 and agent.false_positive_rate <= 0.15:
+        if agent.false_negative_rate > 0.20:
+            agent.rubric_status = "red"
+        elif (
+            agent.accuracy >= 0.75
+            and agent.false_positive_rate <= 0.15
+        ):
             agent.rubric_status = "green"
         elif agent.accuracy >= 0.60:
             agent.rubric_status = "yellow"

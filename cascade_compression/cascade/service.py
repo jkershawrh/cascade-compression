@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import time
 from typing import Any, Dict, List, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 from fastapi import FastAPI
@@ -18,7 +18,7 @@ from pydantic import BaseModel, Field
 from .agents import default_agents
 from .pipeline import CascadePipeline, CascadeResult
 from .protocol import Signal
-from .router import CascadeRouter, InferenceRequest
+from .router import CascadeRouter
 
 log = logging.getLogger(__name__)
 app = FastAPI(title="Intel Inference Cascade", version="1.0.0")
@@ -43,7 +43,7 @@ MODEL_ALIASES: Dict[str, str] = {
 
 
 class SignalInput(BaseModel):
-    signal_id: Optional[str] = None
+    signal_id: Optional[UUID] = None
     signal_type: str = ""
     severity: str = "info"
     source: str = ""
@@ -70,6 +70,20 @@ _stats = CascadeStats()
 _latencies: list = []
 
 
+def _to_signal(signal: SignalInput) -> Signal:
+    """Convert API input without losing the caller's correlation ID."""
+    return Signal(
+        signal_id=signal.signal_id or uuid4(),
+        signal_type=signal.signal_type,
+        severity=signal.severity,
+        source=signal.source,
+        content=signal.content,
+        labels=signal.labels,
+        namespace=signal.namespace,
+        cluster=signal.cluster,
+    )
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "agents": len(pipeline._agents)}
@@ -91,18 +105,7 @@ async def cascade_signals(request: BatchRequest):
 
     t0 = time.monotonic()
 
-    signals = [
-        Signal(
-            signal_type=s.signal_type,
-            severity=s.severity,
-            source=s.source,
-            content=s.content,
-            labels=s.labels,
-            namespace=s.namespace,
-            cluster=s.cluster,
-        )
-        for s in request.signals
-    ]
+    signals = [_to_signal(signal) for signal in request.signals]
 
     result = pipeline.run(signals)
     cascade_ms = (time.monotonic() - t0) * 1000

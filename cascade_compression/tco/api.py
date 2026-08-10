@@ -4,24 +4,19 @@ Endpoints match the OpenAPI spec at contracts/openapi/tco-calculator.yaml.
 """
 
 import json
-import sys
+import os
 from pathlib import Path
-
-# Ensure the project root is on sys.path when running as `python3 app/api.py`
-_project_root = str(Path(__file__).resolve().parent.parent.parent)
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from ..resources import resource_path
 from .calculator import calculate_full_comparison
 from .models import (
     Assumptions,
     CalculateRequest,
     TCOResult,
-    WorkloadProfile,
 )
 from .scenarios import get_scenarios
 
@@ -43,7 +38,7 @@ app.add_middleware(
 
 def _load_json(filename: str) -> dict:
     """Load a JSON file from the data directory."""
-    path = ROOT / "data" / filename
+    path = resource_path("data", filename)
     with open(path) as f:
         return json.load(f)
 
@@ -110,4 +105,10 @@ if frontend_dir.exists():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("cascade_compression.tco.api:app", host="0.0.0.0", port=8090, reload=True)
+
+    uvicorn.run(
+        "cascade_compression.tco.api:app",
+        host=os.getenv("CASCADE_TCO_HOST", "127.0.0.1"),
+        port=8090,
+        reload=True,
+    )

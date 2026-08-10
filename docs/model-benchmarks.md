@@ -1,5 +1,7 @@
 # Model Benchmarks
 
+> Historical results below are point-in-time artifacts. They must not be read as current zero-false-negative or TCO guarantees; validate the raw false-negative fields and model/hardware coverage for the workload being deployed.
+
 ## Classification Accuracy (20-signal AAP test, Xeon 6 CPU)
 
 All models tested with the same 20 AAP signals covering task failures, warnings, config changes, job events, and playbook stats. Temperature=0, deterministic output confirmed across 3 runs.

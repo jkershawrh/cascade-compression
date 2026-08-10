@@ -16,8 +16,13 @@ from .models import (
     CascadeSummary,
     HardwareComparison,
     TCOResult,
+    UnsupportedHardwareOption,
     WorkloadProfile,
 )
+
+
+class UnsupportedThroughputError(ValueError):
+    """Raised when a hardware profile lacks throughput for a required model."""
 
 
 def calculate_cascade(workload: WorkloadProfile) -> CascadeSummary:
@@ -39,7 +44,7 @@ def calculate_cascade(workload: WorkloadProfile) -> CascadeSummary:
     macro = total - nano - micro
 
     inference = micro + macro
-    compression = inference / total if total > 0 else 0.0
+    compression = nano / total if total > 0 else 0.0
 
     return CascadeSummary(
         total_signals_per_day=total,
@@ -86,6 +91,18 @@ def _required_units(
     micro_tokens_per_day = cascade.micro_signals_per_day * tokens_per_signal
     macro_tokens_per_day = cascade.macro_signals_per_day * tokens_per_signal
 
+    missing_models = []
+    if micro_tokens_per_day > 0 and micro_tps <= 0:
+        missing_models.append(micro_model)
+    if macro_tokens_per_day > 0 and macro_tps <= 0:
+        missing_models.append(macro_model)
+    if missing_models:
+        hardware_id = hardware.get("id", "unknown")
+        missing = ", ".join(sorted(set(missing_models)))
+        raise UnsupportedThroughputError(
+            f"hardware '{hardware_id}' has no measured throughput for: {missing}"
+        )
+
     # Tokens each unit can serve per day (assuming 24h operation)
     seconds_per_day = 86400
 
@@ -99,12 +116,7 @@ def _required_units(
         macro_capacity_per_unit = macro_tps * seconds_per_day
         units_for_macro = math.ceil(macro_tokens_per_day / macro_capacity_per_unit)
 
-    total_units = units_for_micro + units_for_macro
-    # Always need at least 1 unit if there are any inference signals
-    if cascade.inference_signals_per_day > 0 and total_units == 0:
-        total_units = 1
-
-    return total_units
+    return units_for_micro + units_for_macro
 
 
 def calculate_hardware_tco(
@@ -247,12 +259,20 @@ def calculate_full_comparison(
     cascade = calculate_cascade(workload)
 
     comparisons = []
+    unsupported_options = []
     for hw in hardware_profiles["profiles"]:
-        if hw["type"] == "cloud_api":
-            comp = calculate_cloud_tco(cascade, workload, hw, assumptions)
-        else:
-            comp = calculate_hardware_tco(cascade, workload, hw, assumptions)
-        comparisons.append(comp)
+        try:
+            if hw["type"] == "cloud_api":
+                comp = calculate_cloud_tco(cascade, workload, hw, assumptions)
+            else:
+                comp = calculate_hardware_tco(cascade, workload, hw, assumptions)
+            comparisons.append(comp)
+        except UnsupportedThroughputError as exc:
+            unsupported_options.append(UnsupportedHardwareOption(
+                hardware_id=hw.get("id", "unknown"),
+                hardware_name=hw.get("name", hw.get("id", "unknown")),
+                reason=str(exc),
+            ))
 
     return TCOResult(
         workload_id=workload.id,
@@ -260,4 +280,5 @@ def calculate_full_comparison(
         daily_volume=workload.daily_volume,
         cascade_summary=cascade,
         comparisons=comparisons,
+        unsupported_options=unsupported_options,
     )

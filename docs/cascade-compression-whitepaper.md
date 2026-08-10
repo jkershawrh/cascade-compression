@@ -1,5 +1,7 @@
 # Cascade Compression: Eliminating 90% of AI Inference Through Self-Tuning Signal Processing
 
+> **Historical whitepaper:** The benchmark and TCO claims below predate the current safety and throughput-validation fixes. Preserved raw artifacts contain non-zero false-negative results. Do not use these figures as production guarantees without a new, independently reviewed run.
+
 ## Executive Summary
 
 Most AI signals don't need a model. Cascade compression proves it — a three-tier pipeline that processes signals through deterministic rules before touching an LLM, achieving 99.5% compression on 68.7 million live signals. Running entirely on Intel Xeon 6 CPUs with IBM Granite models, the system delivers sub-second classification at a 3-year TCO of $33K — compared to $266K for GPU infrastructure or $540K for cloud API pricing.

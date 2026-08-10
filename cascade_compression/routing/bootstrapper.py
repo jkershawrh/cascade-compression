@@ -13,10 +13,12 @@ import fnmatch
 import math
 from collections import deque
 from pathlib import Path
-from typing import Any, Dict, List, Literal, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import yaml
 from pydantic import BaseModel, Field
+
+from ..resources import resource_path
 
 # ---------------------------------------------------------------------------
 # Fingerprint models
@@ -115,8 +117,7 @@ WINDOW_SIZE = 200
 def _load_profiles(path: Optional[str] = None) -> Dict[str, WorkloadProfile]:
     """Load workload profiles from YAML."""
     if path is None:
-        config_dir = Path(__file__).resolve().parent.parent.parent / "config"
-        path = str(config_dir / "workload_profiles.yaml")
+        path = str(resource_path("config", "workload_profiles.yaml"))
 
     p = Path(path)
     if not p.exists():
