@@ -208,3 +208,50 @@ On first deployment, the collector replays all historical data through the casca
   Switch to live polling (30s intervals)
   Cascade is already smart on day one
 ```
+
+## Governance Flow (Optional)
+
+When a ledger URL is configured, cascade decisions flow through the governance pipeline:
+
+```
+CascadeBridge.process()
+    │
+    ├── Pipeline runs, decisions made
+    │
+    ├── LedgerClient.write_decisions()
+    │   POST /api/receipts → decision.record entry
+    │   (fire-and-forget — failures never block the pipeline)
+    │
+    └── Decision enters immutable ledger (hash-chained, append-only)
+
+                    ┌─────────────────────────────────────┐
+                    │  GCL Decision Sampler (independent)  │
+                    │  Polls ledger every 60s              │
+                    │  Samples 1% of drop decisions        │
+                    └──────────────┬──────────────────────┘
+                                   │
+                    ┌──────────────▼──────────────────────┐
+                    │  Deterministic checks:               │
+                    │  - High+ severity dropped? → FAILS   │
+                    │  - Low confidence? → FAILS            │
+                    │  - Dedup always passes (hash match)   │
+                    └──────────────┬──────────────────────┘
+                                   │ if FAILS
+                    ┌──────────────▼──────────────────────┐
+                    │  LLM adversary probe (granite-8b):   │
+                    │  "Was this drop correct despite the  │
+                    │   severity flag?"                     │
+                    │  If LLM agrees → override to SURVIVES│
+                    │  If LLM disagrees → stays FAILS      │
+                    └──────────────┬──────────────────────┘
+                                   │ only FAILS written
+                    ┌──────────────▼──────────────────────┐
+                    │  audit.verdict → Ledger              │
+                    │  (SURVIVES are ephemeral, not stored) │
+                    └─────────────────────────────────────┘
+```
+
+Three independent systems, none grading itself:
+- Cascade decides (writes `decision.record`)
+- Ledger records (append-only, hash-chained)
+- GCL audits (writes `audit.verdict` for FAILS only)
