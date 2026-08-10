@@ -11,7 +11,7 @@ import json
 import logging
 import random
 from dataclasses import dataclass
-from typing import Dict, List, Optional
+from typing import List
 
 log = logging.getLogger(__name__)
 
@@ -96,35 +96,34 @@ Consider: Is this signal genuinely unusual? Would ignoring it risk missing a rea
 
 Respond with exactly one word: correct (the signal truly needed attention) or false_alarm (the signal was routine noise that got over-escalated)."""
 
-    client = httpx.Client(timeout=30, verify=False)
-
-    for sample in samples:
-        prompt = f"Signal classified as '{sample.classification}':\n{sample.signal_type}: {sample.content}"
-        try:
-            r = client.post(
-                f"{llm_url}/v1/chat/completions",
-                json={
-                    "model": llm_model,
-                    "messages": [
-                        {"role": "system", "content": system},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "max_tokens": 5,
-                    "temperature": 0,
-                },
-                headers={"Authorization": f"Bearer {llm_key}"},
-            )
-            answer = r.json()["choices"][0]["message"]["content"].strip().lower()
-            if "correct" in answer:
-                sample.verdict = "true_important"
-            elif "false" in answer or "alarm" in answer:
-                sample.verdict = "false_important"
-            else:
+    with httpx.Client(timeout=30) as client:
+        for sample in samples:
+            prompt = f"Signal classified as '{sample.classification}':\n{sample.signal_type}: {sample.content}"
+            try:
+                r = client.post(
+                    f"{llm_url}/v1/chat/completions",
+                    json={
+                        "model": llm_model,
+                        "messages": [
+                            {"role": "system", "content": system},
+                            {"role": "user", "content": prompt},
+                        ],
+                        "max_tokens": 5,
+                        "temperature": 0,
+                    },
+                    headers={"Authorization": f"Bearer {llm_key}"},
+                )
+                r.raise_for_status()
+                answer = r.json()["choices"][0]["message"]["content"].strip().lower()
+                if "correct" in answer:
+                    sample.verdict = "true_important"
+                elif "false" in answer or "alarm" in answer:
+                    sample.verdict = "false_important"
+                else:
+                    sample.verdict = "inconclusive"
+                    sample.reason = answer
+            except Exception as e:
                 sample.verdict = "inconclusive"
-                sample.reason = answer
-        except Exception as e:
-            sample.verdict = "inconclusive"
-            sample.reason = str(e)[:60]
+                sample.reason = str(e)[:60]
 
-    client.close()
     return score_precision(samples)

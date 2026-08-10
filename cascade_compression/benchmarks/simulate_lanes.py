@@ -26,14 +26,10 @@ import httpx
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "intel-inference-router"))
 
 from cascade_compression import (
-    CORPORA_TO_ENDPOINT,
     StrategyRouter,
     WorkloadBootstrapper,
-    resolve_benchmark_task,
 )
 from cascade_compression.routing.corpora import (
-    LANE_MODELS,
-    TASK_TO_LANE,
     resolve_lane,
     resolve_lane_model,
 )
@@ -114,7 +110,7 @@ VERTICALS = {
     },
 }
 
-from .industry_prompts import get_prompt, validate_output, INDUSTRY_PROMPTS
+from .industry_prompts import INDUSTRY_PROMPTS, validate_output
 
 # Build TASK_PROMPTS from industry standards + test data
 TASK_TEST_DATA = {
@@ -146,7 +142,7 @@ for industry, tasks in INDUSTRY_PROMPTS.items():
 def infer(model: str, prompt: str, max_tokens: int) -> dict:
     t0 = time.monotonic()
     try:
-        with httpx.Client(timeout=120, verify=False) as c:
+        with httpx.Client(timeout=120) as c:
             r = c.post(
                 f"{API_BASE}/v1/chat/completions",
                 json={"model": model, "messages": [{"role": "user", "content": prompt}], "max_tokens": max_tokens},
@@ -201,7 +197,6 @@ def run_simulation(rounds: int = 5):
             lane = resolve_lane(benchmark_task)
             lane_model = resolve_lane_model(benchmark_task)
             litellm_model = lane_model  # direct model name for LiteLLM
-            endpoint = CORPORA_TO_ENDPOINT.get(lane_model, lane_model)
 
             prompt, max_tokens = TASK_PROMPTS.get(benchmark_task, ("Hello", 5))
 

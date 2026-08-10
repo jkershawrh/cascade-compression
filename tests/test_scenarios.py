@@ -4,20 +4,24 @@ Behavior-driven tests that validate expected TCO outcomes for real
 FSI business scenarios. These encode the key sales insights.
 """
 
-import pytest
 import sys
 from pathlib import Path
+
+import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from cascade_compression.tco.calculator import calculate_cascade, calculate_full_comparison
+from cascade_compression.tco.calculator import (
+    calculate_cascade,
+    calculate_full_comparison,
+)
 from cascade_compression.tco.models import (
-    WorkloadProfile,
+    Assumptions,
+    ModelByTier,
     SignalDistribution,
     TokensPerSignal,
-    ModelByTier,
-    Assumptions,
+    WorkloadProfile,
 )
 from cascade_compression.tco.scenarios import get_scenarios
 
@@ -191,12 +195,12 @@ class TestCascadeCompression:
 
         GIVEN a fraud triage workload with 92% routine
         WHEN we calculate cascade
-        THEN compression ratio is 0.08
+        THEN compression ratio is 0.92
         """
         workload = make_workload(daily_volume=1000000, routine_pct=92,
                                   ambiguous_pct=6, complex_pct=2)
         cascade = calculate_cascade(workload)
-        assert cascade.compression_ratio == pytest.approx(0.08, abs=0.001)
+        assert cascade.compression_ratio == pytest.approx(0.92, abs=0.001)
 
 
 # --- Named FSI scenario tests ---
@@ -233,7 +237,7 @@ class TestFSIScenarios:
         GIVEN the fraud triage workload (1M transactions/day)
         WHEN we run a full comparison
         THEN all comparisons have positive TCO values
-        AND the cascade compression ratio is <= 0.08
+        AND the cascade compression ratio is >= 0.92
         """
         fraud = None
         for p in workload_profiles["profiles"]:
@@ -245,7 +249,7 @@ class TestFSIScenarios:
         result = calculate_full_comparison(
             fraud, hardware_profiles, Assumptions()
         )
-        assert result.cascade_summary.compression_ratio <= 0.08
+        assert result.cascade_summary.compression_ratio >= 0.92
         for comp in result.comparisons:
             assert comp.three_year_tco_usd > 0
 

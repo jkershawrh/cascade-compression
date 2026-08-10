@@ -65,7 +65,7 @@ def _grade(metric: str, value: float, rubric: dict) -> str:
 
 
 def _get_models(api_base: str, api_key: str) -> list[str]:
-    with httpx.Client(timeout=10, verify=False) as c:
+    with httpx.Client(timeout=10) as c:
         r = c.get(f"{api_base}/v1/models", headers={"Authorization": f"Bearer {api_key}"})
         r.raise_for_status()
         return [m["id"] for m in r.json().get("data", [])]
@@ -83,7 +83,7 @@ def _infer(api_base: str, api_key: str, model: str, task: str) -> dict:
     payload = {"model": model, **prompt}
     t0 = time.monotonic()
     try:
-        with httpx.Client(timeout=45, verify=False) as c:
+        with httpx.Client(timeout=45) as c:
             r = c.post(
                 f"{api_base}/v1/chat/completions",
                 json=payload,

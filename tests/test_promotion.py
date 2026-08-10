@@ -7,7 +7,6 @@ from cascade_compression.cascade.promotion import (
     Baseline,
     PromotionEngine,
     RuleAgent,
-    TIER_ORDER,
 )
 
 
@@ -98,6 +97,19 @@ class TestValidation:
         agent = AgentMetrics(name="bad_rule")
         result = engine.validate(agent, always_fire, signals, baseline)
         assert result.false_positive_rate > 0.5
+        assert result.rubric_status == "red"
+
+    def test_false_negative_rate_prevents_green_status(self, engine, baseline):
+        never_fire = RuleAgent({
+            "name": "unsafe",
+            "condition": {"field": "cpu_percent", "operator": "gt", "value": 100},
+        })
+        signals = make_signals(80, 20)
+        result = engine.validate(
+            AgentMetrics(name="unsafe"), never_fire, signals, baseline
+        )
+        assert result.accuracy == pytest.approx(0.8)
+        assert result.false_negative_rate == 1.0
         assert result.rubric_status == "red"
 
     def test_empty_signals(self, engine, cpu_rule, baseline):

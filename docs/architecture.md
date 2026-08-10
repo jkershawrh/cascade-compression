@@ -4,7 +4,7 @@
 
 Cascade compression is a three-tier signal processing framework. Most enterprise AI signals are routine noise — the cascade eliminates them with deterministic rules before anything touches an LLM. The 1-15% that survive get classified by a small CPU-hosted model. No GPU required.
 
-**Proven at scale:** 68.7M live Kubernetes signals at 99.5% compression. Seven industry domains tested with zero code changes to the framework. 3-year TCO: $33K on Xeon 6 vs $266K GPU vs $540K cloud API.
+> **Historical document:** The benchmark figures below describe preserved experiments, not current release guarantees. Raw artifacts contain non-zero false-negative results. Validate safety and measured model/hardware throughput before using compression or TCO figures operationally.
 
 ---
 
