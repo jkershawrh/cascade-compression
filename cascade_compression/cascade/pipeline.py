@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional
+from typing import List, Optional
 from uuid import UUID
 
 from .protocol import CascadeAgent, CascadeDecision, Outcome, Signal
@@ -74,11 +74,13 @@ class CascadePipeline:
 
             for d in decisions:
                 if d.outcome == Outcome.SUPPRESS:
-                    removed_ids.add(d.signal_id)
-                    result.suppressed_count += 1
+                    if d.signal_id not in escalated_ids:
+                        removed_ids.add(d.signal_id)
+                        result.suppressed_count += 1
                 elif d.outcome == Outcome.DEDUPE:
-                    removed_ids.add(d.signal_id)
-                    result.deduped_count += 1
+                    if d.signal_id not in escalated_ids:
+                        removed_ids.add(d.signal_id)
+                        result.deduped_count += 1
                 elif d.outcome == Outcome.DROP:
                     if d.signal_id not in escalated_ids:
                         removed_ids.add(d.signal_id)

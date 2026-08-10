@@ -12,6 +12,16 @@ import sys
 import time
 
 
+def _collector_config(db_url: str = "", data_path: str = "") -> dict:
+    """Build the collector configuration shared by replay inputs."""
+    config = {}
+    if db_url:
+        config["db_url"] = db_url
+    if data_path:
+        config["data_path"] = data_path
+    return config
+
+
 def _load_domain(name: str):
     try:
         return importlib.import_module(f"cascade_compression.domains.{name}")
@@ -59,12 +69,13 @@ def run():
         sys.exit(1)
 
     collector = collector_cls()
-    config = {}
-    if args.db_url:
-        config["db_url"] = args.db_url
+    config = _collector_config(args.db_url)
 
     if hasattr(collector, "connect"):
-        collector.connect(config)
+        connected = collector.connect(config)
+        if connected is False and args.db_url:
+            print("Collector failed to connect to the requested data source")
+            sys.exit(1)
 
     log = logging.getLogger("cascade")
     log.info("Starting cascade for domain=%s, polling every %ds", args.domain, args.poll_interval)
@@ -73,7 +84,7 @@ def run():
         while True:
             signals = collector.collect()
             if signals:
-                result = bridge.process(signals)
+                bridge.process(signals)
                 stats = bridge.get_stats()
                 log.info(
                     "Processed %d signals | compression=%.1f%% | classified=%d | activated=%d",
@@ -127,12 +138,13 @@ def replay():
         sys.exit(1)
 
     collector = collector_cls()
-    config = {}
-    if args.db_url:
-        config["db_url"] = args.db_url
+    config = _collector_config(args.db_url, args.data)
 
     if hasattr(collector, "connect"):
-        collector.connect(config)
+        connected = collector.connect(config)
+        if connected is False and (args.data or args.db_url):
+            print("Collector failed to connect to the requested data source")
+            sys.exit(1)
 
     log = logging.getLogger("cascade")
     log.info("Replaying all historical data for domain=%s", args.domain)
@@ -159,4 +171,7 @@ def replay():
     log.info("  Classified:  %d (noise: %d, important: %d)",
              summary["classified"], summary["noise"], summary["important"])
     log.info("  Activated:   %d agents", len(summary["activated_types"]))
-    log.info("  FN:          %d", stats["fn_count"])
+    if stats["fn_status"] == "measured":
+        log.info("  FN:          %d", stats["fn_count"])
+    else:
+        log.info("  FN:          not measured (no ground-truth feedback)")

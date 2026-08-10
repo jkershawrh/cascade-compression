@@ -10,7 +10,7 @@ Maps everything to the cascade Signal protocol. Runs as a polling collector.
 
 import logging
 import os
-from typing import List, Optional
+from typing import List
 
 log = logging.getLogger(__name__)
 
@@ -143,6 +143,12 @@ class AAPCollector:
         self._last_event_id = 0
         self._last_activity_id = 0
         self._conn = None
+        self._db_url = AAP_DB_URL
+
+    def connect(self, config: dict) -> bool:
+        """Apply an explicit CLI database URL and verify connectivity."""
+        self._db_url = config.get("db_url", self._db_url)
+        return self._get_conn() is not None
 
     def _get_conn(self):
         if self._conn:
@@ -153,7 +159,7 @@ class AAPCollector:
                 self._conn = None
         try:
             import psycopg2
-            self._conn = psycopg2.connect(AAP_DB_URL)
+            self._conn = psycopg2.connect(self._db_url)
             self._conn.set_session(readonly=True)
             log.info("AAP collector connected to %s", AAP_DB_HOST)
             return self._conn

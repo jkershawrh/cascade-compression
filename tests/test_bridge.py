@@ -1,7 +1,6 @@
 """Tests for the standalone CascadeBridge."""
 
-import pytest
-from cascade_compression.bridge import CascadeBridge, BridgeStats, _to_cascade_signal
+from cascade_compression.bridge import CascadeBridge, _to_cascade_signal
 
 
 class FakeSignal:
@@ -96,7 +95,17 @@ class TestBridgeStats:
         assert "signals_processed" in stats
         assert "compression_ratio" in stats
         assert "fn_count" in stats
-        assert stats["fn_count"] == 0
+        assert stats["fn_count"] is None
+        assert stats["fn_status"] == "not_measured"
+
+    def test_false_negative_feedback_is_measured(self):
+        bridge = CascadeBridge()
+        bridge.record_feedback("alert", was_suppressed=True, is_important=True)
+        bridge.record_feedback("alert", was_suppressed=False, is_important=True)
+        stats = bridge.get_stats()
+        assert stats["fn_count"] == 1
+        assert stats["fn_rate"] == 50.0
+        assert stats["fn_status"] == "measured"
 
     def test_get_llm_summary_empty(self):
         bridge = CascadeBridge()

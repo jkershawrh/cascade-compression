@@ -5,26 +5,32 @@ The bridge initializes the cascade pipeline, processes signals from any
 collector, and optionally forwards survivors to an LLM for classification.
 """
 
-import hashlib
 import json
 import logging
 import os
-import time
 import threading
+import time
 from collections import defaultdict
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict
 from uuid import uuid4
 
-from .cascade.pipeline import CascadePipeline
-from .cascade.protocol import Signal
 from .cascade.agents import default_agents
 from .cascade.corpus_analyzer import CorpusAnalyzer
-from .cascade.dynamic_agents import RepeatFloodSuppressor, DominantNoiseSuppressor
+from .cascade.dynamic_agents import DominantNoiseSuppressor, RepeatFloodSuppressor
+from .cascade.pipeline import CascadePipeline
 from .cascade.promotion import AgentMetrics, Baseline, PromotionEngine, RuleAgent
+from .cascade.protocol import Signal
 
 log = logging.getLogger(__name__)
+
+_PROMOTION_MIN_SAMPLES = 200
+_PROMOTION_ALLOWED_IMPORTANT = 0
+
+
+def _is_noise_classification(classification: str) -> bool:
+    return "routine_noise" in classification or "known_pattern" in classification
 
 
 @dataclass
@@ -101,6 +107,7 @@ class CascadeBridge:
         self.pipeline.register(self._repeat_suppressor)
         self.pipeline.register(self._noise_suppressor)
         self._activated_types: set = set()
+        self._activated_patterns: Dict[str, str] = {}
 
         self.corpus_analyzer = CorpusAnalyzer(
             min_frequency=0.05, min_repeat_count=10,
@@ -112,6 +119,7 @@ class CascadeBridge:
         self._llm_results: list = []
         self._llm_running = False
         self._llm_noise_counts: Dict[str, int] = defaultdict(int)
+        self._llm_important_counts: Dict[str, int] = defaultdict(int)
 
         self._agent_metrics: Dict[str, AgentMetrics] = {}
         self._agent_rules: Dict[str, RuleAgent] = {}
@@ -120,6 +128,7 @@ class CascadeBridge:
         self._promotion_interval: float = 300
 
         self._fn_count = 0
+        self._fn_evaluated = 0
         self._fn_types: Dict[str, int] = defaultdict(int)
 
         self.baseline = Baseline(normal_ranges={})
@@ -190,82 +199,136 @@ class CascadeBridge:
         for agent_metrics, rule in new_agents:
             sig_type = agent_metrics.config.get("signal_type", "")
             pattern_type = agent_metrics.config.get("pattern_type", "")
-            if sig_type and sig_type not in self._activated_types:
-                if self._llm_noise_counts.get(sig_type, 0) >= 3:
-                    if pattern_type == "repeat_flood":
-                        self._repeat_suppressor.add_signal_type(sig_type)
-                    else:
-                        self._noise_suppressor.add_noise_type(sig_type)
-                    self._activated_types.add(sig_type)
-                    self._promotion_log.append({
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "event": "activated",
-                        "agent": f"suppress_{sig_type}",
-                        "tier": "nano",
-                        "status": "llm_confirmed",
-                        "config": agent_metrics.config,
-                    })
-                    log.info("ACTIVATED: %s (LLM confirmed %d noise)",
-                             sig_type, self._llm_noise_counts[sig_type])
-                else:
-                    self._promotion_log.append({
-                        "timestamp": datetime.now(timezone.utc).isoformat(),
-                        "event": "discovered",
-                        "agent": agent_metrics.config.get("signal_type", ""),
-                        "tier": "draft",
-                        "status": "awaiting_llm_validation",
-                        "config": agent_metrics.config,
-                    })
+            if not sig_type or pattern_type not in {"repeat_flood", "dominant_type"}:
+                continue
+
+            self._agent_metrics[agent_metrics.name] = agent_metrics
+            self._agent_rules[agent_metrics.name] = rule
+            self._promotion_log.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "event": "discovered",
+                "agent": agent_metrics.name,
+                "tier": "draft",
+                "status": "awaiting_llm_validation",
+                "config": agent_metrics.config,
+            })
+
+        for name, agent_metrics in self._agent_metrics.items():
+            sig_type = agent_metrics.config.get("signal_type", "")
+            if not sig_type or sig_type in self._activated_types:
+                continue
+
+            noise = self._llm_noise_counts.get(sig_type, 0)
+            important = self._llm_important_counts.get(sig_type, 0)
+            total = noise + important
+            if total == 0:
+                continue
+
+            unsafe_rate = important / total
+            agent_metrics.samples_tested = total
+            agent_metrics.accuracy = noise / total
+            agent_metrics.false_positive_rate = unsafe_rate
+            agent_metrics.false_negative_rate = unsafe_rate
+            agent_metrics.coverage = 1.0
+            agent_metrics.rubric_status = (
+                "green"
+                if total >= _PROMOTION_MIN_SAMPLES
+                and important <= _PROMOTION_ALLOWED_IMPORTANT
+                else "red"
+            )
+
+            previous_tier = agent_metrics.tier
+            while agent_metrics.tier in {"draft", "candidate"}:
+                current_tier = agent_metrics.tier
+                self.promotion.check_promotion(agent_metrics)
+                if agent_metrics.tier == current_tier:
+                    break
+            if agent_metrics.tier != previous_tier:
+                self._promotion_log.append({
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                    "event": "promoted",
+                    "agent": name,
+                    "tier": agent_metrics.tier,
+                    "status": agent_metrics.rubric_status,
+                    "samples": total,
+                    "important": important,
+                })
+
+            if (
+                agent_metrics.tier != "nano"
+                or total < _PROMOTION_MIN_SAMPLES
+                or important > _PROMOTION_ALLOWED_IMPORTANT
+            ):
+                continue
+
+            pattern_type = agent_metrics.config["pattern_type"]
+            if pattern_type == "repeat_flood":
+                self._repeat_suppressor.add_signal_type(sig_type)
+            else:
+                self._noise_suppressor.add_noise_type(sig_type)
+            self._activated_types.add(sig_type)
+            self._activated_patterns[sig_type] = pattern_type
+            self._promotion_log.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "event": "activated",
+                "agent": name,
+                "tier": "nano",
+                "status": "validated",
+                "samples": total,
+                "important": important,
+                "config": agent_metrics.config,
+            })
+            log.info("ACTIVATED: %s (%d noise, %d important)",
+                     sig_type, noise, important)
 
     def _run_llm(self, signals):
         self._llm_running = True
         try:
             import httpx
-            client = httpx.Client(timeout=60, verify=False)
-
-            for sig in signals:
-                text = (
-                    f"{sig['signal_type']} {sig['severity']}: "
-                    f"{sig.get('content', {}).get('message', '')} "
-                    f"namespace={sig.get('namespace', '')}"
-                )
-                try:
-                    t0 = time.monotonic()
-                    r = client.post(
-                        f"{self._llm_url}/v1/chat/completions",
-                        json={
-                            "model": self._llm_model,
-                            "messages": [
-                                {"role": "system", "content": self._system_prompt},
-                                {"role": "user", "content": text},
-                            ],
-                            "max_tokens": 5,
-                            "temperature": 0,
-                        },
-                        headers={"Authorization": f"Bearer {self._llm_key}"},
+            with httpx.Client(timeout=60) as client:
+                for sig in signals:
+                    text = (
+                        f"{sig['signal_type']} {sig['severity']}: "
+                        f"{sig.get('content', {}).get('message', '')} "
+                        f"namespace={sig.get('namespace', '')}"
                     )
-                    ms = (time.monotonic() - t0) * 1000
-                    ans = r.json()["choices"][0]["message"]["content"].strip().lower()
-                    self.stats.llm_classified += 1
+                    try:
+                        t0 = time.monotonic()
+                        r = client.post(
+                            f"{self._llm_url}/v1/chat/completions",
+                            json={
+                                "model": self._llm_model,
+                                "messages": [
+                                    {"role": "system", "content": self._system_prompt},
+                                    {"role": "user", "content": text},
+                                ],
+                                "max_tokens": 5,
+                                "temperature": 0,
+                            },
+                            headers={"Authorization": f"Bearer {self._llm_key}"},
+                        )
+                        r.raise_for_status()
+                        ms = (time.monotonic() - t0) * 1000
+                        ans = r.json()["choices"][0]["message"]["content"].strip().lower()
+                        self.stats.llm_classified += 1
 
-                    self._llm_results.append({
-                        "signal_type": sig["signal_type"],
-                        "classification": ans,
-                        "latency_ms": round(ms),
-                    })
-                    if len(self._llm_results) > 1000:
-                        self._llm_results = self._llm_results[-1000:]
+                        self._llm_results.append({
+                            "signal_type": sig["signal_type"],
+                            "classification": ans,
+                            "latency_ms": round(ms),
+                        })
+                        if len(self._llm_results) > 1000:
+                            self._llm_results = self._llm_results[-1000:]
 
-                    if "routine_noise" in ans or "known_pattern" in ans:
-                        self.stats.llm_noise += 1
-                        self._llm_noise_counts[sig["signal_type"]] += 1
-                    else:
-                        self.stats.llm_important += 1
+                        if _is_noise_classification(ans):
+                            self.stats.llm_noise += 1
+                            self._llm_noise_counts[sig["signal_type"]] += 1
+                        else:
+                            self.stats.llm_important += 1
+                            self._llm_important_counts[sig["signal_type"]] += 1
 
-                except Exception as e:
-                    log.debug("LLM call failed: %s", str(e)[:60])
-
-            client.close()
+                    except Exception as e:
+                        log.debug("LLM call failed: %s", str(e)[:60])
         except Exception as e:
             log.warning("LLM error: %s", e)
         finally:
@@ -286,9 +349,23 @@ class CascadeBridge:
             return
         try:
             state = {
-                "activated_types": list(self._activated_types),
+                "version": 2,
+                "activated_agents": dict(self._activated_patterns),
                 "llm_noise_counts": dict(self._llm_noise_counts),
+                "llm_important_counts": dict(self._llm_important_counts),
                 "known_patterns": list(self.corpus_analyzer._known_patterns),
+                "candidate_agents": [{
+                    "name": metrics.name,
+                    "tier": metrics.tier,
+                    "config": metrics.config,
+                    "rule": {
+                        "name": rule.name,
+                        "signal_types": rule.signal_types,
+                        "condition": rule.condition,
+                        "classification": rule.classification,
+                    },
+                } for name, metrics in self._agent_metrics.items()
+                  if (rule := self._agent_rules.get(name)) is not None],
                 "stats_snapshot": {
                     "signals_processed": self.stats.signals_processed,
                     "llm_classified": self.stats.llm_classified,
@@ -305,12 +382,34 @@ class CascadeBridge:
         try:
             with open(self._state_file) as f:
                 state = json.load(f)
-            self._activated_types = set(state.get("activated_types", []))
             self._llm_noise_counts = defaultdict(int, state.get("llm_noise_counts", {}))
-            self.corpus_analyzer._known_patterns = set(state.get("known_patterns", []))
-            for sig_type in self._activated_types:
-                self._repeat_suppressor.add_signal_type(sig_type)
-                self._noise_suppressor.add_noise_type(sig_type)
+            self._llm_important_counts = defaultdict(
+                int, state.get("llm_important_counts", {})
+            )
+
+            if state.get("version") == 2:
+                self.corpus_analyzer._known_patterns = set(state.get("known_patterns", []))
+                for candidate in state.get("candidate_agents", []):
+                    metrics = AgentMetrics(
+                        name=candidate["name"],
+                        tier=candidate.get("tier", "draft"),
+                        config=candidate.get("config", {}),
+                    )
+                    self._agent_metrics[metrics.name] = metrics
+                    self._agent_rules[metrics.name] = RuleAgent(candidate["rule"])
+
+                self._activated_patterns = dict(state.get("activated_agents", {}))
+                self._activated_types = set(self._activated_patterns)
+                for sig_type, pattern_type in self._activated_patterns.items():
+                    if pattern_type == "repeat_flood":
+                        self._repeat_suppressor.add_signal_type(sig_type)
+                    elif pattern_type == "dominant_type":
+                        self._noise_suppressor.add_noise_type(sig_type)
+            else:
+                # Legacy state did not preserve the suppressor kind. Revalidate it
+                # instead of restoring a type with broader suppression semantics.
+                self.corpus_analyzer._known_patterns = set()
+                log.warning("Legacy cascade state requires safe rediscovery")
             log.info("Restored: %d activated, %d LLM counts, %d patterns",
                      len(self._activated_types), len(self._llm_noise_counts),
                      len(self.corpus_analyzer._known_patterns))
@@ -319,10 +418,25 @@ class CascadeBridge:
 
     def get_stats(self) -> Dict:
         stats = asdict(self.stats)
-        stats["fn_count"] = self._fn_count
-        stats["fn_rate"] = round(self._fn_count / max(1, self.stats.signals_processed) * 100, 3)
+        measured = self._fn_evaluated > 0
+        stats["fn_count"] = self._fn_count if measured else None
+        stats["fn_rate"] = (
+            round(self._fn_count / self._fn_evaluated * 100, 3)
+            if measured else None
+        )
+        stats["fn_evaluated"] = self._fn_evaluated
+        stats["fn_status"] = "measured" if measured else "not_measured"
         stats["fn_types"] = dict(sorted(self._fn_types.items(), key=lambda x: -x[1])[:10])
         return stats
+
+    def record_feedback(
+        self, signal_type: str, *, was_suppressed: bool, is_important: bool
+    ) -> None:
+        """Record externally verified ground truth for FN telemetry."""
+        self._fn_evaluated += 1
+        if was_suppressed and is_important:
+            self._fn_count += 1
+            self._fn_types[signal_type] += 1
 
     def get_llm_results(self, limit: int = 20) -> list:
         return self._llm_results[-limit:]

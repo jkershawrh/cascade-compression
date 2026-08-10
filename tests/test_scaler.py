@@ -8,23 +8,20 @@ from unittest.mock import patch
 
 import pytest
 
+from cascade_compression.infra.scaler import (
+    InferenceScaler,
+    ModelFootprint,
+    PressureSnapshot,
+    PressureThresholds,
+    ScalerState,
+    estimate_memory_gb,
+)
 from cascade_compression.routing.corpora import (
     CorporaEntry,
     ModelConfig,
     RoutingCorpora,
     RubricScorecard,
 )
-from cascade_compression.infra.scaler import (
-    InferenceScaler,
-    ModelBudget,
-    ModelFootprint,
-    PressureScorecard,
-    PressureSnapshot,
-    PressureThresholds,
-    ScalerState,
-    estimate_memory_gb,
-)
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -177,6 +174,18 @@ class TestEvictionRestore:
             state = scaler.observe_pressure(snap)
 
         # mid-2b was evicted second (last), so it should be restored first
+        assert "mid-2b" in state.available_models
+
+    def test_default_availability_thresholds_do_not_trigger_shedding(self):
+        """Low availability must request restoration when pressure is green."""
+        scaler = _make_scaler()
+        scaler.force_evict("big-8b")
+        scaler.force_evict("mid-2b")
+
+        state = scaler.observe_pressure(_make_snapshot())
+
+        assert state.scorecard.models_available_grade == "red"
+        assert state.scorecard.action == "restore"
         assert "mid-2b" in state.available_models
 
     def test_yellow_no_action(self):

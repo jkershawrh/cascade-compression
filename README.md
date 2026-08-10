@@ -1,8 +1,8 @@
 # Cascade Compression
 
-Most AI signals don't need a model. Cascade compression eliminates 85-99% of signal volume with deterministic rules, then classifies the survivors on CPU. No GPU required.
+Cascade compression is designed to reduce signal volume with deterministic rules, then classify survivors on CPU.
 
-**68.7M live signals processed. 99.5% compression. Zero false negatives. $33K 3-year TCO vs $266K GPU.**
+> **Project status: experimental.** Historical benchmark artifacts are preserved for reproducibility, but they are not release guarantees. Compression, false-negative rate, and TCO must be validated together for each workload before deployment.
 
 ## The Idea
 
@@ -25,19 +25,21 @@ cascade-run --domain kubernetes --llm-url https://your-llm/v1 --llm-key sk-...
 # Replay historical data for benchmarking
 cascade-replay --domain finance --data transactions.csv --llm-url https://your-llm/v1
 
-# Run tests (401 tests)
+# Run tests
 make test-all
 
 # TCO dashboard
 make up    # FastAPI on http://localhost:8090
 ```
 
-## Seven Domains, Zero Framework Changes
+## Historical Domain Experiments
 
-| Domain | Source | Compression | Critical Survival |
-|--------|--------|:-----------:|:-----------------:|
-| **Kubernetes** | Live (68.7M) | **99.5%** | 0 FN |
-| **AAP (Ansible)** | Live (1M+) | **96.0%** | 0 FN |
+These point-in-time experiments predate the current safety gates. Consult the raw artifact's false-negative fields before drawing conclusions.
+
+| Domain | Source | Reported Compression | Validation |
+|--------|--------|:--------------------:|:----------:|
+| **Kubernetes** | Live (68.7M) | **99.5%** | Historical; not a release gate |
+| **AAP (Ansible)** | Live (1M+) | **96.0%** | Historical; not a release gate |
 | Financial Services | Synthetic | 61.1% | 92.7% fraud, 100% compliance |
 | Healthcare | Synthetic | 91.0% | 96.6% critical, 99.0% compliance |
 | Insurance | Synthetic | 81.2% | 100% fraud, 99.8% compliance |
@@ -67,13 +69,7 @@ granite-8b and phi4-mini: every error is over-escalation (safe failure), never d
 
 ## TCO
 
-| Approach | 3-Year Cost |
-|----------|------------:|
-| **Cascade on Xeon 6** | **$33K** |
-| GPU inference (H100) | $266K |
-| Cloud API | $540K |
-
-Cascade footprint: 13 CPU, 13 GB. One Xeon 6 at 10% utilization. Optional governance adds 3.5 CPU if needed for regulated industries.
+The calculator produces workload-specific estimates only when measured throughput exists for every requested model/hardware pair. Unsupported options are reported separately rather than being sized as one unit. Hardware prices and throughput data remain operator-supplied assumptions, not validated cost guarantees.
 
 ## Documentation
 

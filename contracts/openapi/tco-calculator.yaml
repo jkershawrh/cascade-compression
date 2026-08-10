@@ -311,6 +311,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/HardwareComparison"
+        unsupported_options:
+          type: array
+          items:
+            $ref: "#/components/schemas/UnsupportedHardwareOption"
 
     CascadeSummary:
       type: object
@@ -379,6 +383,20 @@ components:
           type: array
           items:
             type: string
+
+    UnsupportedHardwareOption:
+      type: object
+      required:
+        - hardware_id
+        - hardware_name
+        - reason
+      properties:
+        hardware_id:
+          type: string
+        hardware_name:
+          type: string
+        reason:
+          type: string
 
     ValidationError:
       type: object
