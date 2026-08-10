@@ -99,3 +99,7 @@ cascade_compression/
   metrics/           Precision metric (LLM-vs-LLM audit)
   benchmarks/        Harness, shootouts, synthetic generators
 ```
+
+## Platform
+
+Pure Python — runs on ARM (Apple Silicon, Graviton, Ampere) and x86 (Xeon, EPYC) with no architecture-specific dependencies. The LLM is a separate service called over HTTP — deploy it on whatever hardware fits (Xeon 6 CPU, GPU, cloud API). The cascade itself doesn't care what serves the model.
