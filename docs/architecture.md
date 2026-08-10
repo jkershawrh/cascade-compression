@@ -242,3 +242,191 @@ CascadeBridge.process(signals)
 - **Fire-and-forget ledger writes.** Ledger failures are logged but never block the pipeline. The cascade's job is signal processing, not governance.
 - **Terse prompts outperform detailed ones.** By the time signals reach the LLM, the cascade has eliminated 85-99% of noise. The remaining signals are ambiguous edge cases where general knowledge beats domain instructions.
 - **Temperature=0, always.** All models are 100% deterministic. Three consecutive runs produce identical output.
+
+---
+
+## Memory Domain Pack — Institutional Knowledge Extraction
+
+The cascade framework processes any signal type without modification. The memory domain pack applies this to agent memory — extracting institutional knowledge from what agents observe across projects.
+
+### System Overview
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     INSTITUTIONAL KNOWLEDGE ENGINE                      │
+│                                                                         │
+│  ┌───────────────────────────────────────────────────────────────────┐  │
+│  │                     SOURCE LAYER (pluggable)                      │  │
+│  │                                                                   │  │
+│  │  Dev Sources                        Workload Sources              │  │
+│  │  ┌─────────────────┐               ┌──────────────────────┐      │  │
+│  │  │ Claude Code     │               │ Immutable Ledger     │      │  │
+│  │  │ memories        │               │ (decision records)   │      │  │
+│  │  ├─────────────────┤               ├──────────────────────┤      │  │
+│  │  │ CLAUDE.md /     │               │ JSONL agent logs     │      │  │
+│  │  │ AGENTS.md       │               │ (any format)         │      │  │
+│  │  ├─────────────────┤               └──────────────────────┘      │  │
+│  │  │ Session files   │                                              │  │
+│  │  │ (handoff/park)  │               Adding a source =              │  │
+│  │  ├─────────────────┤               one parser function            │  │
+│  │  │ Cursor rules    │                                              │  │
+│  │  │ (.cursorrules)  │                                              │  │
+│  │  ├─────────────────┤                                              │  │
+│  │  │ Any markdown    │                                              │  │
+│  │  │ knowledge base  │                                              │  │
+│  │  └─────────────────┘                                              │  │
+│  └────────────────┬──────────────────────────────┬───────────────────┘  │
+│                   │                              │                      │
+│                   ▼                              ▼                      │
+│  ┌────────────────────────────┐  ┌───────────────────────────────────┐  │
+│  │    CLAIM EXTRACTOR         │  │    WORKLOAD DISTILLER             │  │
+│  │                            │  │                                   │  │
+│  │  Parse markdown:           │  │  Aggregate decisions:             │  │
+│  │  ├─ opening paragraph      │  │  ├─ agent effectiveness          │  │
+│  │  ├─ **Why:** section       │  │  ├─ signal landscape             │  │
+│  │  ├─ **How to apply:**      │  │  ├─ multi-agent routing          │  │
+│  │  ├─ bullet points          │  │  ├─ confidence distribution      │  │
+│  │  └─ table rows             │  │  ├─ safety invariants            │  │
+│  │                            │  │  ├─ namespace hotspots           │  │
+│  │  Classify each claim:      │  │  └─ compression achieved         │  │
+│  │  ├─ rule (imperative)      │  │                                   │  │
+│  │  ├─ fact (measurements)    │  │  Each aggregate pattern           │  │
+│  │  ├─ preference (user)      │  │  becomes one claim               │  │
+│  │  ├─ decision (choice)      │  │                                   │  │
+│  │  └─ caveat (temporal)      │  │                                   │  │
+│  │                            │  │                                   │  │
+│  │  Dedup: SHA256 + trigrams  │  │                                   │  │
+│  │  Filter: skip secrets      │  │                                   │  │
+│  └────────────┬───────────────┘  └───────────────┬───────────────────┘  │
+│               │                                  │                      │
+│               ▼                                  ▼                      │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                    TOPIC FREQUENCY ANALYSIS                      │   │
+│  │                                                                  │   │
+│  │  20 regex topic patterns scan every claim:                       │   │
+│  │  methodology, granite_xeon, openshift_deploy, governance, ...    │   │
+│  │                                                                  │   │
+│  │  Topics appearing in 3+ projects = institutional knowledge       │   │
+│  │                                                                  │   │
+│  │  ┌──────────────────────────────────────────────────┐            │   │
+│  │  │  "granite_xeon"      → 35 projects               │            │   │
+│  │  │  "methodology"       → 34 projects               │            │   │
+│  │  │  "openshift_deploy"  → 37 projects               │            │   │
+│  │  │  "oauth_security"    →  9 projects               │            │   │
+│  │  │  ...22 topics total                              │            │   │
+│  │  └──────────────────────────────────────────────────┘            │   │
+│  └──────────────────────────────┬───────────────────────────────────┘   │
+│                                 │                                       │
+│                                 ▼                                       │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │               LLM ENRICHMENT (optional, granite-8b)              │   │
+│  │                                                                  │   │
+│  │  Untagged rules/preferences → "shared or specific?"              │   │
+│  │  92% of untagged rules classified as shared knowledge            │   │
+│  │  Catches single-source-but-universal claims:                     │   │
+│  │    "Keep Jira lean" (1 project, applies everywhere)              │   │
+│  │    "No auto-remediation" (1 project, universal principle)        │   │
+│  └──────────────────────────────┬───────────────────────────────────┘   │
+│                                 │                                       │
+│                                 ▼                                       │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │                      OUTPUT LAYER                                │   │
+│  │                                                                  │   │
+│  │  ┌──────────────────────┐  ┌─────────────────────────────────┐  │   │
+│  │  │  Dev Corpus          │  │  Workload Corpus                │  │   │
+│  │  │                      │  │                                 │  │   │
+│  │  │  Rules (174)         │  │  Agent effectiveness            │  │   │
+│  │  │  Facts (1,353)       │  │  Signal landscape               │  │   │
+│  │  │  Preferences (28)    │  │  Safety invariants              │  │   │
+│  │  │  Decisions (7)       │  │  Compression metrics            │  │   │
+│  │  │  Caveats (17)        │  │  Confidence patterns            │  │   │
+│  │  │                      │  │                                 │  │   │
+│  │  │  22 topics           │  │  Per-source analysis            │  │   │
+│  │  │  1,011 institutional │  │                                 │  │   │
+│  │  │  claims              │  │                                 │  │   │
+│  │  │                      │  │                                 │  │   │
+│  │  │  Audience:           │  │  Audience:                      │  │   │
+│  │  │  developer / agent   │  │  ops / architecture             │  │   │
+│  │  │  starting a session  │  │  capacity planning              │  │   │
+│  │  └──────────────────────┘  └─────────────────────────────────┘  │   │
+│  │                                                                  │   │
+│  │  Formats: JSON (programmatic) + Markdown (human review)          │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                         │
+│  Zero cascade framework changes. Same domain pack pattern as            │
+│  K8s, AAP, finance, healthcare, insurance, retail, telecom.             │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Data Flow
+
+```
+Source files (201 memories + CLAUDE.md + sessions + Cursor + ledger)
+       │
+       ▼
+   memory_parsers.py / memory_parsers_workload.py
+       │ each parser yields {path, name, memory_type, project, source_system, body}
+       ▼
+   ClaimExtractor.extract(record)
+       │ splits body into individual claims
+       │ classifies: rule / fact / preference / decision / caveat
+       │ dedup: SHA256 exact + trigram near-match
+       │ filters: skip secrets (sk-*, sha256~*, Bearer tokens)
+       │ topics: regex match against 20 institutional patterns
+       ▼
+   MemorySignal (one per claim)
+       │ maps to cascade Signal protocol
+       │ signal_type = claim_type, severity = claim_severity
+       ▼
+   CascadePipeline.run() [optional — nano tier]
+       │ severity gate drops info-level session noise
+       │ dedup catches exact-match restated facts
+       ▼
+   LLM classification [optional — micro tier]
+       │ "shared or specific?" for untagged claims
+       ▼
+   Corpus output
+       ├── shared-knowledge-corpus.json (structured, for agents)
+       └── shared-knowledge-corpus.md (readable, for humans)
+```
+
+### Adding a New Agent Framework
+
+One function in `memory_parsers.py`:
+
+```python
+def scan_your_framework(data_dir: str, since: float = 0) -> Iterator[dict]:
+    """Parse your agent's memory/config files."""
+    for file in Path(data_dir).rglob("*.your_ext"):
+        if since and file.stat().st_mtime < since:
+            continue
+        yield {
+            "path": str(file),
+            "name": file.stem,
+            "description": "",
+            "memory_type": "your_type",
+            "project": file.parent.name,
+            "source_system": "your-framework",
+            "body": file.read_text(),
+        }
+```
+
+Then add to collector config:
+```python
+collector.connect({"your_framework_dir": "/path/to/data"})
+```
+
+The ClaimExtractor, topic analysis, dedup, and LLM enrichment all work automatically on the new source. No framework changes needed.
+
+### Proven Results
+
+| Metric | Value |
+|--------|------:|
+| Claims extracted | 2,485 |
+| Source types | 5 (Claude Code, CLAUDE.md, sessions, Cursor, ledger) |
+| Projects scanned | 63 |
+| Institutional topics | 22 |
+| Institutional claims | 1,011 (40%) |
+| Project-specific claims | 1,466 (60%) |
+| LLM enrichment rate | 92% of untagged rules classified as shared |
+| Workload claims | 8 (from 595K+ agent decisions) |
