@@ -39,6 +39,63 @@ Raw signals (millions/day)
 
 ---
 
+## Full System
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        CASCADE COMPRESSION SYSTEM                           │
+│                                                                             │
+│  ┌───────────────────────────────────────────────────────────────────────┐  │
+│  │                         DOMAIN PACKS                                  │  │
+│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌──────────────┐  │  │
+│  │  │   K8s   │ │   AAP   │ │ Finance │ │Healthcare│ │  + 4 more    │  │  │
+│  │  │Collector│ │Collector│ │Collector│ │Collector │ │  (insurance, │  │  │
+│  │  │+ prompt │ │+ prompt │ │+ prompt │ │+ prompt  │ │  retail,     │  │  │
+│  │  │         │ │         │ │         │ │          │ │  telecom,    │  │  │
+│  │  │  Live   │ │  Live   │ │Synthetic│ │Synthetic │ │  memory)     │  │  │
+│  │  └────┬────┘ └────┬────┘ └────┬────┘ └────┬─────┘ └──────┬───────┘  │  │
+│  └───────┼──────────┼──────────┼──────────┼──────────────┼──────────────┘  │
+│          └──────────┴──────────┴──────────┴──────────────┘                  │
+│                                    │                                        │
+│                              Signal protocol                                │
+│                     {type, severity, source, content}                        │
+│                                    │                                        │
+│  ┌─────────────────────────────────▼─────────────────────────────────────┐  │
+│  │                      CASCADE ENGINE (unchanged)                       │  │
+│  │                                                                       │  │
+│  │   CascadeBridge                                                       │  │
+│  │   ├── CascadePipeline (nano tier)                                     │  │
+│  │   │   ├── Stage 1: Dedup → Transient Suppressor → Severity Gate       │  │
+│  │   │   ├── Stage 2: Pattern Classifier → Threshold Classifier          │  │
+│  │   │   └── Stage 3: [Learned Agents — self-discovered]                 │  │
+│  │   │                                                                   │  │
+│  │   ├── LLM Classification (micro tier)                                 │  │
+│  │   │   granite-8b / phi4-mini on CPU                                   │  │
+│  │   │   routine_noise | known_pattern | needs_attention | real_incident │  │
+│  │   │                                                                   │  │
+│  │   └── Self-Tuning Loop                                                │  │
+│  │       CorpusAnalyzer → PromotionEngine → Agent activation/demotion    │  │
+│  └───────────────────────┬───────────────────────────────────────────────┘  │
+│                          │                                                  │
+│              ┌───────────┴───────────┐                                      │
+│              ▼                       ▼                                      │
+│  ┌───────────────────┐  ┌────────────────────────────────┐                  │
+│  │  TCO CALCULATOR   │  │  GOVERNANCE (optional)         │                  │
+│  │                   │  │                                │                  │
+│  │  Xeon vs GPU vs   │  │  Immutable Ledger              │                  │
+│  │  Cloud API cost   │  │  (hash-chained decisions)      │                  │
+│  │  comparison       │  │         │                      │                  │
+│  │                   │  │  GCL Audit Loop                │                  │
+│  │  FastAPI :8090    │  │  (LLM adversary probe on       │                  │
+│  │                   │  │   sampled drops)               │                  │
+│  └───────────────────┘  └────────────────────────────────┘                  │
+│                                                                             │
+│  Runs on one Xeon 6 server at 10% utilization. No GPU.                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Technical Architecture
 
 ### Signal Protocol
