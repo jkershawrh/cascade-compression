@@ -14,16 +14,12 @@ import logging
 import os
 import re
 import time
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
-
-import yaml
+from typing import Any, Dict, List, Tuple
 
 from .base import BaseCollector
 
 log = logging.getLogger(__name__)
 
-_FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 _BOLD_SECTION_RE = re.compile(r"\*\*([^*]+):\*\*\s*(.*?)(?=\n\*\*[^*]+:\*\*|\Z)", re.DOTALL)
 _BULLET_RE = re.compile(r"^[\s]*[-*]\s+(.+)", re.MULTILINE)
@@ -55,17 +51,6 @@ _CAVEAT_RE = re.compile(
     re.IGNORECASE,
 )
 
-_SESSION_PREFIXES = {
-    "handoff-": "handoff",
-    "park-": "park",
-    "standup-": "standup",
-    "session-": "transcript",
-}
-
-_EPHEMERAL_SECTIONS = {
-    "what's running", "current state", "key config", "infrastructure",
-    "stash", "to resume", "git status",
-}
 
 
 def _normalize(text: str) -> str:
@@ -305,36 +290,92 @@ class ClaimExtractor:
 
 
 class MemoryCollector(BaseCollector):
-    """Collects claim-level signals from agent memory files."""
+    """Collects claim-level signals from any agent memory system.
+
+    Pluggable architecture: configure sources in connect(config).
+    Each source is a (scanner_function, kwargs) pair. Built-in sources:
+    - claude_projects_dir: Claude Code project memories
+    - sessions_dir: session handoff/park/standup files
+    - cursor_dirs: Cursor AI .cursorrules and .cursor/rules/
+    - claude_md_dir: CLAUDE.md / AGENTS.md from repos
+    - markdown_dirs: any directory of .md files
+
+    All sources produce the same record format. The ClaimExtractor
+    handles splitting, classifying, dedup, and topic extraction.
+    """
 
     name = "memory"
 
     def __init__(self):
-        self._claude_dir = ""
-        self._sessions_dir = ""
+        self._sources: List[Dict[str, Any]] = []
         self._connected = False
         self._last_scan_time = 0.0
         self._extractor = ClaimExtractor()
 
     def connect(self, config: dict) -> bool:
-        self._claude_dir = config.get(
+        from . import memory_parsers as parsers
+
+        self._sources = []
+
+        claude_dir = config.get(
             "claude_projects_dir",
             os.path.expanduser("~/.claude/projects"),
         )
-        self._sessions_dir = config.get(
+        if os.path.isdir(claude_dir):
+            self._sources.append({
+                "name": f"claude-code({claude_dir})",
+                "scanner": parsers.scan_claude_memories,
+                "kwargs": {"projects_dir": claude_dir},
+            })
+
+        sessions_dir = config.get(
             "sessions_dir",
             os.path.expanduser("~/Desktop/sessions"),
         )
-        has_claude = os.path.isdir(self._claude_dir)
-        has_sessions = os.path.isdir(self._sessions_dir)
-        self._connected = has_claude or has_sessions
+        if os.path.isdir(sessions_dir):
+            self._sources.append({
+                "name": f"sessions({sessions_dir})",
+                "scanner": parsers.scan_session_files,
+                "kwargs": {"sessions_dir": sessions_dir},
+            })
+
+        for cursor_dir in config.get("cursor_dirs", []):
+            if os.path.isdir(cursor_dir):
+                self._sources.append({
+                    "name": f"cursor({cursor_dir})",
+                    "scanner": parsers.scan_cursor_rules,
+                    "kwargs": {"repo_dir": cursor_dir},
+                })
+
+        claude_md_dir = config.get("claude_md_dir", "")
+        if claude_md_dir and os.path.isdir(claude_md_dir):
+            self._sources.append({
+                "name": f"claude-md({claude_md_dir})",
+                "scanner": parsers.scan_claude_md_files,
+                "kwargs": {"search_dir": claude_md_dir},
+            })
+
+        for md_entry in config.get("markdown_dirs", []):
+            if isinstance(md_entry, str):
+                md_entry = {"path": md_entry}
+            path = md_entry.get("path", "")
+            if path and os.path.isdir(path):
+                self._sources.append({
+                    "name": f"markdown({path})",
+                    "scanner": parsers.scan_markdown_dir,
+                    "kwargs": {
+                        "docs_dir": path,
+                        "project": md_entry.get("project", os.path.basename(path)),
+                        "source_system": md_entry.get("source_system", "markdown"),
+                    },
+                })
+
+        self._connected = len(self._sources) > 0
         if self._connected:
-            sources = []
-            if has_claude:
-                sources.append(f"claude({self._claude_dir})")
-            if has_sessions:
-                sources.append(f"sessions({self._sessions_dir})")
-            log.info("Memory collector connected: %s", ", ".join(sources))
+            log.info("Memory collector connected: %s",
+                     ", ".join(s["name"] for s in self._sources))
+        else:
+            log.warning("No memory sources found")
         return self._connected
 
     def collect(self) -> list:
@@ -374,112 +415,7 @@ class MemoryCollector(BaseCollector):
         }
 
     def _scan_records(self, since: float = 0):
-        yield from self._scan_claude_memories(since)
-        yield from self._scan_session_files(since)
-
-    def _scan_claude_memories(self, since: float = 0):
-        claude_path = Path(self._claude_dir)
-        if not claude_path.is_dir():
-            return
-
-        for project_dir in sorted(claude_path.iterdir()):
-            if not project_dir.is_dir():
-                continue
-            memory_dir = project_dir / "memory"
-            if not memory_dir.is_dir():
-                continue
-            project_name = project_dir.name
-            for md_file in sorted(memory_dir.glob("*.md")):
-                if md_file.name == "MEMORY.md":
-                    continue
-                if since and md_file.stat().st_mtime < since:
-                    continue
-                record = self._parse_claude_memory(md_file, project_name)
-                if record:
-                    yield record
-
-    def _scan_session_files(self, since: float = 0):
-        sessions_path = Path(self._sessions_dir)
-        if not sessions_path.is_dir():
-            return
-
-        for md_file in sorted(sessions_path.glob("*.md")):
-            if since and md_file.stat().st_mtime < since:
-                continue
-            for record in self._parse_session_file(md_file):
-                yield record
-
-    def _parse_claude_memory(self, filepath: Path, project_name: str) -> Optional[dict]:
-        try:
-            text = filepath.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return None
-
-        frontmatter = {}
-        body = text
-        fm_match = _FRONTMATTER_RE.match(text)
-        if fm_match:
-            try:
-                frontmatter = yaml.safe_load(fm_match.group(1)) or {}
-            except yaml.YAMLError:
-                pass
-            body = text[fm_match.end():]
-
-        metadata = frontmatter.get("metadata", {})
-        return {
-            "path": str(filepath),
-            "name": frontmatter.get("name", filepath.stem),
-            "description": frontmatter.get("description", ""),
-            "memory_type": metadata.get("type", "unknown"),
-            "project": project_name,
-            "source_system": "claude-memory",
-            "body": body.strip(),
-        }
-
-    def _parse_session_file(self, filepath: Path) -> List[dict]:
-        try:
-            text = filepath.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            return []
-
-        filename = filepath.name
-        session_type = "unknown"
-        project = "unknown"
-        for prefix, stype in _SESSION_PREFIXES.items():
-            if filename.startswith(prefix):
-                session_type = stype
-                rest = filename[len(prefix):].rsplit(".", 1)[0]
-                parts = rest.rsplit("-", 4)
-                if len(parts) >= 5:
-                    project = "-".join(parts[:-4])
-                elif parts:
-                    project = parts[0]
-                break
-
-        if session_type == "transcript":
-            return []
-
-        sections = re.split(r"\n## ", text)
-        records = []
-        for i, section in enumerate(sections):
-            if i == 0:
-                continue
-            lines = section.split("\n", 1)
-            section_name = lines[0].strip()
-            section_body = lines[1].strip() if len(lines) > 1 else ""
-            if not section_body or len(section_body) < 20:
-                continue
-            if section_name.lower() in _EPHEMERAL_SECTIONS:
-                continue
-
-            records.append({
-                "path": str(filepath),
-                "name": f"{filepath.stem}/{section_name}",
-                "description": f"{session_type}: {section_name}",
-                "memory_type": session_type,
-                "project": project,
-                "source_system": "session",
-                "body": section_body,
-            })
-
-        return records
+        for source in self._sources:
+            kwargs = dict(source["kwargs"])
+            kwargs["since"] = since
+            yield from source["scanner"](**kwargs)
