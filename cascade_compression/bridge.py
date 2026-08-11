@@ -8,6 +8,7 @@ collector, and optionally forwards survivors to an LLM for classification.
 import json
 import logging
 import os
+import random
 import threading
 import time
 from collections import defaultdict
@@ -134,6 +135,16 @@ class CascadeBridge:
         self._verdict_watermark: str = ""
         self._verdict_poll_running = False
 
+        self._shadow_sample_rate = float(os.getenv("CASCADE_SHADOW_RATE", "0.05"))
+        self._shadow_buffer: list = []
+        self._shadow_max_buffer = 100
+        self._shadow_running = False
+        self._shadow_checks = 0
+        self._shadow_demotions = 0
+
+        self._activation_ttl_hours = float(os.getenv("CASCADE_ACTIVATION_TTL_HOURS", "72"))
+        self._activation_timestamps: Dict[str, str] = {}
+
         self.baseline = Baseline(normal_ranges={})
         self._observed_ranges: Dict[str, Dict[str, list]] = defaultdict(lambda: defaultdict(list))
 
@@ -162,6 +173,9 @@ class CascadeBridge:
 
         self.corpus_analyzer.observe(cascade_signals)
 
+        if self._activated_types and self._shadow_sample_rate > 0 and self._llm_url:
+            self._queue_shadow_samples(cascade_result, cascade_signals)
+
         for sig in cascade_result.remaining:
             self._llm_buffer.append({
                 "signal_type": sig.signal_type,
@@ -176,6 +190,11 @@ class CascadeBridge:
             batch = list(self._llm_buffer[:50])
             self._llm_buffer = self._llm_buffer[50:]
             threading.Thread(target=self._run_llm, args=(batch,), daemon=True).start()
+
+        if self._shadow_buffer and not self._shadow_running and self._llm_url:
+            batch = list(self._shadow_buffer[:20])
+            self._shadow_buffer = self._shadow_buffer[20:]
+            threading.Thread(target=self._run_shadow_llm, args=(batch,), daemon=True).start()
 
         now = time.monotonic()
         if now - self._last_promotion_time > self._promotion_interval:
@@ -275,6 +294,7 @@ class CascadeBridge:
                 self._noise_suppressor.add_noise_type(sig_type)
             self._activated_types.add(sig_type)
             self._activated_patterns[sig_type] = pattern_type
+            self._activation_timestamps[sig_type] = datetime.now(timezone.utc).isoformat()
             self._promotion_log.append({
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "event": "activated",
@@ -288,7 +308,39 @@ class CascadeBridge:
             log.info("ACTIVATED: %s (%d noise, %d important)",
                      sig_type, noise, important)
 
+        self._check_activation_ttl()
         self._flush_promotion_events()
+
+    def _check_activation_ttl(self):
+        """Suspend agents whose activation has expired."""
+        if not self._activation_timestamps or self._activation_ttl_hours <= 0:
+            return
+
+        now = datetime.now(timezone.utc)
+        expired = []
+        for sig_type, ts_str in list(self._activation_timestamps.items()):
+            try:
+                activated_at = datetime.fromisoformat(ts_str)
+                age_hours = (now - activated_at).total_seconds() / 3600
+                if age_hours >= self._activation_ttl_hours:
+                    expired.append(sig_type)
+            except (ValueError, TypeError):
+                continue
+
+        for sig_type in expired:
+            for name, metrics in self._agent_metrics.items():
+                if metrics.config.get("signal_type") == sig_type and metrics.tier in {"nano", "micro", "macro"}:
+                    self.promotion.demote(
+                        metrics,
+                        reason=f"activation TTL expired ({self._activation_ttl_hours}h)",
+                    )
+                    self.promotion.reactivate(metrics)
+                    metrics.samples_tested = 0
+                    log.warning("Agent '%s' TTL expired for %s — must re-qualify",
+                                name, sig_type)
+                    break
+            self._deactivate_agent(sig_type)
+            self._activation_timestamps.pop(sig_type, None)
 
     def _run_llm(self, signals):
         self._llm_running = True
@@ -342,6 +394,82 @@ class CascadeBridge:
             log.warning("LLM error: %s", e)
         finally:
             self._llm_running = False
+
+    def _queue_shadow_samples(self, cascade_result, cascade_signals):
+        """Sample suppressed signals from activated agents for LLM re-check."""
+        signal_map = {s.signal_id: s for s in cascade_signals}
+        candidates = []
+        for d in cascade_result.decisions:
+            if d.outcome.value not in ("suppress", "drop"):
+                continue
+            sig = signal_map.get(d.signal_id)
+            if sig and sig.signal_type in self._activated_types:
+                candidates.append(sig)
+
+        if not candidates or self._shadow_sample_rate <= 0:
+            return
+
+        sample_size = max(1, int(len(candidates) * self._shadow_sample_rate))
+        sample = random.sample(candidates, min(sample_size, len(candidates)))
+        for sig in sample:
+            self._shadow_buffer.append({
+                "signal_type": sig.signal_type,
+                "severity": sig.severity,
+                "namespace": sig.namespace,
+                "content": sig.content,
+            })
+        if len(self._shadow_buffer) > self._shadow_max_buffer:
+            self._shadow_buffer = self._shadow_buffer[-self._shadow_max_buffer:]
+
+    def _run_shadow_llm(self, signals):
+        """Re-classify suppressed signals via LLM. Disagreement → demotion."""
+        self._shadow_running = True
+        try:
+            import httpx
+            with httpx.Client(timeout=60) as client:
+                for sig in signals:
+                    text = (
+                        f"{sig['signal_type']} {sig['severity']}: "
+                        f"{sig.get('content', {}).get('message', '')} "
+                        f"namespace={sig.get('namespace', '')}"
+                    )
+                    try:
+                        r = client.post(
+                            f"{self._llm_url}/v1/chat/completions",
+                            json={
+                                "model": self._llm_model,
+                                "messages": [
+                                    {"role": "system", "content": self._system_prompt},
+                                    {"role": "user", "content": text},
+                                ],
+                                "max_tokens": 5,
+                                "temperature": 0,
+                            },
+                            headers={"Authorization": f"Bearer {self._llm_key}"},
+                        )
+                        r.raise_for_status()
+                        ans = r.json()["choices"][0]["message"]["content"].strip().lower()
+                        self._shadow_checks += 1
+
+                        if not _is_noise_classification(ans):
+                            self._shadow_demotions += 1
+                            self.record_feedback(
+                                sig["signal_type"],
+                                was_suppressed=True,
+                                is_important=True,
+                            )
+                            log.warning(
+                                "SHADOW VALIDATION: LLM says '%s' is important "
+                                "(classified '%s') — demotion triggered",
+                                sig["signal_type"], ans,
+                            )
+
+                    except Exception as e:
+                        log.debug("Shadow LLM call failed: %s", str(e)[:60])
+        except Exception as e:
+            log.warning("Shadow LLM error: %s", e)
+        finally:
+            self._shadow_running = False
 
     def _write_to_ledger(self, cascade_result, cascade_signals):
         try:
@@ -478,6 +606,7 @@ class CascadeBridge:
                 } for name, metrics in self._agent_metrics.items()
                   if (rule := self._agent_rules.get(name)) is not None],
                 "verdict_watermark": self._verdict_watermark,
+                "activation_timestamps": dict(self._activation_timestamps),
                 "stats_snapshot": {
                     "signals_processed": self.stats.signals_processed,
                     "llm_classified": self.stats.llm_classified,
@@ -500,6 +629,7 @@ class CascadeBridge:
             )
 
             self._verdict_watermark = state.get("verdict_watermark", "")
+            self._activation_timestamps = state.get("activation_timestamps", {})
             if state.get("version") == 2:
                 self.corpus_analyzer._known_patterns = set(state.get("known_patterns", []))
                 for candidate in state.get("candidate_agents", []):
@@ -540,6 +670,10 @@ class CascadeBridge:
         stats["fn_evaluated"] = self._fn_evaluated
         stats["fn_status"] = "measured" if measured else "not_measured"
         stats["fn_types"] = dict(sorted(self._fn_types.items(), key=lambda x: -x[1])[:10])
+        stats["shadow_checks"] = self._shadow_checks
+        stats["shadow_demotions"] = self._shadow_demotions
+        stats["shadow_sample_rate"] = self._shadow_sample_rate
+        stats["activation_ttl_hours"] = self._activation_ttl_hours
         return stats
 
     def record_feedback(
