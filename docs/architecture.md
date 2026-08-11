@@ -47,18 +47,18 @@ Raw signals (millions/day)
 │                                                                             │
 │  ┌───────────────────────────────────────────────────────────────────────┐  │
 │  │                         DOMAIN PACKS                                  │  │
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌──────────────┐  │  │
-│  │  │   K8s   │ │   AAP   │ │ Finance │ │Healthcare│ │  + 4 more    │  │  │
-│  │  │Collector│ │Collector│ │Collector│ │Collector │ │  (insurance, │  │  │
-│  │  │+ prompt │ │+ prompt │ │+ prompt │ │+ prompt  │ │  retail,     │  │  │
-│  │  │         │ │         │ │         │ │          │ │  telecom,    │  │  │
-│  │  │  Live   │ │  Live   │ │Synthetic│ │Synthetic │ │  memory)     │  │  │
-│  │  └────┬────┘ └────┬────┘ └────┬────┘ └────┬─────┘ └──────┬───────┘  │  │
-│  └───────┼──────────┼──────────┼──────────┼──────────────┼──────────────┘  │
-│          └──────────┴──────────┴──────────┴──────────────┘                  │
+│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌──────────┐ ┌──────────────┐    │  │
+│  │  │   K8s   │ │   AAP   │ │ Finance │ │Healthcare│ │  + 4 more    │    │  │
+│  │  │Collector│ │Collector│ │Collector│ │Collector │ │  (insurance, │    │  │
+│  │  │+ prompt │ │+ prompt │ │+ prompt │ │+ prompt  │ │  retail,     │    │  │
+│  │  │         │ │         │ │         │ │          │ │  telecom,    │    │  │
+│  │  │  Live   │ │  Live   │ │Synthetic│ │Synthetic │ │  memory)     │    │  │
+│  │  └────┬────┘ └────┬────┘ └────┬────┘ └────┬─────┘ └──────┬───────┘    │  │
+│  └───────┼────────-──┼─────────-─┼─────────-─┼──────────────┼───────────-┘  │
+│          └───────-───┴──────-────┴─────-─────┴──────────────┘               │
 │                                    │                                        │
 │                              Signal protocol                                │
-│                     {type, severity, source, content}                        │
+│                     {type, severity, source, content}                       │
 │                                    │                                        │
 │  ┌─────────────────────────────────▼─────────────────────────────────────┐  │
 │  │                      CASCADE ENGINE (unchanged)                       │  │
@@ -123,28 +123,28 @@ The framework doesn't know what domain produced the signal. Domain-specific know
                     1,000 signals/batch
                            │
     ═══════════════════════╪═══════════════════════════════════════
-    ║  STAGE 1: NOISE ELIMINATION                                ║
-    ║                                                            ║
-    ║  ┌──────────────┐     ┌───────────────┐   ┌────────────┐  ║
-    ║  │ Deduplicator │     │   Transient   │   │  Severity  │  ║
-    ║  │              │     │  Suppressor   │   │    Gate    │  ║
-    ║  │ SHA256 hash  │     │              │   │            │  ║
-    ║  │ of content   │     │ Knows which  │   │ Drops info │  ║
-    ║  │ 60s window   │     │ types are    │   │ severity   │  ║
-    ║  │              │     │ transient    │   │ unless     │  ║
-    ║  │ Same signal  │     │ at low sev   │   │ escalation │  ║
-    ║  │ within 60s?  │     │              │   │ keywords   │  ║
-    ║  │ → DEDUPE     │     │ Fail-open:   │   │ match      │  ║
-    ║  │              │     │ oomkill,     │   │            │  ║
-    ║  │ ~150 removed │     │ panic,       │   │ ~450       │  ║
-    ║  │              │     │ security     │   │ removed    │  ║
-    ║  │              │     │ always pass  │   │            │  ║
-    ║  │              │     │              │   │            │  ║
-    ║  │              │     │ ~200 removed │   │            │  ║
-    ║  └──────┬───────┘     └──────┬───────┘   └─────┬──────┘  ║
-    ║         └────────────────────┴─────────────────┘          ║
-    ║                          │                                 ║
-    ║                    200 signals remain                      ║
+    ║  STAGE 1: NOISE ELIMINATION                                 ║
+    ║                                                             ║
+    ║  ┌──────────────┐     ┌───────────────┐   ┌────────────┐    ║
+    ║  │ Deduplicator │     │   Transient   │   │  Severity  │    ║
+    ║  │              │     │  Suppressor   │   │    Gate    │    ║
+    ║  │ SHA256 hash  │     │               │   │            │    ║
+    ║  │ of content   │     │ Knows which   │   │ Drops info │    ║
+    ║  │ 60s window   │     │ types are     │   │ severity   │    ║
+    ║  │              │     │ transient     │   │ unless     │    ║
+    ║  │ Same signal  │     │ at low sev    │   │ escalation │    ║
+    ║  │ within 60s?  │     │               │   │ keywords   │    ║
+    ║  │ → DEDUPE     │     │ Fail-open:    │   │ match      │    ║
+    ║  │              │     │ oomkill,      │   │            │    ║
+    ║  │ ~150 removed │     │ panic,        │   │ ~450       │    ║
+    ║  │              │     │ security      │   │ removed    │    ║
+    ║  │              │     │ always pass   │   │            │    ║
+    ║  │              │     │               │   │            │    ║
+    ║  │              │     │ ~200 removed  │   │            │    ║
+    ║  └──────┬───────┘     └──────┬──────-─┘   └─────┬──────┘    ║
+    ║         └────────────────────┴─────────────────┘            ║
+    ║                          │                                  ║
+    ║                    200 signals remain                       ║
     ═══════════════════════════╪═══════════════════════════════════
     ║  STAGE 2: PATTERN CLASSIFICATION                           ║
     ║                                                            ║
@@ -161,7 +161,7 @@ The framework doesn't know what domain produced the signal. Domain-specific know
     ║  │  • Scaling events      │  │                         │   ║
     ║  │                        │  │                         │   ║
     ║  │  Tags signals,         │  │                         │   ║
-    ║  │  never drops            │  │                         │   ║
+    ║  │  never drops           │  │                         │   ║
     ║  └────────────┬───────────┘  └────────────┬────────────┘   ║
     ║               └──────────────────────────-┘                ║
     ║                          │                                 ║
@@ -200,15 +200,15 @@ The framework doesn't know what domain produced the signal. Domain-specific know
     ║                                                            ║
     ║  System prompt (domain-specific, one paragraph):           ║
     ║  "Classify as: routine_noise | known_pattern |             ║
-    ║   needs_attention | real_incident. One word only."          ║
+    ║   needs_attention | real_incident. One word only."         ║
     ║                                                            ║
-    ║            100 signals classified                           ║
-    ║            ┌──────────────────────────────────────┐         ║
-    ║            │  routine_noise    42  ─── noise ───┐ │         ║
-    ║            │  known_pattern    31  ─── noise ───┤ │         ║
-    ║            │  needs_attention  22  ─── keep ────┤ │         ║
-    ║            │  real_incident     5  ─── alert ───┘ │         ║
-    ║            └──────────────────────────────────────┘         ║
+    ║            100 signals classified                          ║
+    ║            ┌──────────────────────────────────────┐        ║
+    ║            │  routine_noise    42  ─── noise ───┐ │        ║
+    ║            │  known_pattern    31  ─── noise ───┤ │        ║
+    ║            │  needs_attention  22  ─── keep ────┤ │        ║
+    ║            │  real_incident     5  ─── alert ───┘ │        ║
+    ║            └──────────────────────────────────────┘        ║
     ═══════════════════════════╪═══════════════════════════════════
                                │
                         LLM says "noise"
@@ -218,38 +218,38 @@ The framework doesn't know what domain produced the signal. Domain-specific know
     ║  SELF-TUNING FEEDBACK LOOP                                 ║
     ║                                                            ║
     ║  ┌──────────────────────────────────────────────────────┐  ║
-    ║  │  Corpus Analyzer                                      │  ║
-    ║  │  Watches signal stream (10K buffer)                   │  ║
-    ║  │                                                       │  ║
-    ║  │  Detects:                                             │  ║
-    ║  │  • Repeat floods (same type N+ times in window)       │  ║
-    ║  │  • Dominant types (>5% of traffic)                    │  ║
-    ║  │  • Mono-severity (>80% at one severity)               │  ║
-    ║  │                                                       │  ║
-    ║  │  "event_deprecatedannotation appeared 6,074 times     │  ║
-    ║  │   and LLM classified it as noise every time"          │  ║
-    ║  │                                                       │  ║
-    ║  │  → Proposes draft agent                               │  ║
+    ║  │  Corpus Analyzer                                     │  ║
+    ║  │  Watches signal stream (10K buffer)                  │  ║
+    ║  │                                                      │  ║
+    ║  │  Detects:                                            │  ║
+    ║  │  • Repeat floods (same type N+ times in window)      │  ║
+    ║  │  • Dominant types (>5% of traffic)                   │  ║
+    ║  │  • Mono-severity (>80% at one severity)              │  ║
+    ║  │                                                      │  ║
+    ║  │  "event_deprecatedannotation appeared 6,074 times    │  ║
+    ║  │   and LLM classified it as noise every time"         │  ║
+    ║  │                                                      │  ║
+    ║  │  → Proposes draft agent                              │  ║
     ║  └──────────────────────┬───────────────────────────────┘  ║
     ║                         │                                  ║
     ║  ┌──────────────────────▼───────────────────────────────┐  ║
-    ║  │  Promotion Engine                                     │  ║
-    ║  │                                                       │  ║
-    ║  │  draft ──→ candidate ──→ nano ──→ micro ──→ macro     │  ║
-    ║  │         50 samples    200 samples  500      1000      │  ║
-    ║  │         60% accuracy  75% acc.     85%      85%       │  ║
-    ║  │                                                       │  ║
-    ║  │  At nano tier: ACTIVATED                              │  ║
-    ║  │  Agent runs in Stage 3 from now on                    │  ║
-    ║  │  LLM never sees matching signals again                │  ║
-    ║  │                                                       │  ║
-    ║  │  Accuracy drops? → automatic demotion                 │  ║
-    ║  │  False negative? → immediate demotion                 │  ║
+    ║  │  Promotion Engine                                    │  ║
+    ║  │                                                      │  ║
+    ║  │  draft ──→ candidate ──→ nano ──→ micro ──→ macro    │  ║
+    ║  │         50 samples    200 samples  500      1000     │  ║
+    ║  │         60% accuracy  75% acc.     85%      85%      │  ║
+    ║  │                                                      │  ║
+    ║  │  At nano tier: ACTIVATED                             │  ║
+    ║  │  Agent runs in Stage 3 from now on                   │  ║
+    ║  │  LLM never sees matching signals again               │  ║
+    ║  │                                                      │  ║
+    ║  │  Accuracy drops? → automatic demotion                │  ║
+    ║  │  False negative? → immediate demotion                │  ║
     ║  └──────────────────────────────────────────────────────┘  ║
     ║                                                            ║
     ║  Cycle repeats every 30s. After ~1 hour:                   ║
     ║  • 5-23 agents self-discovered                             ║
-    ║  • Compression rises from 60% → 96-99%                    ║
+    ║  • Compression rises from 60% → 96-99%                     ║
     ║  • LLM calls drop proportionally                           ║
     ║  • No human intervention at any point                      ║
     ═════════════════════════════════════════════════════════════
@@ -407,13 +407,13 @@ The cascade framework processes any signal type without modification. The memory
 │  │                     SOURCE LAYER (pluggable)                      │  │
 │  │                                                                   │  │
 │  │  Dev Sources                        Workload Sources              │  │
-│  │  ┌─────────────────┐               ┌──────────────────────┐      │  │
-│  │  │ Claude Code     │               │ Immutable Ledger     │      │  │
-│  │  │ memories        │               │ (decision records)   │      │  │
-│  │  ├─────────────────┤               ├──────────────────────┤      │  │
-│  │  │ CLAUDE.md /     │               │ JSONL agent logs     │      │  │
-│  │  │ AGENTS.md       │               │ (any format)         │      │  │
-│  │  ├─────────────────┤               └──────────────────────┘      │  │
+│  │  ┌─────────────────┐               ┌──────────────────────┐       │  │
+│  │  │ Claude Code     │               │ Immutable Ledger     │       │  │
+│  │  │ memories        │               │ (decision records)   │       │  │
+│  │  ├─────────────────┤               ├──────────────────────┤       │  │
+│  │  │ CLAUDE.md /     │               │ JSONL agent logs     │       │  │
+│  │  │ AGENTS.md       │               │ (any format)         │       │  │
+│  │  ├─────────────────┤               └──────────────────────┘       │  │
 │  │  │ Session files   │                                              │  │
 │  │  │ (handoff/park)  │               Adding a source =              │  │
 │  │  ├─────────────────┤               one parser function            │  │
@@ -430,16 +430,16 @@ The cascade framework processes any signal type without modification. The memory
 │  │    CLAIM EXTRACTOR         │  │    WORKLOAD DISTILLER             │  │
 │  │                            │  │                                   │  │
 │  │  Parse markdown:           │  │  Aggregate decisions:             │  │
-│  │  ├─ opening paragraph      │  │  ├─ agent effectiveness          │  │
-│  │  ├─ **Why:** section       │  │  ├─ signal landscape             │  │
-│  │  ├─ **How to apply:**      │  │  ├─ multi-agent routing          │  │
-│  │  ├─ bullet points          │  │  ├─ confidence distribution      │  │
-│  │  └─ table rows             │  │  ├─ safety invariants            │  │
-│  │                            │  │  ├─ namespace hotspots           │  │
-│  │  Classify each claim:      │  │  └─ compression achieved         │  │
+│  │  ├─ opening paragraph      │  │  ├─ agent effectiveness           │  │
+│  │  ├─ **Why:** section       │  │  ├─ signal landscape              │  │
+│  │  ├─ **How to apply:**      │  │  ├─ multi-agent routing           │  │
+│  │  ├─ bullet points          │  │  ├─ confidence distribution       │  │
+│  │  └─ table rows             │  │  ├─ safety invariants             │  │
+│  │                            │  │  ├─ namespace hotspots            │  │
+│  │  Classify each claim:      │  │  └─ compression achieved          │  │
 │  │  ├─ rule (imperative)      │  │                                   │  │
 │  │  ├─ fact (measurements)    │  │  Each aggregate pattern           │  │
-│  │  ├─ preference (user)      │  │  becomes one claim               │  │
+│  │  ├─ preference (user)      │  │  becomes one claim                │  │
 │  │  ├─ decision (choice)      │  │                                   │  │
 │  │  └─ caveat (temporal)      │  │                                   │  │
 │  │                            │  │                                   │  │
@@ -480,23 +480,23 @@ The cascade framework processes any signal type without modification. The memory
 │  ┌──────────────────────────────────────────────────────────────────┐   │
 │  │                      OUTPUT LAYER                                │   │
 │  │                                                                  │   │
-│  │  ┌──────────────────────┐  ┌─────────────────────────────────┐  │   │
-│  │  │  Dev Corpus          │  │  Workload Corpus                │  │   │
-│  │  │                      │  │                                 │  │   │
-│  │  │  Rules (174)         │  │  Agent effectiveness            │  │   │
-│  │  │  Facts (1,353)       │  │  Signal landscape               │  │   │
-│  │  │  Preferences (28)    │  │  Safety invariants              │  │   │
-│  │  │  Decisions (7)       │  │  Compression metrics            │  │   │
-│  │  │  Caveats (17)        │  │  Confidence patterns            │  │   │
-│  │  │                      │  │                                 │  │   │
-│  │  │  22 topics           │  │  Per-source analysis            │  │   │
-│  │  │  1,011 institutional │  │                                 │  │   │
-│  │  │  claims              │  │                                 │  │   │
-│  │  │                      │  │                                 │  │   │
-│  │  │  Audience:           │  │  Audience:                      │  │   │
-│  │  │  developer / agent   │  │  ops / architecture             │  │   │
-│  │  │  starting a session  │  │  capacity planning              │  │   │
-│  │  └──────────────────────┘  └─────────────────────────────────┘  │   │
+│  │  ┌──────────────────────┐  ┌─────────────────────────────────┐   │   │
+│  │  │  Dev Corpus          │  │  Workload Corpus                │   │   │
+│  │  │                      │  │                                 │   │   │
+│  │  │  Rules (174)         │  │  Agent effectiveness            │   │   │
+│  │  │  Facts (1,353)       │  │  Signal landscape               │   │   │
+│  │  │  Preferences (28)    │  │  Safety invariants              │   │   │
+│  │  │  Decisions (7)       │  │  Compression metrics            │   │   │
+│  │  │  Caveats (17)        │  │  Confidence patterns            │   │   │
+│  │  │                      │  │                                 │   │   │
+│  │  │  22 topics           │  │  Per-source analysis            │   │   │
+│  │  │  1,011 institutional │  │                                 │   │   │
+│  │  │  claims              │  │                                 │   │   │
+│  │  │                      │  │                                 │   │   │
+│  │  │  Audience:           │  │  Audience:                      │   │   │
+│  │  │  developer / agent   │  │  ops / architecture             │   │   │
+│  │  │  starting a session  │  │  capacity planning              │   │   │
+│  │  └──────────────────────┘  └─────────────────────────────────┘   │   │
 │  │                                                                  │   │
 │  │  Formats: JSON (programmatic) + Markdown (human review)          │   │
 │  └──────────────────────────────────────────────────────────────────┘   │
