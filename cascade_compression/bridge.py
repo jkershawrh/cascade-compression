@@ -131,6 +131,8 @@ class CascadeBridge:
         self._fn_count = 0
         self._fn_evaluated = 0
         self._fn_types: Dict[str, int] = defaultdict(int)
+        self._verdict_watermark: str = ""
+        self._verdict_poll_running = False
 
         self.baseline = Baseline(normal_ranges={})
         self._observed_ranges: Dict[str, Dict[str, list]] = defaultdict(lambda: defaultdict(list))
@@ -180,6 +182,10 @@ class CascadeBridge:
             self._last_promotion_time = now
             self._discover_and_promote()
             self._save_state()
+            if self._ledger_url and not self._verdict_poll_running:
+                threading.Thread(
+                    target=self._poll_gcl_verdicts, daemon=True,
+                ).start()
 
         if self._ledger_url:
             threading.Thread(
@@ -384,6 +390,71 @@ class CascadeBridge:
         elif pattern_type == "dominant_type":
             self._noise_suppressor.remove_noise_type(signal_type)
 
+    def _poll_gcl_verdicts(self):
+        """Poll the ledger for GCL FAILS verdicts and trigger demotion."""
+        self._verdict_poll_running = True
+        try:
+            import httpx
+
+            headers = {"Content-Type": "application/json"}
+            if self._ledger_token:
+                headers["Authorization"] = f"Bearer {self._ledger_token}"
+
+            params = {"entry_type": "audit.verdict", "page_size": "100"}
+            if self._verdict_watermark:
+                params["from_ts"] = self._verdict_watermark
+
+            with httpx.Client(timeout=15) as client:
+                r = client.get(
+                    f"{self._ledger_url.rstrip('/')}/api/entries",
+                    params=params,
+                    headers=headers,
+                )
+                r.raise_for_status()
+                data = r.json()
+
+            entries = data if isinstance(data, list) else data.get("entries", [])
+
+            for entry in entries:
+                ts = entry.get("timestamp", entry.get("created_at", ""))
+                if ts and ts > self._verdict_watermark:
+                    self._verdict_watermark = ts
+
+                content = entry.get("content", "")
+                if isinstance(content, str):
+                    try:
+                        content = json.loads(content)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+
+                if not isinstance(content, dict):
+                    continue
+
+                if content.get("verdict") != "FAILS":
+                    continue
+
+                agent_name = content.get("original_agent", "")
+                signal_type = content.get("subject_type", "")
+                reason = content.get("reason", "GCL audit verdict: FAILS")
+
+                if signal_type:
+                    self.record_feedback(
+                        signal_type, was_suppressed=True, is_important=True,
+                    )
+                    log.warning(
+                        "GCL FAILS verdict → demotion: agent=%s signal_type=%s reason=%s",
+                        agent_name, signal_type, reason,
+                    )
+
+            if entries:
+                log.info("Polled %d audit verdicts, watermark=%s",
+                         len(entries), self._verdict_watermark[:19])
+
+        except Exception as e:
+            log.debug("Verdict poll failed: %s", str(e)[:80])
+        finally:
+            self._verdict_poll_running = False
+
     def _save_state(self):
         if not self._state_file:
             return
@@ -406,6 +477,7 @@ class CascadeBridge:
                     },
                 } for name, metrics in self._agent_metrics.items()
                   if (rule := self._agent_rules.get(name)) is not None],
+                "verdict_watermark": self._verdict_watermark,
                 "stats_snapshot": {
                     "signals_processed": self.stats.signals_processed,
                     "llm_classified": self.stats.llm_classified,
@@ -427,6 +499,7 @@ class CascadeBridge:
                 int, state.get("llm_important_counts", {})
             )
 
+            self._verdict_watermark = state.get("verdict_watermark", "")
             if state.get("version") == 2:
                 self.corpus_analyzer._known_patterns = set(state.get("known_patterns", []))
                 for candidate in state.get("candidate_agents", []):
