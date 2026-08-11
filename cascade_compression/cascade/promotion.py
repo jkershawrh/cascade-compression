@@ -5,10 +5,13 @@ against observed ground truth. No human labeling required for early tiers —
 ground truth is derived from baselines (normal ranges).
 
 Tier ladder:
-  draft → candidate → nano → micro → macro
+  draft → candidate → [pending_approval] → nano → micro → macro
 
 Each promotion requires meeting empirical thresholds for accuracy,
 false positive rate, false negative rate, and sample count.
+
+Zero-FN invariant: activated agents (nano+) with ANY false negative
+are instantly demoted to draft with a cooling-off period.
 """
 
 from __future__ import annotations
@@ -22,12 +25,51 @@ log = logging.getLogger(__name__)
 
 DEFAULT_THRESHOLDS = {
     "candidate": {"min_samples": 50, "min_accuracy": 0.60, "max_false_positive": 0.30, "max_false_negative": 0.20},
-    "nano": {"min_samples": 200, "min_accuracy": 0.75, "max_false_positive": 0.15, "max_false_negative": 0.20},
-    "micro": {"min_samples": 500, "min_accuracy": 0.85, "max_false_positive": 0.10, "max_false_negative": 0.10, "human_reviewed": True},
-    "macro": {"min_samples": 1000, "min_accuracy": 0.85, "max_false_positive": 0.05, "max_false_negative": 0.05, "human_reviewed": True},
+    "nano": {"min_samples": 200, "min_accuracy": 0.75, "max_false_positive": 0.15, "max_false_negative": 0.0},
+    "micro": {"min_samples": 500, "min_accuracy": 0.85, "max_false_positive": 0.10, "max_false_negative": 0.0, "human_reviewed": True},
+    "macro": {"min_samples": 1000, "min_accuracy": 0.85, "max_false_positive": 0.05, "max_false_negative": 0.0, "human_reviewed": True},
 }
 
 TIER_ORDER = ["draft", "candidate", "nano", "micro", "macro"]
+
+ACTIVATED_TIERS = {"nano", "micro", "macro"}
+
+
+@dataclass
+class PromotionEvent:
+    """Full evidence chain for a tier transition, written to the immutable ledger."""
+    agent_name: str
+    event_type: str  # "promotion" or "demotion"
+    from_tier: str
+    to_tier: str
+    timestamp: str
+    samples_tested: int
+    accuracy: float
+    false_positive_rate: float
+    false_negative_rate: float
+    false_negative_count: int
+    reason: str
+    batch_id: Optional[str] = None
+    human_approved: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "agent_name": self.agent_name,
+            "event_type": self.event_type,
+            "from_tier": self.from_tier,
+            "to_tier": self.to_tier,
+            "timestamp": self.timestamp,
+            "evidence": {
+                "samples_tested": self.samples_tested,
+                "accuracy": round(self.accuracy, 4),
+                "false_positive_rate": round(self.false_positive_rate, 4),
+                "false_negative_rate": round(self.false_negative_rate, 4),
+                "false_negative_count": self.false_negative_count,
+                "human_approved": self.human_approved,
+                "batch_id": self.batch_id,
+            },
+            "reason": self.reason,
+        }
 
 
 @dataclass
@@ -42,9 +84,14 @@ class AgentMetrics:
     coverage: float = 0.0
     rubric_status: str = "red"
     human_reviewed: bool = False
+    human_approved: bool = False
     promoted_at: Optional[datetime] = None
     promotion_history: List[Dict[str, Any]] = field(default_factory=list)
+    demotion_history: List[Dict[str, Any]] = field(default_factory=list)
     config: Dict[str, Any] = field(default_factory=dict)
+    deactivated: bool = False
+    deactivated_at: Optional[datetime] = None
+    last_batch_fn_count: int = 0
 
 
 @dataclass
@@ -107,10 +154,27 @@ class RuleAgent:
 
 
 class PromotionEngine:
-    """Evaluates agents against baselines and promotes them through tiers."""
+    """Evaluates agents against baselines and promotes them through tiers.
 
-    def __init__(self, thresholds: Optional[Dict] = None):
+    When human_gate_enabled=True, agents pause at pending_approval between
+    candidate and nano, requiring human_approved=True to activate.
+    """
+
+    def __init__(self, thresholds: Optional[Dict] = None, human_gate_enabled: bool = False):
         self.thresholds = thresholds or DEFAULT_THRESHOLDS
+        self.human_gate_enabled = human_gate_enabled
+        self._pending_events: List[PromotionEvent] = []
+
+    @property
+    def events(self) -> List[PromotionEvent]:
+        """Promotion/demotion events generated since last drain."""
+        return list(self._pending_events)
+
+    def drain_events(self) -> List[PromotionEvent]:
+        """Return and clear pending promotion/demotion events."""
+        events = self._pending_events
+        self._pending_events = []
+        return events
 
     def validate(
         self,
@@ -118,6 +182,7 @@ class PromotionEngine:
         rule: RuleAgent,
         signals: List[Dict[str, Any]],
         baseline: Baseline,
+        batch_id: Optional[str] = None,
     ) -> AgentMetrics:
         """Run a validation round: test the agent against signals with known ground truth."""
         if not signals:
@@ -150,6 +215,7 @@ class PromotionEngine:
         agent.false_positive_rate = fp / (fp + tn) if (fp + tn) > 0 else 0.0
         agent.false_negative_rate = fn / (fn + tp) if (fn + tp) > 0 else 0.0
         agent.coverage = classified / total if total > 0 else 0.0
+        agent.last_batch_fn_count = fn
 
         if agent.false_negative_rate > 0.20:
             agent.rubric_status = "red"
@@ -163,10 +229,54 @@ class PromotionEngine:
         else:
             agent.rubric_status = "red"
 
+        if agent.tier in ACTIVATED_TIERS and fn > 0:
+            self.demote(agent, reason=f"{fn} false negative(s) in validation batch", batch_id=batch_id)
+
+        return agent
+
+    def demote(self, agent: AgentMetrics, reason: str, batch_id: Optional[str] = None) -> AgentMetrics:
+        """Instantly demote an agent to draft and deactivate it."""
+        now = datetime.now(timezone.utc)
+        from_tier = agent.tier
+
+        event = PromotionEvent(
+            agent_name=agent.name,
+            event_type="demotion",
+            from_tier=from_tier,
+            to_tier="draft",
+            timestamp=now.isoformat(),
+            samples_tested=agent.samples_tested,
+            accuracy=agent.accuracy,
+            false_positive_rate=agent.false_positive_rate,
+            false_negative_rate=agent.false_negative_rate,
+            false_negative_count=agent.last_batch_fn_count,
+            reason=reason,
+            batch_id=batch_id,
+        )
+        self._pending_events.append(event)
+
+        agent.demotion_history.append(event.to_dict())
+        agent.tier = "draft"
+        agent.deactivated = True
+        agent.deactivated_at = now
+        agent.samples_tested = 0
+        agent.rubric_status = "red"
+        agent.human_approved = False
+
+        log.warning("Agent '%s' DEMOTED: %s → draft (%s)", agent.name, from_tier, reason)
         return agent
 
     def check_promotion(self, agent: AgentMetrics) -> AgentMetrics:
         """Check if an agent meets requirements for promotion to next tier."""
+        if agent.deactivated:
+            return agent
+
+        if agent.tier == "pending_approval":
+            if agent.human_approved:
+                self._do_promote(agent, "pending_approval", "nano",
+                                 reason="human approved for activation")
+            return agent
+
         current_idx = TIER_ORDER.index(agent.tier) if agent.tier in TIER_ORDER else 0
         if current_idx >= len(TIER_ORDER) - 1:
             return agent
@@ -175,21 +285,46 @@ class PromotionEngine:
         reqs = self.thresholds.get(next_tier, {})
 
         if self._meets_requirements(agent, reqs):
-            agent.promotion_history.append({
-                "from": agent.tier,
-                "to": next_tier,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "accuracy": round(agent.accuracy, 4),
-                "samples": agent.samples_tested,
-                "fp_rate": round(agent.false_positive_rate, 4),
-                "fn_rate": round(agent.false_negative_rate, 4),
-            })
-            agent.tier = next_tier
-            agent.promoted_at = datetime.now(timezone.utc)
-            log.info("Agent '%s' promoted: %s → %s (acc=%.2f, FP=%.2f)",
-                      agent.name, agent.promotion_history[-1]["from"],
-                      next_tier, agent.accuracy, agent.false_positive_rate)
+            if self.human_gate_enabled and agent.tier == "candidate" and next_tier == "nano":
+                self._do_promote(agent, "candidate", "pending_approval",
+                                 reason="meets nano thresholds, awaiting human approval")
+            else:
+                self._do_promote(agent, agent.tier, next_tier,
+                                 reason=f"meets {next_tier} thresholds")
 
+        return agent
+
+    def _do_promote(self, agent: AgentMetrics, from_tier: str, to_tier: str, reason: str) -> None:
+        now = datetime.now(timezone.utc)
+        event = PromotionEvent(
+            agent_name=agent.name,
+            event_type="promotion",
+            from_tier=from_tier,
+            to_tier=to_tier,
+            timestamp=now.isoformat(),
+            samples_tested=agent.samples_tested,
+            accuracy=agent.accuracy,
+            false_positive_rate=agent.false_positive_rate,
+            false_negative_rate=agent.false_negative_rate,
+            false_negative_count=agent.last_batch_fn_count,
+            reason=reason,
+            human_approved=agent.human_approved,
+        )
+        self._pending_events.append(event)
+
+        agent.promotion_history.append(event.to_dict())
+        agent.tier = to_tier
+        agent.promoted_at = now
+        if to_tier in ACTIVATED_TIERS:
+            agent.deactivated = False
+        log.info("Agent '%s' promoted: %s → %s (acc=%.2f, FP=%.2f)",
+                  agent.name, from_tier, to_tier, agent.accuracy, agent.false_positive_rate)
+
+    def reactivate(self, agent: AgentMetrics) -> AgentMetrics:
+        """Clear deactivated state so the agent can begin climbing again."""
+        agent.deactivated = False
+        agent.deactivated_at = None
+        log.info("Agent '%s' reactivated at tier '%s'", agent.name, agent.tier)
         return agent
 
     def _meets_requirements(self, agent: AgentMetrics, reqs: Dict) -> bool:
@@ -211,6 +346,7 @@ class PromotionEngine:
         rules: List[RuleAgent],
         signals: List[Dict[str, Any]],
         baseline: Baseline,
+        batch_id: Optional[str] = None,
     ) -> List[AgentMetrics]:
         """Validate and attempt promotion for a batch of agents."""
         if len(agents) != len(rules):
@@ -218,7 +354,7 @@ class PromotionEngine:
 
         updated = []
         for agent, rule in zip(agents, rules):
-            validated = self.validate(agent, rule, signals, baseline)
+            validated = self.validate(agent, rule, signals, baseline, batch_id=batch_id)
             promoted = self.check_promotion(validated)
             updated.append(promoted)
         return updated

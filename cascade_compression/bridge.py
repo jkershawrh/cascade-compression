@@ -99,7 +99,8 @@ class CascadeBridge:
 
         self.enabled = True
         self.pipeline = CascadePipeline(default_agents())
-        self.promotion = PromotionEngine()
+        self._human_gate = bool(os.getenv("CASCADE_HUMAN_GATE", ""))
+        self.promotion = PromotionEngine(human_gate_enabled=self._human_gate)
         self.stats = BridgeStats(started_at=datetime.now(timezone.utc).isoformat())
 
         self._repeat_suppressor = RepeatFloodSuppressor(max_repeats=3, window_seconds=300)
@@ -281,6 +282,8 @@ class CascadeBridge:
             log.info("ACTIVATED: %s (%d noise, %d important)",
                      sig_type, noise, important)
 
+        self._flush_promotion_events()
+
     def _run_llm(self, signals):
         self._llm_running = True
         try:
@@ -343,6 +346,43 @@ class CascadeBridge:
             )
         except Exception as e:
             log.debug("Ledger write failed: %s", str(e)[:60])
+
+    def _flush_promotion_events(self):
+        events = self.promotion.drain_events()
+        if not events or not self._ledger_url:
+            return
+        for event in events:
+            self._promotion_log.append({
+                "timestamp": event.timestamp,
+                "event": event.event_type,
+                "agent": event.agent_name,
+                "from_tier": event.from_tier,
+                "to_tier": event.to_tier,
+                "reason": event.reason,
+            })
+            threading.Thread(
+                target=self._write_promotion_to_ledger,
+                args=(event.to_dict(),),
+                daemon=True,
+            ).start()
+
+    def _write_promotion_to_ledger(self, event_dict):
+        try:
+            from .integrations.ledger import write_promotion_event
+            write_promotion_event(
+                self._ledger_url, self._ledger_token,
+                event_dict, self.domain,
+            )
+        except Exception as e:
+            log.debug("Promotion ledger write failed: %s", str(e)[:60])
+
+    def _deactivate_agent(self, signal_type: str):
+        pattern_type = self._activated_patterns.pop(signal_type, None)
+        self._activated_types.discard(signal_type)
+        if pattern_type == "repeat_flood":
+            self._repeat_suppressor.remove_signal_type(signal_type)
+        elif pattern_type == "dominant_type":
+            self._noise_suppressor.remove_noise_type(signal_type)
 
     def _save_state(self):
         if not self._state_file:
@@ -432,11 +472,30 @@ class CascadeBridge:
     def record_feedback(
         self, signal_type: str, *, was_suppressed: bool, is_important: bool
     ) -> None:
-        """Record externally verified ground truth for FN telemetry."""
+        """Record externally verified ground truth for FN telemetry.
+
+        If a suppressed signal was important (false negative) and the
+        responsible agent is activated, that agent is instantly demoted.
+        """
         self._fn_evaluated += 1
         if was_suppressed and is_important:
             self._fn_count += 1
             self._fn_types[signal_type] += 1
+
+            if signal_type in self._activated_types:
+                for name, metrics in self._agent_metrics.items():
+                    sig = metrics.config.get("signal_type", "")
+                    if sig == signal_type and metrics.tier in {"nano", "micro", "macro"}:
+                        metrics.last_batch_fn_count = 1
+                        self.promotion.demote(
+                            metrics,
+                            reason=f"FN confirmed by external feedback: {signal_type}",
+                        )
+                        self._deactivate_agent(signal_type)
+                        self._flush_promotion_events()
+                        log.warning("Agent '%s' demoted via feedback: %s was important",
+                                    name, signal_type)
+                        break
 
     def get_llm_results(self, limit: int = 20) -> list:
         return self._llm_results[-limit:]

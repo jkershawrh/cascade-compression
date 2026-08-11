@@ -40,6 +40,9 @@ class RepeatFloodSuppressor:
         """Register a signal type for repeat suppression."""
         self._signal_types.add(signal_type)
 
+    def remove_signal_type(self, signal_type: str):
+        self._signal_types.discard(signal_type)
+
     def process(self, signals: List[Signal]) -> List[CascadeDecision]:
         if not self._signal_types:
             return []
@@ -92,6 +95,9 @@ class DominantNoiseSuppressor:
     def add_noise_type(self, signal_type: str):
         """Register a signal type as dominant noise."""
         self._noise_types.add(signal_type)
+
+    def remove_noise_type(self, signal_type: str):
+        self._noise_types.discard(signal_type)
 
     def process(self, signals: List[Signal]) -> List[CascadeDecision]:
         if not self._noise_types:

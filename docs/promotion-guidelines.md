@@ -10,23 +10,28 @@ The cascade discovers and promotes agents automatically. No human writes rules. 
 
 ```
                     ┌─────────┐
-                    │  MACRO  │  1000+ samples, 85% accuracy, 5% FP
-                    │ terminal│  Human reviewed. Cannot be demoted.
+                    │  MACRO  │  1000+ samples, 85% accuracy, 5% FP, 0% FN
+                    │ terminal│  Human reviewed.
                     └────▲────┘
                          │ promote (human review required)
                     ┌────┴────┐
-                    │  MICRO  │  500+ samples, 85% accuracy, 10% FP
+                    │  MICRO  │  500+ samples, 85% accuracy, 10% FP, 0% FN
                     │         │  Human reviewed.
                     └────▲────┘
                          │ promote (automated)
                     ┌────┴────┐
-                    │  NANO   │  200+ samples, 75% accuracy, 15% FP
-                    │         │  Fully automated. Agent is ACTIVATED.
+                    │  NANO   │  200+ samples, 75% accuracy, 15% FP, 0% FN
+                    │         │  Agent is ACTIVATED. Zero-FN enforced.
                     └────▲────┘
+                         │ promote (automated, or human gate if enabled)
+               ┌─────────┴──────────┐
+               │ PENDING_APPROVAL   │  (optional, human_gate_enabled only)
+               │                    │  Meets nano thresholds, awaiting human sign-off.
+               └─────────▲──────────┘
                          │ promote (automated)
                     ┌────┴────┐
-                    │CANDIDATE│  50+ samples, 60% accuracy, 30% FP
-                    │         │  Under observation.
+                    │CANDIDATE│  50+ samples, 60% accuracy, 30% FP, 20% FN
+                    │         │  Under observation. FN tolerated.
                     └────▲────┘
                          │ promote (automated)
                     ┌────┴────┐
@@ -37,13 +42,14 @@ The cascade discovers and promotes agents automatically. No human writes rules. 
 
 ## Tier Requirements
 
-| Tier | Min Samples | Min Accuracy | Max FP Rate | Human Review | Status |
-|------|------------|-------------|-------------|--------------|--------|
-| Draft | 0 | none | none | No | Proposed, not active |
-| Candidate | 50 | 60% | 30% | No | Under observation |
-| Nano | 200 | 75% | 15% | No | **ACTIVATED** — processing signals |
-| Micro | 500 | 85% | 10% | Yes | Active, human-validated |
-| Macro | 1000 | 85% | 5% | Yes | Terminal, cannot be demoted |
+| Tier | Min Samples | Min Accuracy | Max FP Rate | Max FN Rate | Human Gate | Status |
+|------|------------|-------------|-------------|-------------|------------|--------|
+| Draft | 0 | none | none | none | No | Proposed, not active |
+| Candidate | 50 | 60% | 30% | 20% | No | Under observation |
+| Pending Approval | — | — | — | — | Yes (optional) | Awaiting human sign-off |
+| Nano | 200 | 75% | 15% | **0%** | No | **ACTIVATED** — processing signals |
+| Micro | 500 | 85% | 10% | **0%** | Yes | Active, human-validated |
+| Macro | 1000 | 85% | 5% | **0%** | Yes | Terminal |
 
 ## How Agents Are Discovered
 
@@ -121,22 +127,27 @@ Step 5: NANO activation
         Compression ratio increases
 ```
 
-## Demotion
+## Demotion (Hardened)
 
-Agents can be demoted if their performance degrades:
+Any activated agent (nano, micro, macro) with **ANY** false negative in a
+validation batch is **instantly demoted to draft** and deactivated:
 
 ```
-Triggers for demotion:
-  - Accuracy drops below tier threshold
-  - FP rate exceeds tier ceiling
-  - False negative detected (cascade dropped, LLM would have kept)
+Trigger:
+  - ANY false negative (fn > 0) in a validation batch → instant demote
 
-Demotion path:
-  NANO → CANDIDATE (stop processing, re-observe)
-  CANDIDATE → DRAFT (restart validation)
-  DRAFT → discarded (pattern no longer valid)
+What happens:
+  1. Agent tier → draft
+  2. Agent deactivated (stops processing signals immediately)
+  3. samples_tested → 0 (cooling-off: must re-accumulate from scratch)
+  4. human_approved → false (must re-earn if human gate is enabled)
+  5. Demotion event → immutable ledger (full evidence chain)
+  6. Agent must be explicitly reactivated before it can climb again
 
-An agent at MICRO or MACRO tier requires human review to demote.
+Demotion path (all activated tiers):
+  NANO/MICRO/MACRO → DRAFT (instant, no intermediate stops)
+
+There is no gradual demotion. One false negative = back to draft.
 ```
 
 ## Agent Types
@@ -181,7 +192,7 @@ AgentMetrics:
 
 4. **Demotion is automatic** — if an agent's accuracy drops, it is demoted without human intervention. Human review is only required for MICRO/MACRO promotion, not demotion.
 
-5. **0 dangerous misses is the target** — the system is designed to over-escalate (safe failure) rather than under-escalate (dangerous failure). An agent that dismisses a real incident is immediately demoted.
+5. **Zero-FN invariant** — activated agents (nano+) that miss ANY real incident are instantly demoted to draft, deactivated, and must re-accumulate from scratch. The immutable ledger records the full demotion evidence chain. Three layers enforce this: cascade prevents (zero-FN promotion gate), ledger records (provenance), GCL verifies (independent audit).
 
 ## Live Examples
 
