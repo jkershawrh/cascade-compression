@@ -92,6 +92,50 @@ def write_decisions(
         "input_hash": input_hash,
     }
 
+    _post_to_ledger(ledger_url, ledger_token, entry)
+
+
+def write_promotion_event(
+    ledger_url: str,
+    ledger_token: str,
+    event_dict: Dict,
+    domain: str,
+) -> None:
+    """Write an agent promotion/demotion event to the immutable ledger."""
+    if not ledger_url:
+        return
+
+    try:
+        import httpx  # noqa: F811
+    except ImportError:
+        log.debug("httpx not installed — ledger writes disabled")
+        return
+
+    content = json.dumps(event_dict, sort_keys=True, separators=(",", ":"))
+    input_hash = hashlib.sha256(content.encode()).hexdigest()
+    agent_name = event_dict.get("agent_name", "unknown")
+    event_type = event_dict.get("event_type", "unknown")
+    correlation_id = f"{agent_name}-{event_type}-{event_dict.get('timestamp', '')}"
+
+    entry = {
+        "entry_type": "agent.promotion",
+        "agent_id": f"cascade-{domain}",
+        "content": content,
+        "content_type": "application/json",
+        "source_id": f"cascade-{domain}",
+        "correlation_id": correlation_id,
+        "idempotency_key": hashlib.sha256(
+            f"agent.promotion\0{correlation_id}".encode()
+        ).hexdigest(),
+        "input_hash": input_hash,
+    }
+
+    _post_to_ledger(ledger_url, ledger_token, entry)
+
+
+def _post_to_ledger(ledger_url: str, ledger_token: str, entry: Dict) -> None:
+    import httpx
+
     try:
         headers = {"Content-Type": "application/json"}
         if ledger_token:

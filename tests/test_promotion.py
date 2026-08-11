@@ -127,8 +127,8 @@ class TestPromotion:
         agent = engine.check_promotion(agent)
         assert agent.tier == "candidate"
         assert len(agent.promotion_history) == 1
-        assert agent.promotion_history[0]["from"] == "draft"
-        assert agent.promotion_history[0]["to"] == "candidate"
+        assert agent.promotion_history[0]["from_tier"] == "draft"
+        assert agent.promotion_history[0]["to_tier"] == "candidate"
 
     def test_no_promotion_insufficient_samples(self, engine, cpu_rule, baseline):
         signals = make_signals(10, 10)  # Only 20 samples, need 50 for candidate
