@@ -10,10 +10,15 @@ don't need a GPU.
 ## Architecture
 
 **Cascade Pipeline** (`cascade_compression/cascade/`)
-- Nano tier (85%+): Deterministic agents — dedup, transient suppression, severity gate, pattern/threshold classifiers
-- Micro tier (10-12%): Small CPU models (360M-3B), classification/extraction lanes
-- Macro tier (3-5%): Larger CPU models (3.8B-8B), generation/reasoning lanes
+- Nano tier (85-99%): Deterministic agents — dedup, transient suppression, severity gate, pattern/threshold classifiers
+- Micro tier (1-15%): Small CPU models (360M-3B), classification/extraction lanes
+- Macro tier (<1%): Larger CPU models (3.8B-8B), generation/reasoning lanes
 - Signal protocol is domain-agnostic — K8s events, AAP job runs, or any structured signal
+- Hardened promotion engine: zero-FN gate, instant demotion, cooling-off, PromotionEvent provenance
+- Shadow validation: 5% of suppressed signals re-checked by LLM, disagreement triggers demotion
+- Time-bounded activation: 72h TTL, agents expire and must re-qualify
+- GCL verdict polling: FAILS verdicts trigger automatic demotion
+- Optional human gate: pending_approval state for regulated environments
 
 **Routing Engine** (`cascade_compression/routing/`)
 - Benchmark-graded model selection via corpora (19 models, 6 industries, 5 lanes)
@@ -61,8 +66,26 @@ make up                # FastAPI on port 8090
 
 CDD → TDD → EDD → BDD (Contract → Test → Event → Behavior Driven)
 
+**Standalone Service** (`cascade_compression/service.py`)
+- Single-container deployment via Containerfile
+- FastAPI with /health, /stats, /cascade, /agents endpoints
+- Real-time dashboard at / (frontend/index.html)
+- OpenShift manifests in deploy/openshift.yaml
+
+## Running the Service
+
+```bash
+# Standalone service with dashboard
+python3 -m uvicorn cascade_compression.service:app --port 8090
+
+# Or deploy on OpenShift
+oc new-app https://github.com/jkershawrh/cascade-compression \
+  -e CASCADE_LLM_URL=https://your-llm/v1 -e CASCADE_LLM_KEY=sk-...
+```
+
 ## Next Steps
 
-- Wire AAP (Ansible Automation Platform) as second signal source — proves domain-agnostic cascade
-- Historical replay of 130M+ K8s signals through cascade
-- Whitepaper with benchmark proof points
+- Customer pilot (Amex via Ron) with hardened engine
+- OCP Operator packaging (single Helm chart for cascade + governance)
+- Edge deployment validation (robotics/IoT domain pack)
+- Whitepaper update with final replay numbers

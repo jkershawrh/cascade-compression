@@ -1,35 +1,41 @@
 # Cascade Compression
 
-Cascade compression is designed to reduce signal volume with deterministic rules, then classify survivors on CPU.
-
-> **Project status: experimental.** Historical benchmark artifacts are preserved for reproducibility, but they are not release guarantees. Compression, false-negative rate, and TCO must be validated together for each workload before deployment.
+Self-tuning signal compression for CPU inference at scale. Discovers what is noise in your signal stream, validates it empirically with zero false-negative tolerance, and continuously verifies that the validation still holds.
 
 ## The Idea
 
 ```
-10M signals/day → Cascade (rules) → 150K survivors → Small model on CPU → Alerts
-                      ↑                                      │
-                      └──── Learns from model feedback ──────┘
+10M signals/day → Cascade (deterministic) → 100K survivors → Small model on CPU → Alerts
+                        ↑                                           │
+                        └──── Learns from model feedback ───────────┘
+                        ↑                                           │
+                        └──── Shadow validation re-checks 5% ──────┘
+                        ↑                                           │
+                        └──── Independent audit (GCL) verifies 1% ─┘
 ```
 
-The cascade watches what the model classifies as noise, proposes rules to handle those patterns, validates the rules, and promotes them. After an hour, 96%+ of signals never reach the model again.
+The cascade discovers what the LLM classifies as noise, promotes deterministic agents to handle those patterns, and continuously verifies they are still correct. Activated agents expire after 72 hours and must re-qualify against current data. One false negative from any source and the agent is instantly deactivated.
 
-## Quick Start
+## Quick start
 
 ```bash
-python3 -m venv .venv && .venv/bin/pip install -e ".[dev]"
+# Deploy on OpenShift (single container)
+oc new-app https://github.com/jkershawrh/cascade-compression \
+  -e CASCADE_LLM_URL=https://your-llm/v1 \
+  -e CASCADE_LLM_KEY=sk-...
 
-# Run the cascade on live K8s data
+# Or run locally
+pip install -e ".[dev]"
 cascade-run --domain kubernetes --llm-url https://your-llm/v1 --llm-key sk-...
 
-# Replay historical data for benchmarking
+# Replay historical data
 cascade-replay --domain finance --data transactions.csv --llm-url https://your-llm/v1
 
-# Run tests
+# Run tests (460+ tests)
 make test-all
 
-# TCO dashboard
-make up    # FastAPI on http://localhost:8090
+# Start the service with real-time dashboard
+python3 -m uvicorn cascade_compression.service:app --port 8090
 ```
 
 ## Historical Domain Experiments
@@ -55,7 +61,21 @@ Each domain is a "domain pack" — a collector, a one-paragraph prompt, and hist
 
 **Micro (1-15%)** — Small CPU model (granite-8b, phi4-mini) classifies survivors into four buckets: routine_noise, known_pattern, needs_attention, real_incident. ~600ms per classification.
 
-**Self-tuning** — Corpus analyzer discovers patterns in the signal stream, proposes agents, promotion engine validates them against LLM feedback. Agents progress: draft → candidate → nano (activated). No human writes rules.
+**Self-tuning** — Corpus analyzer discovers patterns in the signal stream, proposes agents, promotion engine validates them against LLM feedback. Agents progress: draft → candidate → [pending_approval] → nano (activated). No human writes rules.
+
+## Defense in depth
+
+Five layers, none trusting each other:
+
+| Layer | What it does | Trigger |
+|-------|-------------|---------|
+| **Zero-FN gate** | Agents need 200+ samples with 0% false negatives to activate | Promotion time |
+| **Shadow validation** | 5% of suppressed signals re-checked by LLM | Continuous (configurable rate) |
+| **GCL audit loop** | Independent system samples 1% of decisions, writes verdicts to immutable ledger | FAILS verdict triggers demotion |
+| **72h TTL** | Activated agents expire and must re-qualify against current data | Every 72h (configurable) |
+| **Human gate** | Optional approval step before agents activate (for regulated environments) | `CASCADE_HUMAN_GATE=1` |
+
+One false negative from any source → agent demoted to draft, samples zeroed, evidence chain written to immutable ledger.
 
 ## Model Leaderboard (20-signal AAP test, Xeon 6 CPU)
 
@@ -83,21 +103,25 @@ The calculator produces workload-specific estimates only when measured throughpu
 | [Promotion Guidelines](docs/promotion-guidelines.md) | Technical | How agents are discovered, validated, and promoted |
 | [Event Workflow](docs/event-workflow.md) | Technical | Signal lifecycle from ingestion to feedback |
 
-## Package Structure
+## Package structure
 
 ```
+Containerfile              Single-container deployment (UBI9 Python 3.11)
+deploy/openshift.yaml      OpenShift Deployment + Service + Route
+frontend/index.html        Real-time dashboard (polls /stats every 5s)
 cascade_compression/
-  bridge.py          Orchestrator — collector → pipeline → LLM → feedback
-  cli.py             cascade-run, cascade-replay entrypoints
-  cascade/           Pipeline, agents, promotion, corpus analyzer
-  collectors/        8 domain collectors (k8s, aap, finance, healthcare, insurance, retail, telecom, memory)
-  domains/           Domain pack configs (prompt, model, collector class)
-  routing/           Benchmark-graded model selection (19 models, 5 lanes)
-  infra/             Pressure-aware scaler, fleet manager
-  tco/               TCO calculator, FastAPI API, FSI scenarios
-  integrations/      Immutable ledger client
-  metrics/           Precision metric (LLM-vs-LLM audit)
-  benchmarks/        Harness, shootouts, synthetic generators
+  service.py               Standalone FastAPI service (serves dashboard + API)
+  bridge.py                Orchestrator — collector → pipeline → LLM → shadow → feedback
+  cli.py                   cascade-run, cascade-replay entrypoints
+  cascade/                 Pipeline, agents, promotion (hardened), corpus analyzer
+  collectors/              8 domain collectors (k8s, aap, finance, healthcare, insurance, retail, telecom, memory)
+  domains/                 8 domain packs (prompt, model, collector class)
+  routing/                 Benchmark-graded model selection (19 models, 5 lanes)
+  infra/                   Pressure-aware scaler, fleet manager
+  tco/                     TCO calculator, FastAPI API, FSI scenarios
+  integrations/            Immutable ledger client + promotion event writer
+  metrics/                 Precision metric (LLM-vs-LLM audit)
+  benchmarks/              Harness, shootouts, synthetic generators
 ```
 
 ## Platform
