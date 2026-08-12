@@ -24,9 +24,12 @@ import importlib
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any, Dict, List
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .bridge import CascadeBridge
@@ -135,3 +138,11 @@ def agents():
         "discovered": _bridge.get_discovered_agents(),
         "promotion_log": _bridge.get_promotion_log(50),
     }
+
+
+_FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
+
+if _FRONTEND.is_dir():
+    @app.get("/")
+    def dashboard():
+        return FileResponse(_FRONTEND / "index.html")

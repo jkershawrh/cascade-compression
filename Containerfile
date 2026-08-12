@@ -8,6 +8,7 @@ RUN pip install --no-cache-dir .
 COPY cascade_compression/ cascade_compression/
 COPY config/ config/
 COPY data/ data/
+COPY frontend/ frontend/
 
 RUN pip install --no-cache-dir .
 
