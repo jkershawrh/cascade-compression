@@ -9,13 +9,13 @@ An assumption runs through every enterprise AI deployment: every signal needs a 
 What if you could prove, on your own data, that most of those signals never needed a model?
 
 ```bash
-# Point the cascade at your signal stream and find out
-cascade-run --domain kubernetes \
-  --llm-url https://your-model-service/v1 \
-  --llm-key sk-...
+# Deploy on OpenShift in one command
+oc new-app https://github.com/jkershawrh/cascade-compression \
+  -e CASCADE_LLM_URL=https://your-model-service/v1 \
+  -e CASCADE_LLM_KEY=sk-...
 ```
 
-Cascade compression is a discovery engine. Deploy it, point it at any structured signal stream, and within an hour it tells you what percentage of your signals need AI — and what percentage do not. No rules to write. No models to train. Try it on [Red Hat OpenShift](https://www.redhat.com/en/technologies/cloud-computing/openshift/try-it).
+Cascade compression is a discovery engine. One container, three environment variables. Deploy it, point it at any structured signal stream, and within an hour it tells you what percentage of your signals need AI — and what percentage do not. No rules to write. No models to train. No additional infrastructure required.
 
 ## The two bad options you have today
 
@@ -94,16 +94,24 @@ Every robot arm, every CAN bus, every medical device feed follows the same patte
 Cascade compression is a single container. Deploy it, point it at a signal stream, and see your compression ratio.
 
 ```bash
-# Deploy on OpenShift
-oc new-app cascade-compression \
-  --env CASCADE_LLM_URL=https://your-model-service/v1 \
-  --env CASCADE_LLM_KEY=sk-...
+# Option 1: Deploy directly from the repo on OpenShift
+oc new-app https://github.com/jkershawrh/cascade-compression \
+  -e CASCADE_LLM_URL=https://your-model-service/v1 \
+  -e CASCADE_LLM_KEY=sk-...
 
-# Or run locally against historical data
-cascade-replay --domain kubernetes --data signals.csv
+# Option 2: Run locally against your own data
+pip install cascade-compression
+cascade-replay --domain finance --data transactions.csv \
+  --llm-url https://your-model-service/v1 --llm-key sk-...
+
+# Option 3: Full deployment with OpenShift manifests
+oc apply -f deploy/openshift.yaml
+oc create secret generic cascade-llm -n cascade-compression \
+  --from-literal=url=https://your-model-service/v1 \
+  --from-literal=key=sk-...
 ```
 
-No additional infrastructure is required to evaluate the cascade. Shadow validation, self-tuning agents, and the zero false-negative gate all run inside the single deployment. Within an hour, the cascade tells you what percentage of your signals need AI — and what percentage do not.
+Shadow validation, self-tuning agents, and the zero false-negative gate all run inside the single container. No additional infrastructure is required to evaluate the cascade. Within an hour, you know your compression ratio.
 
 When you are ready for production in regulated environments, add the optional governance layer: an immutable ledger for externally auditable decision provenance and an independent audit loop for continuous adversarial verification. Both deploy as standard OpenShift workloads alongside the cascade.
 
