@@ -133,8 +133,11 @@ Any activated agent (nano, micro, macro) with **ANY** false negative in a
 validation batch is **instantly demoted to draft** and deactivated:
 
 ```
-Trigger:
+Triggers (any one of these fires demotion):
   - ANY false negative (fn > 0) in a validation batch → instant demote
+  - Shadow validation: LLM disagrees with a suppressed signal → instant demote
+  - GCL FAILS verdict: independent audit finds a false negative → instant demote
+  - TTL expiry: agent has been active for 72h+ without re-qualification → demote + reactivate
 
 What happens:
   1. Agent tier → draft
