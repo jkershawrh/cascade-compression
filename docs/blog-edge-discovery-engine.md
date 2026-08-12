@@ -47,27 +47,27 @@ Every threshold except zero-FN tolerance is tunable — sample counts, shadow ra
 
 The cascade ran on live production infrastructure across two domains with zero code changes between them.
 
-**Red Hat OpenShift (Kubernetes)** — 142 million signals from six clusters:
+**Red Hat OpenShift (Kubernetes)** — 142.4 million signals replayed from six production clusters:
 
 ```
-Compression:        99.0%
-LLM classifications: 2,943 out of 142,000,000
+Compression:         99.1%
+LLM classifications: 9,685 out of 142,398,235
 Activated agents:    3 (self-discovered)
-Shadow demotions:    0
+GCL audit:           1 FAILS out of 80 audited (1.3% disagreement)
 ```
 
-The LLM classified 0.002% of signals. The rest were handled by deterministic agents in microseconds.
+The LLM classified 0.007% of signals. The rest were handled by deterministic agents in microseconds.
 
-**Red Hat Ansible Automation Platform** — 2.5 million job signals from production:
+**Red Hat Ansible Automation Platform** — 553,000 job signals from production AAP:
 
 ```
-Compression:        98.2%
-Shadow checks:      180
-Shadow demotions:    14 (agents caught and deactivated)
+Compression:         98.1%
+Shadow checks:       1,255
+Shadow demotions:    63 (agents caught and deactivated)
 Self-correction:     real-time, no human intervention
 ```
 
-Shadow validation caught 14 agents making mistakes and deactivated them instantly. The framework corrected itself while running.
+Shadow validation caught 63 agents making mistakes and deactivated them instantly. The framework corrected itself while running.
 
 ## What this means for your infrastructure budget
 

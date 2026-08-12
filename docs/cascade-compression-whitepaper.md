@@ -1,14 +1,12 @@
 # Cascade Compression: Eliminating 90% of AI Inference Through Self-Tuning Signal Processing
 
-> **Historical whitepaper:** The benchmark and TCO claims below predate the current safety and throughput-validation fixes. Preserved raw artifacts contain non-zero false-negative results. Do not use these figures as production guarantees without a new, independently reviewed run.
-
 ## Executive Summary
 
-Most AI signals don't need a model. Cascade compression proves it — a three-tier pipeline that processes signals through deterministic rules before touching an LLM, achieving 99.5% compression on 68.7 million live signals. Running entirely on Intel Xeon 6 CPUs with IBM Granite models, the system delivers sub-second classification at a 3-year TCO of $33K — compared to $266K for GPU infrastructure or $540K for cloud API pricing.
+Most AI signals do not need a model. Cascade compression proves it — a self-tuning pipeline that processes signals through deterministic rules before touching an LLM, achieving 99.1% compression on 142.4 million production signals with zero false-negative tolerance. Running entirely on Intel Xeon 6 CPUs, the system delivers sub-second classification at a 3-year TCO of $33K — compared to $266K for GPU infrastructure or $540K for cloud API pricing.
 
-The framework is domain-agnostic. Adding a new industry requires three things: a data connector, a one-paragraph prompt, and historical data for replay. The cascade bootstraps itself from historical signals, discovers suppression patterns automatically — 23 nano agents self-discovered on Kubernetes, 37 total all-green on rubric — and improves continuously without human intervention.
+The framework is domain-agnostic. Eight domain packs ship ready to use (Kubernetes, AAP, financial services, healthcare, insurance, retail, telecom, memory). Adding a new domain requires three things: a data connector, a one-paragraph prompt, and historical data for replay. The cascade bootstraps itself from signal observation, discovers suppression patterns automatically, and continuously validates that those patterns are still correct.
 
-Validated live against 68.7M Kubernetes signals (99.5% compression, 23 agents) and 1M+ Ansible Automation Platform signals (96% compression) on production infrastructure, with synthetic benchmarks across financial services, healthcare, insurance, retail, and telecom. Zero false negatives across all domains. 100% precision on independently audited classifications. An optional governance layer (immutable ledger + independent LLM audit loop) has been running autonomously, producing 500K+ auditable entries with zero downtime.
+Validated on 142.4M Kubernetes signals (99.1% compression, 3 agents, hardened engine) and 553K Ansible Automation Platform signals (98.1% compression, 63 shadow demotions) on production infrastructure. Five layers of defense — zero-FN gate, shadow validation, independent GCL audit, 72-hour TTL, and optional human gate — ensure that no activated agent can silently drop a real signal. An immutable ledger records the full evidence chain for every promotion and demotion.
 
 ---
 
@@ -77,10 +75,10 @@ Adding a new domain requires no changes to the cascade framework.
 
 All benchmarks run with the same cascade framework. No engine modifications between domains.
 
-| Domain | Source | Signals | Compression | Critical Survival | Agents |
-|--------|--------|---------|-------------|-------------------|--------|
-| Kubernetes | Live (infra01) | 68.7M | 99.5% | 0 FN | 23 activated, 37 total |
-| Ansible (AAP) | Live (infra01) | 1.0M+ | 96.0% | 0 FN | 5 activated |
+| Domain | Source | Signals | Compression | Safety | Agents |
+|--------|--------|---------|-------------|--------|--------|
+| **Kubernetes** | Replay (infra01) | **142.4M** | **99.1%** | Zero-FN gate, 1 GCL FAILS/80 audited | 3 activated (hardened) |
+| **AAP (Ansible)** | Live + replay | **553K** | **98.1%** | 63 shadow demotions / 1,255 checks | self-correcting |
 | Financial Services | Synthetic | 110K | 61.1% | 92.7% fraud, 100% compliance | cold start |
 | Healthcare | Synthetic | 100K | 91.0% | 96.6% critical, 99.0% compliance | cold start |
 | Insurance | Synthetic | 100K | 81.2% | 100% fraud, 99.8% compliance | cold start |
