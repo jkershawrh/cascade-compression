@@ -4,9 +4,9 @@
 
 ---
 
-An assumption runs through every enterprise AI deployment: every signal needs a model. A bank processes 10 million transactions daily, each one through an LLM or ML pipeline. A telecom monitors millions of network events, all routed to GPU clusters.
+Every enterprise draws a line between what gets handled by rules and what gets sent to a model. Some teams hand-write Splunk queries and PagerDuty thresholds. Others run purpose-built ML pipelines. A growing number route signals through LLMs and agentic workflows. Wherever that line sits today, someone is maintaining it manually — and it moves every time the environment changes.
 
-What if you could prove, on your own data, that most of those signals never needed a model?
+What if the line drew itself, validated its own accuracy, and adapted when conditions shifted?
 
 ```bash
 # Deploy on OpenShift in one command
