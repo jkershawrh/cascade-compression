@@ -38,14 +38,18 @@ make test-all
 python3 -m uvicorn cascade_compression.service:app --port 8090
 ```
 
-## Historical Domain Experiments
+## Validated results (hardened engine, 2026-08-11)
 
-These point-in-time experiments predate the current safety gates. Consult the raw artifact's false-negative fields before drawing conclusions.
+| Domain | Source | Signals | Compression | Agents | Shadow demotions | GCL |
+|--------|--------|---------|:-----------:|:------:|:----------------:|:---:|
+| **Kubernetes** | Replay (infra01) | **142.4M** | **99.1%** | 3 | 0 | 1 FAILS |
+| **AAP (Ansible)** | Live + replay | **553K** | **98.1%** | — | 63 | clean |
 
-| Domain | Source | Reported Compression | Validation |
-|--------|--------|:--------------------:|:----------:|
-| **Kubernetes** | Live (68.7M) | **99.5%** | Historical; not a release gate |
-| **AAP (Ansible)** | Live (1M+) | **96.0%** | Historical; not a release gate |
+Hardened engine: zero-FN gate, shadow validation (5%), 72h TTL, GCL audit loop. LLM classified 9,685 signals out of 142M (0.007%).
+
+## Synthetic domain benchmarks
+
+Cold-start numbers from synthetic data — no learned agents, no LLM feedback loop.
 | Financial Services | Synthetic | 61.1% | 92.7% fraud, 100% compliance |
 | Healthcare | Synthetic | 91.0% | 96.6% critical, 99.0% compliance |
 | Insurance | Synthetic | 81.2% | 100% fraud, 99.8% compliance |
