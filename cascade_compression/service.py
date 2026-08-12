@@ -124,9 +124,52 @@ def stats():
 def cascade(request: BatchRequest):
     if not _bridge or not _bridge.enabled:
         return {"error": "cascade not ready"}
+
     adapted = [_SignalAdapter(s) for s in request.signals]
-    result = _bridge.process(adapted)
-    return result
+    input_lookup = {a.signal_id: s for a, s in zip(adapted, request.signals)}
+
+    from .cascade.protocol import Signal
+    cascade_signals = [Signal(
+        signal_id=a.signal_id,
+        signal_type=a.signal_type,
+        severity=a.severity,
+        source=a.resource_name,
+        namespace=a.namespace,
+        content=a.evidence,
+        labels=a.labels,
+    ) for a in adapted]
+
+    t0 = __import__("time").monotonic()
+    cascade_result = _bridge.pipeline.run(cascade_signals)
+    cascade_ms = (__import__("time").monotonic() - t0) * 1000
+
+    _bridge.stats.signals_processed += len(request.signals)
+    handled = len(request.signals) - len(cascade_result.remaining)
+    _bridge.stats.cascade_handled += handled
+    _bridge.stats.cascade_forwarded += len(cascade_result.remaining)
+    if _bridge.stats.signals_processed > 0:
+        _bridge.stats.compression_ratio = _bridge.stats.cascade_handled / _bridge.stats.signals_processed
+
+    survivors = []
+    for sig in cascade_result.remaining:
+        original = input_lookup.get(sig.signal_id)
+        if original:
+            survivors.append({
+                "signal_type": original.signal_type,
+                "severity": original.severity,
+                "source": original.source,
+                "namespace": original.namespace,
+                "content": original.content,
+            })
+
+    return {
+        "total": len(request.signals),
+        "compressed": handled,
+        "survivors": len(survivors),
+        "compression_ratio": round(cascade_result.compression_ratio, 3),
+        "cascade_ms": round(cascade_ms, 1),
+        "signals_needing_attention": survivors,
+    }
 
 
 @app.get("/agents")
