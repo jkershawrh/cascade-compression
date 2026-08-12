@@ -111,6 +111,8 @@ oc create secret generic cascade-llm -n cascade-compression \
   --from-literal=key=sk-...
 ```
 
+The framework ships with 8 domain packs ready to use: Kubernetes, Ansible Automation Platform, financial services, healthcare, insurance, retail, telecom, and memory management. Each pack includes a collector, a tuned LLM prompt, and synthetic data for benchmarking. Pick your domain and deploy — no custom code required.
+
 Shadow validation, self-tuning agents, and the zero false-negative gate all run inside the single container. No additional infrastructure is required to evaluate the cascade. Within an hour, you know your compression ratio.
 
 When you are ready for production in regulated environments, add the optional governance layer: an immutable ledger for externally auditable decision provenance and an independent audit loop for continuous adversarial verification. Both deploy as standard OpenShift workloads alongside the cascade.
