@@ -12,7 +12,7 @@
     },
     "event_type": {
       "type": "string",
-      "enum": ["formed", "recalled", "consolidated", "evicted", "federated"],
+      "enum": ["formed", "recalled", "consolidated", "evicted", "federated", "rejected"],
       "description": "Type of lifecycle event"
     },
     "timestamp": {

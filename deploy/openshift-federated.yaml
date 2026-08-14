@@ -395,6 +395,7 @@ spec:
             - -c
             - |
               import json, urllib.request, sys
+              from datetime import datetime, timezone, timedelta
 
               K8S = "http://cascade-k8s:8090"
               AAP = "http://cascade-aap:8090"
@@ -418,15 +419,18 @@ spec:
                       print(f"  POST {url}: {e}")
                       return None
 
+              since = (datetime.now(timezone.utc) - timedelta(minutes=6)).isoformat()
+
               print("=== Federation cycle ===")
+              print(f"  Incremental since: {since}")
 
               for name, src in [("K8s", K8S), ("AAP", AAP)]:
-                  exported = get(f"{src}/memories/export?min_strength=0.3")
+                  exported = get(f"{src}/memories/export?min_strength=0.3&since={since}")
                   if not exported:
                       print(f"  {name}: export failed")
                       continue
                   count = len(exported.get("memories", []))
-                  print(f"  {name}: {count} memories exported")
+                  print(f"  {name}: {count} memories exported (incremental)")
                   if count > 0:
                       result = post(f"{MEM}/memories/import", exported)
                       print(f"  {name} imported: {result}")
@@ -436,7 +440,7 @@ spec:
 
               stats = get(f"{MEM}/memories/stats")
               if stats:
-                  print(f"  Aggregator: size={stats.get('size',0)}, formed={stats.get('formed_total',0)}, sources={stats.get('federated_sources',0)}, avg_strength={stats.get('avg_strength',0):.3f}")
+                  print(f"  Aggregator: size={stats.get('size',0)}, formed={stats.get('formed_total',0)}, sources={stats.get('federated_sources',0)}, rejected={stats.get('rejection_set_size',0)}, avg_strength={stats.get('avg_strength',0):.3f}")
 
               print("=== Federation complete ===")
             resources:
