@@ -167,10 +167,40 @@ class Memory:
         )
 
 
+import re
+
+_UUID_RE = re.compile(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', re.I)
+_K8S_SUFFIX_RE = re.compile(r'(?<=\w)-[a-z0-9]{5,10}(?=\s|$)')
+_TIMESTAMP_RE = re.compile(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s]*')
+
+
+def _normalize_value(value):
+    """Strip dynamic identifiers from a string value."""
+    if not isinstance(value, str):
+        return value
+    value = _UUID_RE.sub('<uuid>', value)
+    value = _TIMESTAMP_RE.sub('<ts>', value)
+    value = _K8S_SUFFIX_RE.sub('', value)
+    return value
+
+
+def _normalize_content(content: dict) -> dict:
+    """Normalize content dict for dedup — strip UUIDs, pod suffixes, timestamps."""
+    normalized = {}
+    for key, value in content.items():
+        if isinstance(value, dict):
+            normalized[key] = _normalize_content(value)
+        elif isinstance(value, str):
+            normalized[key] = _normalize_value(value)
+        else:
+            normalized[key] = value
+    return normalized
+
+
 def _compute_content_hash(signal: Signal) -> str:
     normalized = json.dumps({
         "signal_type": signal.signal_type,
-        "content": signal.content,
+        "content": _normalize_content(signal.content),
     }, sort_keys=True)
     return hashlib.sha256(normalized.encode()).hexdigest()
 

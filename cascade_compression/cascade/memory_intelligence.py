@@ -231,6 +231,74 @@ class DecayConfig:
         return self._overrides.get(signal_type, self._default)
 
 
+class CoOccurrenceTracker:
+    """Counts how often signal type pairs appear in the same time cluster."""
+
+    def __init__(self):
+        self._pair_counts: Dict[Tuple[str, str], int] = defaultdict(int)
+        self._type_counts: Dict[str, int] = defaultdict(int)
+        self._temporal_order: Dict[Tuple[str, str], int] = defaultdict(int)
+
+    def update_from_clusters(self, clusters: List[TimeCluster]) -> None:
+        for cluster in clusters:
+            types = sorted(cluster.signal_types)
+            for t in types:
+                self._type_counts[t] += 1
+            for i, a in enumerate(types):
+                for b in types[i + 1:]:
+                    self._pair_counts[(a, b)] += 1
+                    # Track temporal order from cluster memories
+                    a_times = [m.formed_at for m in cluster.memories
+                               if m.signal.signal_type == a]
+                    b_times = [m.formed_at for m in cluster.memories
+                               if m.signal.signal_type == b]
+                    if a_times and b_times:
+                        if min(a_times) <= min(b_times):
+                            self._temporal_order[(a, b)] += 1
+                        else:
+                            self._temporal_order[(b, a)] += 1
+
+    def propose_rules(self, min_count: int = 5,
+                      min_support: float = 0.3,
+                      existing_graph: Optional[CausalGraph] = None,
+                      ) -> List[Dict[str, Any]]:
+        proposals = []
+        for (a, b), count in self._pair_counts.items():
+            if count < min_count:
+                continue
+            support = count / min(self._type_counts.get(a, 1),
+                                  self._type_counts.get(b, 1))
+            if support < min_support:
+                continue
+            if existing_graph and existing_graph.has_rule(a, b):
+                continue
+            if existing_graph and existing_graph.has_rule(b, a):
+                continue
+            # Direction: whichever appears first temporally more often is the cause
+            ab_order = self._temporal_order.get((a, b), 0)
+            ba_order = self._temporal_order.get((b, a), 0)
+            if ab_order >= ba_order:
+                cause, effect = a, b
+            else:
+                cause, effect = b, a
+
+            proposals.append({
+                "cause": cause,
+                "effect": effect,
+                "co_occurrence_count": count,
+                "support": round(support, 3),
+                "confidence": round(max(ab_order, ba_order) /
+                                    max(1, ab_order + ba_order), 3),
+            })
+
+        return sorted(proposals, key=lambda p: p["co_occurrence_count"],
+                       reverse=True)
+
+    @property
+    def pair_count(self) -> int:
+        return len(self._pair_counts)
+
+
 class MemoryIntelligence:
     """Composable analysis layer for memory archives.
 
@@ -239,13 +307,15 @@ class MemoryIntelligence:
     provide configuration via register_domain().
     """
 
-    def __init__(self):
+    def __init__(self, auto_discover: bool = False):
         self.entity_resolver = EntityResolver()
         self.time_cluster_engine = TimeClusterEngine(window_seconds=120)
         self.causal_graph = CausalGraph()
         self.absence_detector = AbsenceDetector()
         self.severity_tracker = SeverityTracker()
         self.decay_config = DecayConfig()
+        self.co_occurrence = CoOccurrenceTracker()
+        self.auto_discover = auto_discover
         self._entity_mappings: List[Tuple[Callable, Callable]] = []
         self._domains: Dict[str, dict] = {}
 
@@ -298,6 +368,15 @@ class MemoryIntelligence:
         clusters = self.time_cluster_engine.cluster(memories)
         causal_links = self.causal_graph.find_links_in(memories)
 
+        self.co_occurrence.update_from_clusters(clusters)
+        proposed_rules = self.co_occurrence.propose_rules(
+            existing_graph=self.causal_graph)
+
+        if self.auto_discover:
+            for rule in proposed_rules:
+                if rule["co_occurrence_count"] >= 10 and rule["support"] >= 0.5:
+                    self.causal_graph.add_rule(rule["cause"], rule["effect"])
+
         return {
             "total_memories": len(memories),
             "entities": {
@@ -311,4 +390,6 @@ class MemoryIntelligence:
                 "largest": max((len(c.memories) for c in clusters), default=0),
             },
             "causal_links": causal_links,
+            "proposed_rules": proposed_rules[:10],
+            "co_occurrence_pairs": self.co_occurrence.pair_count,
         }
