@@ -33,11 +33,19 @@ Environment variables (AAP mode):
 """
 
 import argparse
+import decimal
 import json
 import logging
 import os
 import time
 from urllib.request import Request, urlopen
+
+
+class _DecimalEncoder(json.JSONEncoder):
+    def default(self, o):
+        if isinstance(o, decimal.Decimal):
+            return float(o)
+        return super().default(o)
 
 log = logging.getLogger(__name__)
 
@@ -55,7 +63,7 @@ def _post_signals(target_url: str, signals: list) -> dict:
         })
     if not batch:
         return {"total": 0}
-    payload = json.dumps({"signals": batch}).encode()
+    payload = json.dumps({"signals": batch}, cls=_DecimalEncoder).encode()
     req = Request(
         f"{target_url.rstrip('/')}/cascade",
         data=payload,
