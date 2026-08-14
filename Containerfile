@@ -10,7 +10,7 @@ COPY config/ config/
 COPY data/ data/
 COPY frontend/ frontend/
 
-RUN pip install --no-cache-dir .
+RUN pip install --no-cache-dir ".[aap]"
 
 EXPOSE 8090
 
