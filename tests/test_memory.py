@@ -228,6 +228,58 @@ class TestStrength:
         archive.decay_all(lambda_rate=0.01, hours_elapsed=100)
         assert memory.strength < original
 
+    def test_decay_all_typed_uses_per_type_rates(self):
+        """Different signal types decay at different rates."""
+        from cascade_compression.cascade.memory_intelligence import DecayConfig
+        config = DecayConfig(default_rate=0.01)
+        config.set_rate("event_deprecatedannotation", 0.1)
+        config.set_rate("node_notready", 0.001)
+
+        archive = MemoryArchive()
+        archive.set_decay_config(config)
+        m_fast = archive.store(make_signal(signal_type="event_deprecatedannotation",
+                                           content={"message": "fast decay"}),
+                               classification="x")
+        m_slow = archive.store(make_signal(signal_type="node_notready",
+                                           content={"message": "slow decay"}),
+                               classification="x")
+        m_fast.strength = 0.5
+        m_slow.strength = 0.5
+        archive.decay_all_typed(hours_elapsed=10)
+        assert m_fast.strength < m_slow.strength
+
+    def test_decay_all_typed_falls_back_to_default(self):
+        """Unknown types use default rate."""
+        from cascade_compression.cascade.memory_intelligence import DecayConfig
+        config = DecayConfig(default_rate=0.05)
+        archive = MemoryArchive()
+        archive.set_decay_config(config)
+        m = archive.store(make_signal(signal_type="unknown_type",
+                                      content={"message": "unknown"}),
+                          classification="x")
+        original = m.strength
+        archive.decay_all_typed(hours_elapsed=10)
+        import math
+        expected = original * math.exp(-0.05 * 10)
+        assert abs(m.strength - expected) < 0.001
+
+    def test_decay_all_typed_no_config_is_noop(self):
+        """Without decay config, decay_all_typed does nothing."""
+        archive = MemoryArchive()
+        m = archive.store(make_signal(), classification="x")
+        original = m.strength
+        archive.decay_all_typed(hours_elapsed=100)
+        assert m.strength == original
+
+    def test_set_decay_config(self):
+        """Decay config can be set after construction."""
+        from cascade_compression.cascade.memory_intelligence import DecayConfig
+        archive = MemoryArchive()
+        assert archive._decay_config is None
+        config = DecayConfig(default_rate=0.02)
+        archive.set_decay_config(config)
+        assert archive._decay_config is not None
+
     def test_decay_never_negative(self):
         """Strength never goes below zero after decay."""
         archive = MemoryArchive()

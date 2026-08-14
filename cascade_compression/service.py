@@ -74,6 +74,8 @@ async def lifespan(app: FastAPI):
         domain_config = getattr(mod, "MEMORY_CONFIG", None)
         if domain_config:
             _memory_intel.register_domain(domain, domain_config)
+            if _memory_archive:
+                _memory_archive.set_decay_config(_memory_intel.decay_config)
             log.info("Registered memory config for domain=%s", domain)
     except (ImportError, AttributeError):
         pass
@@ -255,12 +257,15 @@ def analyze():
 
 
 @app.post("/consolidate")
-def consolidate():
+def consolidate(batch_size: int = 1000):
     if not _memory_archive or not _bridge:
         return {"processed": 0, "evicted": 0, "compression_ratio": 0.0}
     from .cascade.agents import default_agents
     from .cascade.pipeline import CascadePipeline
-    return _memory_archive.consolidate(lambda: CascadePipeline(default_agents()))
+    return _memory_archive.consolidate(
+        lambda: CascadePipeline(default_agents()),
+        batch_size=batch_size,
+    )
 
 
 @app.get("/memories/stats")

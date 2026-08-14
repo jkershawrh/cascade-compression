@@ -249,6 +249,122 @@ class TestConsolidationBehavior:
             assert archive.get(mid) is not None, f"Critical memory {mid} was evicted"
 
 
+class TestConsolidationBatching:
+    def test_batch_processes_only_n_memories(self):
+        """batch_size limits how many memories are processed."""
+        archive = MemoryArchive()
+        for i in range(20):
+            archive.store(
+                make_signal(signal_type=f"type_{i}", severity="critical",
+                            content={"message": f"event {i}"}),
+                classification="x",
+            )
+        result = archive.consolidate(make_pipeline, batch_size=5)
+        assert result["processed"] == 5
+
+    def test_batch_zero_processes_all(self):
+        """batch_size=0 processes everything (backward compat)."""
+        archive = MemoryArchive()
+        for i in range(10):
+            archive.store(
+                make_signal(signal_type=f"type_{i}", severity="critical",
+                            content={"message": f"event {i}"}),
+                classification="x",
+            )
+        result = archive.consolidate(make_pipeline, batch_size=0)
+        assert result["processed"] == 10
+
+    def test_batch_prioritizes_oldest_unconsolidated(self):
+        """Memories without last_consolidated_at are processed first."""
+        archive = MemoryArchive()
+        old = archive.store(
+            make_signal(signal_type="old_event", severity="critical",
+                        content={"message": "old"}),
+            classification="x",
+        )
+        old.last_consolidated_at = None
+
+        new = archive.store(
+            make_signal(signal_type="new_event", severity="critical",
+                        content={"message": "new"}),
+            classification="x",
+        )
+        new.last_consolidated_at = "2099-01-01T00:00:00+00:00"
+
+        result = archive.consolidate(make_pipeline, batch_size=1)
+        assert result["processed"] == 1
+        assert old.last_consolidated_at is not None
+
+    def test_repeated_batches_cover_archive(self):
+        """Multiple batch calls eventually process everything."""
+        archive = MemoryArchive()
+        for i in range(10):
+            archive.store(
+                make_signal(signal_type=f"type_{i}", severity="critical",
+                            content={"message": f"event {i}"}),
+                classification="x",
+            )
+        consolidated = set()
+        for _ in range(5):
+            archive.consolidate(make_pipeline, batch_size=3)
+        for m in archive.query(limit=999):
+            if m.last_consolidated_at:
+                consolidated.add(m.memory_id)
+        assert len(consolidated) == archive.size
+
+    def test_last_consolidated_at_updated(self):
+        """last_consolidated_at is set after processing."""
+        archive = MemoryArchive()
+        m = archive.store(
+            make_signal(severity="critical", content={"message": "test"}),
+            classification="x",
+        )
+        assert m.last_consolidated_at is None
+        archive.consolidate(make_pipeline, batch_size=1)
+        assert m.last_consolidated_at is not None
+
+
+class TestConsolidationWithDecayConfig:
+    def test_per_type_decay_differentiates_strength(self):
+        """GIVEN two info-severity signal types with different decay rates
+        WHEN both are suppressed during consolidation
+        THEN the fast-decay type loses more strength."""
+        from cascade_compression.cascade.memory_intelligence import DecayConfig
+        config = DecayConfig(default_rate=0.01)
+        config.set_rate("heartbeat", 0.1)
+        config.set_rate("security_alert", 0.001)
+
+        archive = MemoryArchive()
+        archive.set_decay_config(config)
+        m_fast = archive.store(
+            make_signal(signal_type="heartbeat", severity="info",
+                        content={"message": "health check ok fast"}),
+            classification="x",
+        )
+        m_slow = archive.store(
+            make_signal(signal_type="security_alert", severity="info",
+                        content={"message": "low priority alert slow"}),
+            classification="x",
+        )
+        m_fast.strength = 0.8
+        m_slow.strength = 0.8
+
+        archive.consolidate(make_pipeline, decay_config=config)
+        assert m_fast.strength < m_slow.strength
+
+    def test_consolidation_without_config_uses_flat_decay(self):
+        """Without decay config, flat strength_decay is used (backward compat)."""
+        archive = MemoryArchive()
+        m = archive.store(
+            make_signal(signal_type="heartbeat", severity="info",
+                        content={"message": "check"}),
+            classification="x",
+        )
+        original = m.strength
+        archive.consolidate(make_pipeline)
+        assert m.strength == original - 0.3 or m.strength == 0.0
+
+
 class TestConsolidationAPI:
     def test_consolidate_endpoint(self):
         """POST /consolidate triggers consolidation and returns stats."""
