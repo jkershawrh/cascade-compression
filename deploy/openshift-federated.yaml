@@ -389,55 +389,56 @@ spec:
           restartPolicy: OnFailure
           containers:
           - name: federate
-            image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+            image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
             command:
-            - /bin/bash
+            - python3
             - -c
             - |
-              set -euo pipefail
+              import json, urllib.request, sys
 
-              K8S=http://cascade-k8s:8090
-              AAP=http://cascade-aap:8090
-              MEM=http://cascade-memory:8090
+              K8S = "http://cascade-k8s:8090"
+              AAP = "http://cascade-aap:8090"
+              MEM = "http://cascade-memory:8090"
 
-              echo "=== Federation cycle $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+              def get(url):
+                  try:
+                      with urllib.request.urlopen(url, timeout=30) as r:
+                          return json.loads(r.read())
+                  except Exception as e:
+                      print(f"  GET {url}: {e}")
+                      return None
 
-              # Export from K8s cascade (min_strength=0.3 — only meaningful memories)
-              echo "Exporting K8s memories..."
-              K8S_DATA=$(curl -sf "${K8S}/memories/export?min_strength=0.3" || echo '{"instance_id":"k8s","memories":[]}')
-              K8S_COUNT=$(echo "$K8S_DATA" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('memories',[])))" 2>/dev/null || echo 0)
-              echo "  K8s: ${K8S_COUNT} memories exported"
+              def post(url, data):
+                  try:
+                      payload = json.dumps(data).encode()
+                      req = urllib.request.Request(url, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+                      with urllib.request.urlopen(req, timeout=60) as r:
+                          return json.loads(r.read())
+                  except Exception as e:
+                      print(f"  POST {url}: {e}")
+                      return None
 
-              # Export from AAP cascade
-              echo "Exporting AAP memories..."
-              AAP_DATA=$(curl -sf "${AAP}/memories/export?min_strength=0.3" || echo '{"instance_id":"aap","memories":[]}')
-              AAP_COUNT=$(echo "$AAP_DATA" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('memories',[])))" 2>/dev/null || echo 0)
-              echo "  AAP: ${AAP_COUNT} memories exported"
+              print("=== Federation cycle ===")
 
-              # Import into memory aggregator
-              echo "Importing into aggregator..."
-              K8S_IMPORTED=$(curl -sf -X POST -H "Content-Type: application/json" -d "$K8S_DATA" "${MEM}/memories/import" || echo '{"imported":0}')
-              AAP_IMPORTED=$(curl -sf -X POST -H "Content-Type: application/json" -d "$AAP_DATA" "${MEM}/memories/import" || echo '{"imported":0}')
-              echo "  K8s imported: $K8S_IMPORTED"
-              echo "  AAP imported: $AAP_IMPORTED"
+              for name, src in [("K8s", K8S), ("AAP", AAP)]:
+                  exported = get(f"{src}/memories/export?min_strength=0.3")
+                  if not exported:
+                      print(f"  {name}: export failed")
+                      continue
+                  count = len(exported.get("memories", []))
+                  print(f"  {name}: {count} memories exported")
+                  if count > 0:
+                      result = post(f"{MEM}/memories/import", exported)
+                      print(f"  {name} imported: {result}")
 
-              # Run consolidation on the aggregator
-              echo "Running consolidation..."
-              CONSOL=$(curl -sf -X POST "${MEM}/consolidate" || echo '{"processed":0}')
-              echo "  Consolidation: $CONSOL"
+              consol = post(f"{MEM}/consolidate", {})
+              print(f"  Consolidation: {consol}")
 
-              # Report stats
-              echo "Aggregator stats:"
-              curl -sf "${MEM}/memories/stats" | python3 -c "
-              import sys, json
-              s = json.load(sys.stdin)
-              print(f\"  Size: {s.get('size',0)}\")
-              print(f\"  Formed total: {s.get('formed_total',0)}\")
-              print(f\"  Federated sources: {s.get('federated_sources',0)}\")
-              print(f\"  Avg strength: {s.get('avg_strength',0):.3f}\")
-              " 2>/dev/null || echo "  (stats unavailable)"
+              stats = get(f"{MEM}/memories/stats")
+              if stats:
+                  print(f"  Aggregator: size={stats.get('size',0)}, formed={stats.get('formed_total',0)}, sources={stats.get('federated_sources',0)}, avg_strength={stats.get('avg_strength',0):.3f}")
 
-              echo "=== Federation complete ==="
+              print("=== Federation complete ===")
             resources:
               requests:
                 cpu: 100m
