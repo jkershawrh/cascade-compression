@@ -1,0 +1,447 @@
+---
+# Federated Cascade Deployment — infra01
+#
+# Three cascade instances:
+#   1. cascade-k8s      — monitors Kubernetes clusters, forms K8s memories
+#   2. cascade-aap      — monitors Ansible Automation Platform, forms AAP memories
+#   3. cascade-memory   — aggregates memories from both, runs federated recall
+#
+# Each instance persists state to a PVC. The aggregator imports
+# memories from K8s and AAP on a timer (CronJob) and runs
+# consolidation + cross-source correlation.
+#
+# Usage:
+#   oc apply -f deploy/openshift-federated.yaml
+#   oc create secret generic cascade-llm \
+#     --from-literal=url=https://your-llm/v1 \
+#     --from-literal=key=sk-... \
+#     -n cascade-compression
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cascade-compression
+
+---
+# Shared state volume for each cascade instance
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cascade-k8s-state
+  namespace: cascade-compression
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 100Mi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cascade-aap-state
+  namespace: cascade-compression
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 100Mi
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cascade-memory-state
+  namespace: cascade-compression
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 200Mi
+
+---
+# ── K8s Cascade ─────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cascade-k8s
+  namespace: cascade-compression
+  labels:
+    app: cascade-k8s
+    component: cascade
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cascade-k8s
+  template:
+    metadata:
+      labels:
+        app: cascade-k8s
+        component: cascade
+    spec:
+      containers:
+      - name: cascade
+        image: quay.io/redhat-ai-incubation/cascade-compression:latest
+        ports:
+        - containerPort: 8090
+        env:
+        - name: CASCADE_DOMAIN
+          value: "kubernetes"
+        - name: CASCADE_LLM_URL
+          valueFrom:
+            secretKeyRef:
+              name: cascade-llm
+              key: url
+              optional: true
+        - name: CASCADE_LLM_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cascade-llm
+              key: key
+              optional: true
+        - name: CASCADE_LLM_MODEL
+          value: "granite-3-2-8b-instruct"
+        - name: CASCADE_MICRO_MODEL
+          value: "granite-2b"
+        - name: CASCADE_MACRO_MODEL
+          value: "granite-3-2-8b-instruct"
+        - name: CASCADE_SHADOW_RATE
+          value: "0.05"
+        - name: CASCADE_ACTIVATION_TTL_HOURS
+          value: "72"
+        - name: CASCADE_MEMORY_ENABLED
+          value: "1"
+        - name: CASCADE_MEMORY_MAX
+          value: "10000"
+        - name: CASCADE_STATE_FILE
+          value: "/state/cascade-k8s.json"
+        volumeMounts:
+        - name: state
+          mountPath: /state
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: "4"
+            memory: 4Gi
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+          initialDelaySeconds: 10
+          periodSeconds: 30
+      volumes:
+      - name: state
+        persistentVolumeClaim:
+          claimName: cascade-k8s-state
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cascade-k8s
+  namespace: cascade-compression
+  labels:
+    app: cascade-k8s
+spec:
+  selector:
+    app: cascade-k8s
+  ports:
+  - port: 8090
+    targetPort: 8090
+
+---
+# ── AAP Cascade ─────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cascade-aap
+  namespace: cascade-compression
+  labels:
+    app: cascade-aap
+    component: cascade
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cascade-aap
+  template:
+    metadata:
+      labels:
+        app: cascade-aap
+        component: cascade
+    spec:
+      containers:
+      - name: cascade
+        image: quay.io/redhat-ai-incubation/cascade-compression:latest
+        ports:
+        - containerPort: 8090
+        env:
+        - name: CASCADE_DOMAIN
+          value: "aap"
+        - name: CASCADE_LLM_URL
+          valueFrom:
+            secretKeyRef:
+              name: cascade-llm
+              key: url
+              optional: true
+        - name: CASCADE_LLM_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cascade-llm
+              key: key
+              optional: true
+        - name: CASCADE_LLM_MODEL
+          value: "granite-3-2-8b-instruct"
+        - name: CASCADE_MICRO_MODEL
+          value: "granite-2b"
+        - name: CASCADE_MACRO_MODEL
+          value: "granite-3-2-8b-instruct"
+        - name: CASCADE_SHADOW_RATE
+          value: "0.05"
+        - name: CASCADE_ACTIVATION_TTL_HOURS
+          value: "72"
+        - name: CASCADE_MEMORY_ENABLED
+          value: "1"
+        - name: CASCADE_MEMORY_MAX
+          value: "10000"
+        - name: CASCADE_STATE_FILE
+          value: "/state/cascade-aap.json"
+        volumeMounts:
+        - name: state
+          mountPath: /state
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: "4"
+            memory: 4Gi
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+          initialDelaySeconds: 10
+          periodSeconds: 30
+      volumes:
+      - name: state
+        persistentVolumeClaim:
+          claimName: cascade-aap-state
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cascade-aap
+  namespace: cascade-compression
+  labels:
+    app: cascade-aap
+spec:
+  selector:
+    app: cascade-aap
+  ports:
+  - port: 8090
+    targetPort: 8090
+
+---
+# ── Memory Aggregator ───────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cascade-memory
+  namespace: cascade-compression
+  labels:
+    app: cascade-memory
+    component: aggregator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: cascade-memory
+  template:
+    metadata:
+      labels:
+        app: cascade-memory
+        component: aggregator
+    spec:
+      containers:
+      - name: cascade
+        image: quay.io/redhat-ai-incubation/cascade-compression:latest
+        ports:
+        - containerPort: 8090
+        env:
+        - name: CASCADE_DOMAIN
+          value: "memory"
+        - name: CASCADE_LLM_URL
+          valueFrom:
+            secretKeyRef:
+              name: cascade-llm
+              key: url
+              optional: true
+        - name: CASCADE_LLM_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cascade-llm
+              key: key
+              optional: true
+        - name: CASCADE_LLM_MODEL
+          value: "granite-3-2-8b-instruct"
+        - name: CASCADE_MICRO_MODEL
+          value: "granite-2b"
+        - name: CASCADE_MACRO_MODEL
+          value: "granite-3-2-8b-instruct"
+        - name: CASCADE_MEMORY_ENABLED
+          value: "1"
+        - name: CASCADE_MEMORY_MAX
+          value: "50000"
+        - name: CASCADE_STATE_FILE
+          value: "/state/cascade-memory.json"
+        volumeMounts:
+        - name: state
+          mountPath: /state
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: "2"
+            memory: 4Gi
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: state
+        persistentVolumeClaim:
+          claimName: cascade-memory-state
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cascade-memory
+  namespace: cascade-compression
+  labels:
+    app: cascade-memory
+spec:
+  selector:
+    app: cascade-memory
+  ports:
+  - port: 8090
+    targetPort: 8090
+
+---
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: cascade-memory
+  namespace: cascade-compression
+  labels:
+    app: cascade-memory
+spec:
+  to:
+    kind: Service
+    name: cascade-memory
+  port:
+    targetPort: 8090
+  tls:
+    termination: edge
+
+---
+# ── Federation CronJob ──────────────────────────────────────────────
+# Runs every 5 minutes: exports memories from K8s and AAP cascades,
+# imports them into the memory aggregator, then runs consolidation.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cascade-federate
+  namespace: cascade-compression
+  labels:
+    app: cascade-federate
+spec:
+  schedule: "*/5 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: cascade-federate
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: federate
+            image: registry.access.redhat.com/ubi9/ubi-minimal:latest
+            command:
+            - /bin/bash
+            - -c
+            - |
+              set -euo pipefail
+
+              K8S=http://cascade-k8s:8090
+              AAP=http://cascade-aap:8090
+              MEM=http://cascade-memory:8090
+
+              echo "=== Federation cycle $(date -u +%Y-%m-%dT%H:%M:%SZ) ==="
+
+              # Export from K8s cascade (min_strength=0.3 — only meaningful memories)
+              echo "Exporting K8s memories..."
+              K8S_DATA=$(curl -sf "${K8S}/memories/export?min_strength=0.3" || echo '{"instance_id":"k8s","memories":[]}')
+              K8S_COUNT=$(echo "$K8S_DATA" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('memories',[])))" 2>/dev/null || echo 0)
+              echo "  K8s: ${K8S_COUNT} memories exported"
+
+              # Export from AAP cascade
+              echo "Exporting AAP memories..."
+              AAP_DATA=$(curl -sf "${AAP}/memories/export?min_strength=0.3" || echo '{"instance_id":"aap","memories":[]}')
+              AAP_COUNT=$(echo "$AAP_DATA" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('memories',[])))" 2>/dev/null || echo 0)
+              echo "  AAP: ${AAP_COUNT} memories exported"
+
+              # Import into memory aggregator
+              echo "Importing into aggregator..."
+              K8S_IMPORTED=$(curl -sf -X POST -H "Content-Type: application/json" -d "$K8S_DATA" "${MEM}/memories/import" || echo '{"imported":0}')
+              AAP_IMPORTED=$(curl -sf -X POST -H "Content-Type: application/json" -d "$AAP_DATA" "${MEM}/memories/import" || echo '{"imported":0}')
+              echo "  K8s imported: $K8S_IMPORTED"
+              echo "  AAP imported: $AAP_IMPORTED"
+
+              # Run consolidation on the aggregator
+              echo "Running consolidation..."
+              CONSOL=$(curl -sf -X POST "${MEM}/consolidate" || echo '{"processed":0}')
+              echo "  Consolidation: $CONSOL"
+
+              # Report stats
+              echo "Aggregator stats:"
+              curl -sf "${MEM}/memories/stats" | python3 -c "
+              import sys, json
+              s = json.load(sys.stdin)
+              print(f\"  Size: {s.get('size',0)}\")
+              print(f\"  Formed total: {s.get('formed_total',0)}\")
+              print(f\"  Federated sources: {s.get('federated_sources',0)}\")
+              print(f\"  Avg strength: {s.get('avg_strength',0):.3f}\")
+              " 2>/dev/null || echo "  (stats unavailable)"
+
+              echo "=== Federation complete ==="
+            resources:
+              requests:
+                cpu: 100m
+                memory: 64Mi
+              limits:
+                cpu: 500m
+                memory: 256Mi

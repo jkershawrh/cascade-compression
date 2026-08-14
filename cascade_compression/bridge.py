@@ -20,6 +20,7 @@ from uuid import uuid4
 from .cascade.agents import default_agents
 from .cascade.corpus_analyzer import CorpusAnalyzer
 from .cascade.dynamic_agents import DominantNoiseSuppressor, RepeatFloodSuppressor
+from .cascade.memory import MemoryArchive
 from .cascade.pipeline import CascadePipeline
 from .cascade.promotion import AgentMetrics, Baseline, PromotionEngine, RuleAgent
 from .cascade.protocol import Signal
@@ -94,6 +95,8 @@ class CascadeBridge:
         self._llm_url = llm_url or os.getenv("CASCADE_LLM_URL", os.getenv("LITELLM_API_BASE", ""))
         self._llm_key = llm_key or os.getenv("CASCADE_LLM_KEY", os.getenv("LITELLM_API_KEY", ""))
         self._llm_model = llm_model or os.getenv("CASCADE_LLM_MODEL", "microsoft-phi-4")
+        self._micro_model = os.getenv("CASCADE_MICRO_MODEL", "") or self._llm_model
+        self._macro_model = os.getenv("CASCADE_MACRO_MODEL", "") or self._llm_model
         self._system_prompt = system_prompt
         self._ledger_url = ledger_url or os.getenv("CASCADE_LEDGER_URL", "")
         self._ledger_token = ledger_token or os.getenv("CASCADE_LEDGER_TOKEN", "")
@@ -148,6 +151,10 @@ class CascadeBridge:
         self.baseline = Baseline(normal_ranges={})
         self._observed_ranges: Dict[str, Dict[str, list]] = defaultdict(lambda: defaultdict(list))
 
+        self._memory_enabled = bool(os.getenv("CASCADE_MEMORY_ENABLED", "1"))
+        self._memory_max = int(os.getenv("CASCADE_MEMORY_MAX", "10000"))
+        self.memory_archive = MemoryArchive(max_capacity=self._memory_max) if self._memory_enabled else None
+
         self._state_file = os.getenv("CASCADE_STATE_FILE", "")
 
         self._restore_state()
@@ -175,6 +182,15 @@ class CascadeBridge:
 
         if self._activated_types and self._shadow_sample_rate > 0 and self._llm_url:
             self._queue_shadow_samples(cascade_result, cascade_signals)
+
+        if self.memory_archive is not None:
+            for sig in cascade_result.remaining:
+                classification = ""
+                for d in cascade_result.decisions:
+                    if d.signal_id == sig.signal_id and d.classification:
+                        classification = d.classification
+                        break
+                self.memory_archive.store(sig, classification=classification)
 
         for sig in cascade_result.remaining:
             self._llm_buffer.append({
@@ -354,11 +370,13 @@ class CascadeBridge:
                         f"namespace={sig.get('namespace', '')}"
                     )
                     try:
+                        sev = sig.get("severity", "medium")
+                        model = self._macro_model if sev in ("critical", "high") else self._micro_model
                         t0 = time.monotonic()
                         r = client.post(
                             f"{self._llm_url}/v1/chat/completions",
                             json={
-                                "model": self._llm_model,
+                                "model": model,
                                 "messages": [
                                     {"role": "system", "content": self._system_prompt},
                                     {"role": "user", "content": text},
@@ -377,6 +395,8 @@ class CascadeBridge:
                             "signal_type": sig["signal_type"],
                             "classification": ans,
                             "latency_ms": round(ms),
+                            "model": model,
+                            "tier": "macro" if sev in ("critical", "high") else "micro",
                         })
                         if len(self._llm_results) > 1000:
                             self._llm_results = self._llm_results[-1000:]
@@ -434,10 +454,12 @@ class CascadeBridge:
                         f"namespace={sig.get('namespace', '')}"
                     )
                     try:
+                        sev = sig.get("severity", "medium")
+                        model = self._macro_model if sev in ("critical", "high") else self._micro_model
                         r = client.post(
                             f"{self._llm_url}/v1/chat/completions",
                             json={
-                                "model": self._llm_model,
+                                "model": model,
                                 "messages": [
                                     {"role": "system", "content": self._system_prompt},
                                     {"role": "user", "content": text},
@@ -611,6 +633,7 @@ class CascadeBridge:
                     "signals_processed": self.stats.signals_processed,
                     "llm_classified": self.stats.llm_classified,
                 },
+                "memory_archive": self.memory_archive.to_dict() if self.memory_archive else None,
             }
             with open(self._state_file, "w") as f:
                 json.dump(state, f)
@@ -653,6 +676,9 @@ class CascadeBridge:
                 # instead of restoring a type with broader suppression semantics.
                 self.corpus_analyzer._known_patterns = set()
                 log.warning("Legacy cascade state requires safe rediscovery")
+            memory_data = state.get("memory_archive")
+            if memory_data and self.memory_archive is not None:
+                self.memory_archive = MemoryArchive.from_dict(memory_data)
             log.info("Restored: %d activated, %d LLM counts, %d patterns",
                      len(self._activated_types), len(self._llm_noise_counts),
                      len(self.corpus_analyzer._known_patterns))

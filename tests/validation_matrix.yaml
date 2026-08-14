@@ -102,6 +102,35 @@ stages:
         points: 15
         required: true
 
+  stage_memory_archive:
+    description: "Memory archive stores, queries, and evicts survivors"
+    threshold: 100
+    criteria:
+      memory_schema_valid:
+        description: "memory-record.json validates as JSON Schema"
+        points: 15
+        required: true
+      memory_store_roundtrip:
+        description: "Stored memory retrievable by ID"
+        points: 20
+        required: true
+      memory_capacity_bounded:
+        description: "Archive never exceeds CASCADE_MEMORY_MAX"
+        points: 20
+        required: true
+      memory_eviction_weakest:
+        description: "Eviction removes lowest-strength memories"
+        points: 15
+        required: true
+      memory_state_persistence:
+        description: "to_dict -> from_dict roundtrip preserves archive"
+        points: 15
+        required: true
+      memory_safety_invariant:
+        description: "Memory features never weaken zero-FN guarantee"
+        points: 15
+        required: true
+
   stage_3_api:
     description: "API endpoints match OpenAPI contract"
     threshold: 100

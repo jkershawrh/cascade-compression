@@ -9,6 +9,8 @@ from .protocol import CascadeAgent, CascadeDecision, Signal
 from .pipeline import CascadePipeline
 from .router import CascadeRouter
 from .promotion import AgentMetrics, Baseline, PromotionEngine, RuleAgent
+from .memory import Memory, MemoryArchive, MemoryEvent
+from .recall import RecallEngine, RecallResult
 
 __all__ = [
     "CascadeAgent",
@@ -20,4 +22,9 @@ __all__ = [
     "Baseline",
     "PromotionEngine",
     "RuleAgent",
+    "Memory",
+    "MemoryArchive",
+    "MemoryEvent",
+    "RecallEngine",
+    "RecallResult",
 ]

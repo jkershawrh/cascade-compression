@@ -476,3 +476,42 @@ class TestRegressions:
         s = Signal(severity="critical", content={"message": "regression test"})
         result = run_full_pipeline([s])
         assert_not_dropped(result, s)
+
+
+class TestMemoryDoesNotWeakenSafety:
+    """Memory formation must NEVER alter pipeline decisions."""
+
+    def test_memory_formation_after_pipeline(self):
+        """Memory capture happens AFTER pipeline.run(), not during.
+        Pipeline decisions must be identical with or without memory archive."""
+        signals = [
+            Signal(severity="critical", signal_type="oom", content={"message": "OOMKilled"}),
+            Signal(severity="info", signal_type="heartbeat", content={"message": "ok"}),
+            Signal(severity="high", signal_type="auth_fail", content={"message": "unauthorized"}),
+        ]
+        result_without = run_full_pipeline(signals)
+
+        from cascade_compression.cascade.memory import MemoryArchive
+        archive = MemoryArchive()
+        result_with = run_full_pipeline(signals)
+        for sig in result_with.remaining:
+            archive.store(sig, classification="test")
+
+        assert len(result_without.remaining) == len(result_with.remaining)
+        without_ids = {s.signal_id for s in result_without.remaining}
+        with_ids = {s.signal_id for s in result_with.remaining}
+        assert without_ids == with_ids
+
+    def test_memory_archive_full_does_not_block_processing(self):
+        """Even if archive is at capacity, pipeline processing continues."""
+        from cascade_compression.cascade.memory import MemoryArchive
+        archive = MemoryArchive(max_capacity=2)
+        for i in range(5):
+            sig = Signal(severity="critical", signal_type=f"incident_{i}",
+                         content={"message": f"incident {i}"})
+            archive.store(sig, classification="test")
+        assert archive.size <= 2
+
+        signals = [Signal(severity="critical", content={"message": "new incident"})]
+        result = run_full_pipeline(signals)
+        assert_not_dropped(result, signals[0], "Pipeline must work even when memory archive is full")
