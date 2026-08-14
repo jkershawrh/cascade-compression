@@ -191,6 +191,115 @@ class TestFederationBehavior:
         assert target.size <= 5
 
 
+class TestIncrementalExport:
+    def test_export_with_since_filters(self):
+        """Only memories modified after 'since' are exported."""
+        archive = MemoryArchive()
+        m1 = archive.store(make_signal(content={"message": "old event"}),
+                           classification="x")
+        m1.last_modified_at = "2026-08-14T10:00:00+00:00"
+
+        m2 = archive.store(make_signal(content={"message": "new event"}),
+                           classification="y")
+        m2.last_modified_at = "2026-08-14T12:00:00+00:00"
+
+        exported = archive.export_memories(since="2026-08-14T11:00:00+00:00")
+        assert len(exported["memories"]) == 1
+        assert exported["memories"][0]["content"]["message"] == "new event"
+
+    def test_export_without_since_returns_all(self):
+        """Backward compatible: no since = export everything."""
+        archive = MemoryArchive()
+        archive.store(make_signal(content={"message": "a"}), classification="x")
+        archive.store(make_signal(content={"message": "b"}), classification="y")
+        exported = archive.export_memories()
+        assert len(exported["memories"]) == 2
+
+
+class TestRejectionSet:
+    def test_eviction_adds_to_rejection_set(self):
+        """Evicted content hashes are added to rejection set."""
+        archive = MemoryArchive(max_capacity=3)
+        hashes = []
+        for i in range(3):
+            m = archive.store(make_signal(severity="info",
+                                          content={"message": f"weak {i}"}),
+                              classification="x")
+            hashes.append(m.content_hash)
+        archive.store(make_signal(severity="critical",
+                                  content={"message": "strong"}),
+                      classification="y")
+        assert len(archive._rejection_set) > 0
+
+    def test_import_skips_rejected_hashes(self):
+        """Memories with rejected content hashes are not imported."""
+        target = MemoryArchive(max_capacity=3)
+        for i in range(3):
+            target.store(make_signal(severity="info",
+                                     content={"message": f"fill {i}"}),
+                         classification="x")
+        target.store(make_signal(severity="critical",
+                                 content={"message": "trigger eviction"}),
+                     classification="y")
+        rejected_hashes = list(target._rejection_set)
+        assert len(rejected_hashes) > 0
+
+        source = MemoryArchive(instance_id="remote")
+        source.store(make_signal(severity="info",
+                                  content={"message": "fill 0"}),
+                     classification="x")
+        exported = source.export_memories()
+        size_before = target.size
+        target.import_memories(exported)
+        assert target.size == size_before
+
+    def test_re_import_cycle_does_not_reinforce_rejected(self):
+        """Full cycle: evict → re-export from source → import → rejected."""
+        source = MemoryArchive(instance_id="source")
+        target = MemoryArchive(instance_id="target", max_capacity=5)
+
+        weak = source.store(make_signal(severity="info",
+                                         content={"message": "noise signal"}),
+                            classification="noise")
+        target.import_memories(source.export_memories())
+        assert target.size == 1
+
+        for i in range(5):
+            target.store(make_signal(severity="critical",
+                                      content={"message": f"strong {i}"}),
+                         classification="important")
+
+        assert weak.content_hash in target._rejection_set
+
+        size_before = target.size
+        target.import_memories(source.export_memories())
+        assert target.size == size_before
+
+    def test_rejection_set_persisted_in_state(self):
+        """Rejection set survives to_dict/from_dict roundtrip."""
+        archive = MemoryArchive(max_capacity=2)
+        archive.store(make_signal(severity="info", content={"message": "a"}),
+                      classification="x")
+        archive.store(make_signal(severity="info", content={"message": "b"}),
+                      classification="x")
+        archive.store(make_signal(severity="critical", content={"message": "c"}),
+                      classification="y")
+
+        data = archive.to_dict()
+        restored = MemoryArchive.from_dict(data)
+        assert len(restored._rejection_set) == len(archive._rejection_set)
+        assert set(restored._rejection_set) == set(archive._rejection_set)
+
+    def test_rejection_set_capped(self):
+        """Rejection set doesn't grow unbounded."""
+        archive = MemoryArchive(max_capacity=2)
+        for i in range(100):
+            archive.store(make_signal(severity="info",
+                                       content={"message": f"noise {i}"}),
+                          classification="x")
+        assert len(archive._rejection_set) <= archive._rejection_max
+
+
 class TestFederationAPI:
     def test_export_endpoint(self):
         """GET /memories/export returns instance_id and memories."""

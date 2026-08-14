@@ -113,6 +113,7 @@ class Memory:
     classification: str = ""
     content_hash: str = ""
     feature_vector: Dict[str, float] = field(default_factory=dict)
+    last_modified_at: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -133,6 +134,7 @@ class Memory:
             "source": self.signal.source,
             "namespace": self.signal.namespace,
             "cluster": self.signal.cluster,
+            "last_modified_at": self.last_modified_at,
         }
 
     @staticmethod
@@ -158,6 +160,7 @@ class Memory:
             classification=d.get("classification", ""),
             content_hash=d.get("content_hash", ""),
             feature_vector=d.get("feature_vector", {}),
+            last_modified_at=d.get("last_modified_at"),
         )
 
 
@@ -189,6 +192,8 @@ class MemoryArchive:
         self._events: List[MemoryEvent] = []
         self._formed_total = 0
         self._evictions_total = 0
+        self._rejection_set: List[str] = []
+        self._rejection_max = max_capacity * 2
 
     @property
     def size(self) -> int:
@@ -203,6 +208,7 @@ class MemoryArchive:
             existing = self._memories.get(existing_id)
             if existing is not None:
                 existing.strength += 0.1 * (1.0 - existing.strength)
+                existing.last_modified_at = datetime.now(timezone.utc).isoformat()
                 return existing
 
         if self.size >= self._max_capacity:
@@ -221,6 +227,7 @@ class MemoryArchive:
             classification=classification,
             content_hash=content_hash,
             feature_vector=_extract_features(signal),
+            last_modified_at=now,
         )
 
         self._memories[memory.memory_id] = memory
@@ -262,6 +269,7 @@ class MemoryArchive:
         if memory is not None:
             memory.strength += 0.1 * (1.0 - memory.strength)
             memory.strength = min(memory.strength, 1.0)
+            memory.last_modified_at = datetime.now(timezone.utc).isoformat()
 
     def decay_all(self, lambda_rate: float, hours_elapsed: float) -> None:
         factor = math.exp(-lambda_rate * hours_elapsed)
@@ -281,9 +289,16 @@ class MemoryArchive:
                 details={"final_strength": memory.strength,
                          "reason": "capacity"},
             ))
+            self._add_to_rejection_set(memory.content_hash)
             self._hash_index.pop(memory.content_hash, None)
             del self._memories[memory.memory_id]
             self._evictions_total += 1
+
+    def _add_to_rejection_set(self, content_hash: str) -> None:
+        if content_hash and content_hash not in self._rejection_set:
+            self._rejection_set.append(content_hash)
+            if len(self._rejection_set) > self._rejection_max:
+                self._rejection_set = self._rejection_set[-self._rejection_max:]
 
     def consolidate(self, pipeline_or_factory, strength_decay: float = 0.3,
                      strength_boost: float = 0.05,
@@ -351,6 +366,7 @@ class MemoryArchive:
                 details={"final_strength": memory.strength,
                          "reason": "consolidation"},
             ))
+            self._add_to_rejection_set(memory.content_hash)
             self._hash_index.pop(memory.content_hash, None)
             del self._memories[memory.memory_id]
             self._evictions_total += 1
@@ -368,8 +384,12 @@ class MemoryArchive:
             "compression_ratio": round(compression, 3),
         }
 
-    def export_memories(self, min_strength: float = 0.0) -> Dict[str, Any]:
+    def export_memories(self, min_strength: float = 0.0,
+                        since: Optional[str] = None) -> Dict[str, Any]:
         memories = self.query(min_strength=min_strength, limit=self._max_capacity)
+        if since:
+            memories = [m for m in memories
+                        if (m.last_modified_at or m.formed_at) >= since]
         return {
             "instance_id": self._instance_id,
             "memories": [m.to_dict() for m in memories],
@@ -378,13 +398,20 @@ class MemoryArchive:
     def import_memories(self, data: Dict[str, Any]) -> int:
         source_instance = data.get("instance_id", "unknown")
         imported = 0
+        rejected = 0
         for entry in data.get("memories", []):
             content_hash = entry.get("content_hash", "")
+
+            if content_hash and content_hash in self._rejection_set:
+                rejected += 1
+                continue
+
             if content_hash and content_hash in self._hash_index:
                 existing = self._memories.get(self._hash_index[content_hash])
                 if existing is not None:
                     existing.strength += 0.1 * (1.0 - existing.strength)
                     existing.strength = min(existing.strength, 1.0)
+                    existing.last_modified_at = datetime.now(timezone.utc).isoformat()
                     continue
 
             signal = Signal(
@@ -460,6 +487,7 @@ class MemoryArchive:
             "min_strength": min(strengths) if strengths else 0.0,
             "max_strength": max(strengths) if strengths else 0.0,
             "federated_sources": len(sources),
+            "rejection_set_size": len(self._rejection_set),
         }
 
     def to_dict(self) -> Dict[str, Any]:
@@ -471,6 +499,7 @@ class MemoryArchive:
                 "instance_id": self._instance_id,
                 "max_capacity": self._max_capacity,
             },
+            "rejection_set": list(self._rejection_set),
         }
 
     @staticmethod
@@ -482,6 +511,7 @@ class MemoryArchive:
         )
         archive._formed_total = stats.get("formed_total", 0)
         archive._evictions_total = stats.get("evictions_total", 0)
+        archive._rejection_set = list(data.get("rejection_set", []))
 
         for entry in data.get("memories", []):
             memory = Memory.from_dict(entry)

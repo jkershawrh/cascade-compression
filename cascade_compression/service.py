@@ -271,10 +271,10 @@ def memory_stats():
 
 
 @app.get("/memories/export")
-def memory_export(min_strength: float = 0.0):
+def memory_export(min_strength: float = 0.0, since: str = None):
     if not _memory_archive:
         return {"instance_id": "", "memories": []}
-    return _memory_archive.export_memories(min_strength=min_strength)
+    return _memory_archive.export_memories(min_strength=min_strength, since=since)
 
 
 @app.post("/memories/import")
