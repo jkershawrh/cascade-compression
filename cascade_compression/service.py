@@ -36,12 +36,14 @@ from pydantic import BaseModel, Field
 
 from .bridge import CascadeBridge
 from .cascade.memory import MemoryArchive
+from .cascade.memory_intelligence import MemoryIntelligence
 from .cascade.recall import RecallEngine
 
 log = logging.getLogger(__name__)
 
 _bridge: CascadeBridge = None
 _memory_archive: MemoryArchive = None
+_memory_intel: MemoryIntelligence = None
 
 
 def _load_prompt(domain: str) -> str:
@@ -66,6 +68,15 @@ async def lifespan(app: FastAPI):
         ledger_token=os.getenv("CASCADE_LEDGER_TOKEN", ""),
     )
     _memory_archive = _bridge.memory_archive
+    _memory_intel = MemoryIntelligence()
+    try:
+        mod = importlib.import_module(f"cascade_compression.domains.{domain}")
+        domain_config = getattr(mod, "MEMORY_CONFIG", None)
+        if domain_config:
+            _memory_intel.register_domain(domain, domain_config)
+            log.info("Registered memory config for domain=%s", domain)
+    except (ImportError, AttributeError):
+        pass
     log.info("Cascade compression ready (domain=%s)", domain)
     yield
 
@@ -233,6 +244,13 @@ def recall(signal: SignalInput):
         } for r in results],
         "query_ms": round(query_ms, 2),
     }
+
+
+@app.get("/analyze")
+def analyze():
+    if not _memory_archive or not _memory_intel:
+        return {"error": "memory not ready"}
+    return _memory_intel.analyze(_memory_archive)
 
 
 @app.post("/consolidate")
