@@ -56,7 +56,7 @@ def _load_prompt(domain: str) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _bridge, _memory_archive
+    global _bridge, _memory_archive, _memory_intel
     domain = os.getenv("CASCADE_DOMAIN", "kubernetes")
     _bridge = CascadeBridge(
         llm_url=os.getenv("CASCADE_LLM_URL", ""),
