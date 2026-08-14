@@ -46,14 +46,13 @@ class MacOSCollector:
 
     name = "macos"
 
-    def __init__(self):
+    def __init__(self, work_dirs: List[str] = None):
         self._last_git_hash = ""
         self._last_app = ""
         self._app_start_time = time.monotonic()
         self._switch_count = 0
         self._last_switch_reset = time.monotonic()
-        self._home = str(Path.home())
-        self._work_dirs = self._find_work_dirs()
+        self._work_dirs = work_dirs or self._find_work_dirs()
 
     def connect(self, config: dict) -> bool:
         return True
@@ -80,8 +79,10 @@ class MacOSCollector:
         except Exception:
             return ""
 
-    def _find_work_dirs(self) -> List[str]:
-        docs = os.path.join(self._home, "Documents")
+    @staticmethod
+    def _find_work_dirs() -> List[str]:
+        home = str(Path.home())
+        docs = os.path.join(home, "Documents")
         dirs = []
         if os.path.isdir(docs):
             for d in os.listdir(docs):
@@ -179,10 +180,9 @@ class MacOSCollector:
                         "name": repo_name,
                         "severity": "low",
                         "evidence": {
-                            "message": f"{len(commits)} commits in {repo_name}: {commits[0]}",
+                            "message": f"{len(commits)} commits in {repo_name}",
                             "repo": repo_name,
                             "commit_count": len(commits),
-                            "latest": commits[0],
                             "diff_stat": diff_stat,
                         },
                     }))
