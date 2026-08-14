@@ -11,6 +11,8 @@ Environment variables:
     CASCADE_LLM_URL          LLM API base URL (required for agent discovery)
     CASCADE_LLM_KEY          LLM API key
     CASCADE_LLM_MODEL        LLM model name (default: microsoft-phi-4)
+    CASCADE_MICRO_MODEL      Model for micro tier / medium severity (default: CASCADE_LLM_MODEL)
+    CASCADE_MACRO_MODEL      Model for macro tier / high+critical severity (default: CASCADE_LLM_MODEL)
     CASCADE_DOMAIN           Domain pack (default: kubernetes)
     CASCADE_LEDGER_URL       Immutable ledger URL (optional, for governance)
     CASCADE_LEDGER_TOKEN     Ledger bearer token
@@ -33,10 +35,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .bridge import CascadeBridge
+from .cascade.memory import MemoryArchive
+from .cascade.recall import RecallEngine
 
 log = logging.getLogger(__name__)
 
 _bridge: CascadeBridge = None
+_memory_archive: MemoryArchive = None
 
 
 def _load_prompt(domain: str) -> str:
@@ -49,7 +54,7 @@ def _load_prompt(domain: str) -> str:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _bridge
+    global _bridge, _memory_archive
     domain = os.getenv("CASCADE_DOMAIN", "kubernetes")
     _bridge = CascadeBridge(
         llm_url=os.getenv("CASCADE_LLM_URL", ""),
@@ -60,6 +65,7 @@ async def lifespan(app: FastAPI):
         ledger_url=os.getenv("CASCADE_LEDGER_URL", ""),
         ledger_token=os.getenv("CASCADE_LEDGER_TOKEN", ""),
     )
+    _memory_archive = _bridge.memory_archive
     log.info("Cascade compression ready (domain=%s)", domain)
     yield
 
@@ -150,6 +156,15 @@ def cascade(request: BatchRequest):
     if _bridge.stats.signals_processed > 0:
         _bridge.stats.compression_ratio = _bridge.stats.cascade_handled / _bridge.stats.signals_processed
 
+    if _memory_archive is not None:
+        for sig in cascade_result.remaining:
+            classification = ""
+            for d in cascade_result.decisions:
+                if d.signal_id == sig.signal_id and d.classification:
+                    classification = d.classification
+                    break
+            _memory_archive.store(sig, classification=classification)
+
     survivors = []
     for sig in cascade_result.remaining:
         original = input_lookup.get(sig.signal_id)
@@ -181,6 +196,89 @@ def agents():
         "discovered": _bridge.get_discovered_agents(),
         "promotion_log": _bridge.get_promotion_log(50),
     }
+
+
+class MemoryQueryRequest(BaseModel):
+    signal_type: str = None
+    labels: Dict[str, str] = None
+    min_strength: float = 0.0
+    limit: int = 100
+
+
+@app.post("/recall")
+def recall(signal: SignalInput):
+    if not _memory_archive:
+        return {"matches": [], "query_ms": 0}
+    from .cascade.protocol import Signal as CascadeSignal
+    query = CascadeSignal(
+        signal_type=signal.signal_type,
+        severity=signal.severity,
+        source=signal.source,
+        namespace=signal.namespace,
+        content=signal.content,
+        labels=signal.labels,
+    )
+    t0 = __import__("time").monotonic()
+    engine = RecallEngine()
+    results = engine.recall(query, _memory_archive, reinforce=True)
+    query_ms = (__import__("time").monotonic() - t0) * 1000
+    return {
+        "matches": [{
+            "memory_id": str(r.memory.memory_id),
+            "score": round(r.score, 4),
+            "breakdown": {k: round(v, 4) for k, v in r.breakdown.items()},
+            "signal_type": r.memory.signal.signal_type,
+            "classification": r.memory.classification,
+            "strength": round(r.memory.strength, 4),
+        } for r in results],
+        "query_ms": round(query_ms, 2),
+    }
+
+
+@app.post("/consolidate")
+def consolidate():
+    if not _memory_archive or not _bridge:
+        return {"processed": 0, "evicted": 0, "compression_ratio": 0.0}
+    from .cascade.agents import default_agents
+    from .cascade.pipeline import CascadePipeline
+    return _memory_archive.consolidate(lambda: CascadePipeline(default_agents()))
+
+
+@app.get("/memories/stats")
+def memory_stats():
+    if not _memory_archive:
+        return {"size": 0, "formed_total": 0, "evictions_total": 0}
+    return _memory_archive.stats()
+
+
+@app.get("/memories/export")
+def memory_export(min_strength: float = 0.0):
+    if not _memory_archive:
+        return {"instance_id": "", "memories": []}
+    return _memory_archive.export_memories(min_strength=min_strength)
+
+
+@app.post("/memories/import")
+def memory_import(data: Dict[str, Any]):
+    if not _memory_archive:
+        return {"imported": 0}
+    count = _memory_archive.import_memories(data)
+    return {"imported": count}
+
+
+@app.post("/memories/query")
+def memory_query(request: MemoryQueryRequest = None):
+    if not _memory_archive:
+        return {"memories": []}
+    if request is None:
+        request = MemoryQueryRequest()
+    results = _memory_archive.query(
+        signal_type=request.signal_type,
+        labels=request.labels,
+        min_strength=request.min_strength,
+        limit=request.limit,
+    )
+    return {"memories": [m.to_dict() for m in results]}
 
 
 _FRONTEND = Path(__file__).resolve().parent.parent / "frontend"

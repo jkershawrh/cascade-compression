@@ -26,6 +26,35 @@ don't need a GPU.
 - Workload bootstrapper (cosine similarity classification)
 - Task mapping (14 deepfield types → 7 benchmark shapes)
 
+**Memory Archive** (`cascade_compression/cascade/memory.py`)
+- Survivors become institutional memory — strength-weighted, content-hash deduped
+- Capacity-bounded (CASCADE_MEMORY_MAX, default 10K), evicts weakest when full
+- Severity-weighted initial strength (info=0.1 → critical=1.0), exponential decay, asymptotic reinforcement
+- MemoryEvent audit trail (formed/recalled/consolidated/evicted/federated)
+- JSON Schema contracts in contracts/schemas/memory-record.json, memory-event.json
+- API: GET /memories/stats, POST /memories/query, POST /recall
+
+**Recall Engine** (`cascade_compression/cascade/recall.py`)
+- Composite similarity: type match (0.4), label Jaccard (0.2), content feature cosine (0.2), text trigram (0.2)
+- Score weighted by memory strength — stronger memories surface first
+- Reinforcement on recall: strength increases, recall_count increments
+- Performance: <50ms for 1,000 memories
+
+**Consolidation** — periodic re-cascade of old memories through current pipeline
+- Suppressed memories lose strength (−0.3), survivors gain consolidation_count (+0.05 boost)
+- Below eviction threshold (0.05) → evicted. Noise decays, core memories persist.
+- API: POST /consolidate
+
+**Priming / Attention** — macro survivors temporarily escalate related signal types
+- PrimingWindow: linear decay over configurable duration (default 4h)
+- PrimingEscalator agent (stage 0): ONLY escalates, NEVER suppresses (fail-open safety)
+- Window cap: max 10 concurrent, oldest evicted
+
+**Federation** — cross-instance memory sharing
+- Export/import: GET /memories/export, POST /memories/import
+- Cross-source correlation: same content_hash from 2+ instances → strength boost
+- Source provenance preserved via source_instance field
+
 **Infrastructure** (`cascade_compression/infra/`)
 - Pressure-aware scaler (Linux PSI + cgroup v2, green/yellow/red rubric)
 - Fleet manager (deployment planning, replica allocation, memory budgeting)
@@ -43,6 +72,7 @@ don't need a GPU.
 ## Running Tests
 
 ```bash
+make test-memory       # Memory archive + contracts
 make test-cascade      # Cascade pipeline + safety + promotion
 make test-routing      # Corpora, strategies, bootstrapper, routing
 make test-infra        # Scaler, fleet manager
@@ -68,9 +98,10 @@ CDD → TDD → EDD → BDD (Contract → Test → Event → Behavior Driven)
 
 **Standalone Service** (`cascade_compression/service.py`)
 - Single-container deployment via Containerfile
-- FastAPI with /health, /stats, /cascade, /agents endpoints
+- FastAPI with /health, /stats, /cascade, /agents, /memories/*, /recall, /consolidate endpoints
 - Real-time dashboard at / (frontend/index.html)
-- OpenShift manifests in deploy/openshift.yaml
+- OpenShift manifests: deploy/openshift.yaml (single), deploy/openshift-federated.yaml (K8s + AAP + aggregator)
+- Per-tier model routing: CASCADE_MICRO_MODEL (medium/low), CASCADE_MACRO_MODEL (critical/high)
 
 ## Running the Service
 
@@ -78,9 +109,15 @@ CDD → TDD → EDD → BDD (Contract → Test → Event → Behavior Driven)
 # Standalone service with dashboard
 python3 -m uvicorn cascade_compression.service:app --port 8090
 
-# Or deploy on OpenShift
-oc new-app https://github.com/jkershawrh/cascade-compression \
-  -e CASCADE_LLM_URL=https://your-llm/v1 -e CASCADE_LLM_KEY=sk-...
+# With per-tier models
+CASCADE_MICRO_MODEL=granite-2b CASCADE_MACRO_MODEL=granite-3-2-8b-instruct \
+  python3 -m uvicorn cascade_compression.service:app --port 8090
+
+# Federated deployment on OpenShift (K8s + AAP + memory aggregator)
+oc apply -f deploy/openshift-federated.yaml
+oc create secret generic cascade-llm \
+  --from-literal=url=https://your-llm/v1 --from-literal=key=sk-... \
+  -n cascade-compression
 ```
 
 ## Next Steps

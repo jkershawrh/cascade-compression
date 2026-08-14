@@ -1,5 +1,9 @@
 .PHONY: test test-cascade test-routing test-infra test-tco test-all up
 
+## ── Memory tests ───────────────────────────────────────────────────
+test-memory:
+	python -m pytest tests/test_memory.py tests/test_memory_contracts.py tests/test_recall.py tests/test_consolidation.py tests/test_priming.py tests/test_federation.py -v
+
 ## ── Cascade engine tests ────────────────────────────────────────────
 test-cascade:
 	python -m pytest tests/test_cascade.py tests/test_cascade_safety.py tests/test_promotion.py -v
