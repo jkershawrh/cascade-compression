@@ -185,9 +185,36 @@ def run_aap_collector(target_url: str, interval: int):
         time.sleep(interval)
 
 
+def run_macos_collector(target_url: str, interval: int):
+    from .collectors.macos import MacOSCollector
+
+    collector = MacOSCollector()
+    log.info("macOS collector: target=%s, interval=%ds, watching %d repos",
+             target_url, interval, len(collector._work_dirs))
+    for d in collector._work_dirs:
+        log.info("  Repo: %s", d)
+
+    cycle = 0
+    while True:
+        cycle += 1
+        try:
+            signals = collector.collect()
+            if signals:
+                result = _post_signals(target_url, signals)
+                non_info = [s for s in signals if s.severity != "info"]
+                log.info("Cycle %d: %d signals (%d notable) → %s",
+                         cycle, len(signals), len(non_info),
+                         json.dumps(result)[:200])
+            else:
+                log.debug("Cycle %d: no signals", cycle)
+        except Exception as e:
+            log.error("Cycle %d error: %s", cycle, str(e)[:100])
+        time.sleep(interval)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Cascade signal collector sidecar")
-    parser.add_argument("--mode", required=True, choices=["k8s", "aap"],
+    parser.add_argument("--mode", required=True, choices=["k8s", "aap", "macos"],
                         help="Collector mode")
     parser.add_argument("--target", required=True,
                         help="Cascade service URL (e.g. http://cascade-k8s:8090)")
@@ -204,6 +231,8 @@ def main():
         run_k8s_collector(args.target, args.interval)
     elif args.mode == "aap":
         run_aap_collector(args.target, args.interval)
+    elif args.mode == "macos":
+        run_macos_collector(args.target, args.interval)
 
 
 if __name__ == "__main__":
