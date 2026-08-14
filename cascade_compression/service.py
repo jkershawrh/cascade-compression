@@ -36,6 +36,7 @@ from pydantic import BaseModel, Field
 
 from .bridge import CascadeBridge
 from .cascade.memory import MemoryArchive
+from .cascade.inverse import SuppressionArchive, inverse_analysis, export_learned_agents
 from .cascade.memory_intelligence import MemoryIntelligence
 from .cascade.recall import RecallEngine
 
@@ -246,6 +247,22 @@ def recall(signal: SignalInput):
         } for r in results],
         "query_ms": round(query_ms, 2),
     }
+
+
+@app.get("/inverse")
+def inverse():
+    archive = _bridge.memory_archive if _bridge else _memory_archive
+    suppression = _bridge.suppression_archive if _bridge else None
+    if not archive or not suppression:
+        return {"error": "not ready"}
+    return inverse_analysis(suppression, archive, _memory_intel)
+
+
+@app.get("/agents/export")
+def agents_export():
+    if not _bridge:
+        return {"agents": []}
+    return export_learned_agents(_bridge)
 
 
 @app.get("/analyze")

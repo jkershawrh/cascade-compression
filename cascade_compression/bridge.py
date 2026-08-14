@@ -20,6 +20,7 @@ from uuid import uuid4
 from .cascade.agents import default_agents
 from .cascade.corpus_analyzer import CorpusAnalyzer
 from .cascade.dynamic_agents import DominantNoiseSuppressor, RepeatFloodSuppressor
+from .cascade.inverse import SuppressionArchive
 from .cascade.memory import MemoryArchive
 from .cascade.pipeline import CascadePipeline
 from .cascade.promotion import AgentMetrics, Baseline, PromotionEngine, RuleAgent
@@ -154,6 +155,7 @@ class CascadeBridge:
         self._memory_enabled = bool(os.getenv("CASCADE_MEMORY_ENABLED", "1"))
         self._memory_max = int(os.getenv("CASCADE_MEMORY_MAX", "10000"))
         self.memory_archive = MemoryArchive(max_capacity=self._memory_max) if self._memory_enabled else None
+        self.suppression_archive = SuppressionArchive(max_capacity=self._memory_max) if self._memory_enabled else None
 
         self._state_file = os.getenv("CASCADE_STATE_FILE", "")
 
@@ -182,6 +184,10 @@ class CascadeBridge:
 
         if self._activated_types and self._shadow_sample_rate > 0 and self._llm_url:
             self._queue_shadow_samples(cascade_result, cascade_signals)
+
+        if self.suppression_archive is not None:
+            self.suppression_archive.record_batch(
+                cascade_result.decisions, cascade_signals)
 
         if self.memory_archive is not None:
             for sig in cascade_result.remaining:
