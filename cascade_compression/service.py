@@ -248,9 +248,10 @@ def recall(signal: SignalInput):
 
 @app.get("/analyze")
 def analyze():
-    if not _memory_archive or not _memory_intel:
+    archive = _bridge.memory_archive if _bridge else _memory_archive
+    if not archive or not _memory_intel:
         return {"error": "memory not ready"}
-    return _memory_intel.analyze(_memory_archive)
+    return _memory_intel.analyze(archive)
 
 
 @app.post("/consolidate")
