@@ -114,6 +114,7 @@ class Memory:
     content_hash: str = ""
     feature_vector: Dict[str, float] = field(default_factory=dict)
     last_modified_at: Optional[str] = None
+    last_consolidated_at: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -135,6 +136,7 @@ class Memory:
             "namespace": self.signal.namespace,
             "cluster": self.signal.cluster,
             "last_modified_at": self.last_modified_at,
+            "last_consolidated_at": self.last_consolidated_at,
         }
 
     @staticmethod
@@ -161,6 +163,7 @@ class Memory:
             content_hash=d.get("content_hash", ""),
             feature_vector=d.get("feature_vector", {}),
             last_modified_at=d.get("last_modified_at"),
+            last_consolidated_at=d.get("last_consolidated_at"),
         )
 
 
@@ -194,6 +197,7 @@ class MemoryArchive:
         self._evictions_total = 0
         self._rejection_set: List[str] = []
         self._rejection_max = max_capacity * 2
+        self._decay_config = None
 
     @property
     def size(self) -> int:
@@ -271,10 +275,21 @@ class MemoryArchive:
             memory.strength = min(memory.strength, 1.0)
             memory.last_modified_at = datetime.now(timezone.utc).isoformat()
 
+    def set_decay_config(self, config) -> None:
+        self._decay_config = config
+
     def decay_all(self, lambda_rate: float, hours_elapsed: float) -> None:
         factor = math.exp(-lambda_rate * hours_elapsed)
         for memory in self._memories.values():
             memory.strength *= factor
+            memory.strength = max(memory.strength, 0.0)
+
+    def decay_all_typed(self, hours_elapsed: float) -> None:
+        if not self._decay_config:
+            return
+        for memory in self._memories.values():
+            rate = self._decay_config.rate_for(memory.signal.signal_type)
+            memory.strength *= math.exp(-rate * hours_elapsed)
             memory.strength = max(memory.strength, 0.0)
 
     def _evict_weakest(self) -> None:
@@ -302,19 +317,34 @@ class MemoryArchive:
 
     def consolidate(self, pipeline_or_factory, strength_decay: float = 0.3,
                      strength_boost: float = 0.05,
-                     eviction_threshold: float = 0.05) -> Dict[str, Any]:
+                     eviction_threshold: float = 0.05,
+                     decay_config=None,
+                     batch_size: int = 0) -> Dict[str, Any]:
         """Re-cascade memories through the current pipeline.
 
         Memories the pipeline now suppresses lose strength.
         Memories that still survive gain consolidation_count and a small boost.
         Memories below eviction_threshold are removed.
 
-        Accepts a CascadePipeline instance or a callable that returns one.
-        A fresh pipeline avoids stale dedup state between consolidation cycles.
+        batch_size: when > 0, only process the N oldest unconsolidated memories
+        plus any below eviction threshold. 0 = process all (backward compat).
         """
         from .protocol import Outcome
 
-        memories = list(self._memories.values())
+        all_memories = list(self._memories.values())
+        if not all_memories:
+            return {"processed": 0, "evicted": 0, "compression_ratio": 0.0}
+
+        if batch_size > 0:
+            urgent = [m for m in all_memories if m.strength < eviction_threshold * 2]
+            rest = sorted(
+                [m for m in all_memories if m.strength >= eviction_threshold * 2],
+                key=lambda m: m.last_consolidated_at or "",
+            )
+            memories = urgent + rest[:max(0, batch_size - len(urgent))]
+        else:
+            memories = all_memories
+
         if not memories:
             return {"processed": 0, "evicted": 0, "compression_ratio": 0.0}
 
@@ -348,14 +378,24 @@ class MemoryArchive:
             if d.outcome in (Outcome.SUPPRESS, Outcome.DEDUPE, Outcome.DROP):
                 suppressed_ids.add(d.signal_id)
 
+        effective_config = decay_config or self._decay_config
+        now = datetime.now(timezone.utc).isoformat()
         evicted_count = 0
         for fresh_id, memory in id_to_memory.items():
+            memory.last_consolidated_at = now
             if fresh_id in survived_ids:
                 memory.consolidation_count += 1
                 memory.strength = min(memory.strength + strength_boost, 1.0)
+                memory.last_modified_at = now
             elif fresh_id in suppressed_ids:
-                memory.strength -= strength_decay
+                if effective_config:
+                    rate = effective_config.rate_for(memory.signal.signal_type)
+                    penalty = min(rate * 10, 0.5)
+                else:
+                    penalty = strength_decay
+                memory.strength -= penalty
                 memory.strength = max(memory.strength, 0.0)
+                memory.last_modified_at = now
 
         to_evict = [m for m in self._memories.values()
                     if m.strength < eviction_threshold]
