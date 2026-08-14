@@ -222,6 +222,7 @@ class CascadeBridge:
         if now - self._last_promotion_time > self._promotion_interval:
             self._last_promotion_time = now
             self._discover_and_promote()
+            self._flush_memory_events()
             self._save_state()
             if self._ledger_url and not self._verdict_poll_running:
                 threading.Thread(
@@ -537,6 +538,27 @@ class CascadeBridge:
             )
         except Exception as e:
             log.debug("Promotion ledger write failed: %s", str(e)[:60])
+
+    def _flush_memory_events(self):
+        if not self.memory_archive or not self._ledger_url:
+            return
+        events = self.memory_archive.drain_events()
+        for event in events:
+            threading.Thread(
+                target=self._write_memory_event_to_ledger,
+                args=(event.to_dict(),),
+                daemon=True,
+            ).start()
+
+    def _write_memory_event_to_ledger(self, event_dict):
+        try:
+            from .integrations.ledger import write_memory_event
+            write_memory_event(
+                self._ledger_url, self._ledger_token,
+                event_dict, self.domain,
+            )
+        except Exception as e:
+            log.debug("Memory ledger write failed: %s", str(e)[:60])
 
     def _deactivate_agent(self, signal_type: str):
         pattern_type = self._activated_patterns.pop(signal_type, None)

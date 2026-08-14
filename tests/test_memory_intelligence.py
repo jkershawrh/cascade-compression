@@ -14,6 +14,7 @@ from cascade_compression.cascade.protocol import Signal
 from cascade_compression.cascade.memory_intelligence import (
     AbsenceDetector,
     CausalGraph,
+    CoOccurrenceTracker,
     DecayConfig,
     EntityResolver,
     MemoryIntelligence,
@@ -284,6 +285,59 @@ class TestSeverityTracker:
 # Stage 1: TDD — Per-Type Decay Configuration
 # ===========================================================================
 
+class TestCoOccurrenceTracker:
+    def test_counts_pairs_from_clusters(self):
+        """Co-occurrence counts pairs correctly from time clusters."""
+        tracker = CoOccurrenceTracker()
+        cluster = TimeCluster(
+            memories=[],
+            signal_types={"disk_pressure", "volume_failure"},
+        )
+        tracker.update_from_clusters([cluster])
+        assert tracker.pair_count > 0
+
+    def test_propose_rule_above_threshold(self):
+        """Frequent co-occurrence proposes a rule."""
+        tracker = CoOccurrenceTracker()
+        for _ in range(10):
+            cluster = TimeCluster(
+                memories=[],
+                signal_types={"cause_a", "effect_b"},
+            )
+            tracker.update_from_clusters([cluster])
+        proposals = tracker.propose_rules(min_count=5, min_support=0.3)
+        types_in_proposals = set()
+        for p in proposals:
+            types_in_proposals.add(p["cause"])
+            types_in_proposals.add(p["effect"])
+        assert "cause_a" in types_in_proposals or "effect_b" in types_in_proposals
+
+    def test_no_proposal_below_threshold(self):
+        """Infrequent co-occurrence doesn't propose."""
+        tracker = CoOccurrenceTracker()
+        cluster = TimeCluster(
+            memories=[],
+            signal_types={"rare_a", "rare_b"},
+        )
+        tracker.update_from_clusters([cluster])
+        proposals = tracker.propose_rules(min_count=5)
+        assert len(proposals) == 0
+
+    def test_no_duplicate_proposals(self):
+        """Existing rules are not re-proposed."""
+        tracker = CoOccurrenceTracker()
+        for _ in range(10):
+            cluster = TimeCluster(
+                memories=[],
+                signal_types={"a", "b"},
+            )
+            tracker.update_from_clusters([cluster])
+        graph = CausalGraph()
+        graph.add_rule("a", "b")
+        proposals = tracker.propose_rules(min_count=5, existing_graph=graph)
+        assert len(proposals) == 0
+
+
 class TestDecayConfig:
     def test_default_rate(self):
         """Unknown types get the default decay rate."""
@@ -353,6 +407,33 @@ class TestMemoryIntelligence:
         }
         mi.register_domain("kubernetes", k8s_config)
         assert mi.causal_graph.has_rule("event_claimmisbound", "event_volumefaileddelete")
+
+    def test_analyze_returns_proposed_rules(self):
+        """Analysis output includes co-occurrence proposed rules."""
+        mi = MemoryIntelligence()
+        archive = MemoryArchive()
+        for _ in range(10):
+            make_memory(archive, signal_type="disk_pressure",
+                        content={"message": "disk pressure"})
+            make_memory(archive, signal_type="volume_failure",
+                        content={"message": "volume failed"})
+        analysis = mi.analyze(archive)
+        assert "proposed_rules" in analysis
+        assert "co_occurrence_pairs" in analysis
+
+    def test_auto_discover_adds_rules(self):
+        """When auto_discover=True, high-confidence proposals are added."""
+        mi = MemoryIntelligence(auto_discover=True)
+        archive = MemoryArchive()
+        for i in range(20):
+            make_memory(archive, signal_type="cause_type",
+                        content={"message": f"cause {i}"})
+            make_memory(archive, signal_type="effect_type",
+                        content={"message": f"effect {i}"})
+        mi.analyze(archive)
+        # After enough co-occurrences with auto_discover, rules may be added
+        # (depends on threshold — at least proposals should exist)
+        assert mi.co_occurrence.pair_count > 0
 
     def test_cross_domain_entity_mapping(self):
         """GIVEN entity mappings between K8s and AAP

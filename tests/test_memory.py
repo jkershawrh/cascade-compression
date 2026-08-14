@@ -305,6 +305,59 @@ class TestStrength:
         assert memory.strength > 0.95
 
 
+class TestContentNormalization:
+    def test_normalize_strips_uuids(self):
+        """Content with UUIDs normalizes identically."""
+        from cascade_compression.cascade.memory import _normalize_content
+        c1 = {"message": "Pod abc-12345678-1234-1234-1234-123456789abc crashed"}
+        c2 = {"message": "Pod abc-87654321-4321-4321-4321-abcdef123456 crashed"}
+        assert _normalize_content(c1) == _normalize_content(c2)
+
+    def test_normalize_strips_pod_suffixes(self):
+        """K8s pod suffixes are stripped."""
+        from cascade_compression.cascade.memory import _normalize_content
+        c1 = {"message": "Pod api-server-abc12 failed"}
+        c2 = {"message": "Pod api-server-xyz99 failed"}
+        assert _normalize_content(c1) == _normalize_content(c2)
+
+    def test_normalize_strips_timestamps(self):
+        """ISO timestamps are stripped."""
+        from cascade_compression.cascade.memory import _normalize_content
+        c1 = {"message": "Error at 2026-08-14T10:00:00Z"}
+        c2 = {"message": "Error at 2026-08-15T15:30:00+00:00"}
+        assert _normalize_content(c1) == _normalize_content(c2)
+
+    def test_normalize_preserves_structure(self):
+        """Non-dynamic content is preserved."""
+        from cascade_compression.cascade.memory import _normalize_content
+        c = {"message": "OOMKilled", "severity": "critical", "count": 5}
+        n = _normalize_content(c)
+        assert n["message"] == "OOMKilled"
+        assert n["severity"] == "critical"
+        assert n["count"] == 5
+
+    def test_duplicate_pod_events_dedup(self):
+        """Two K8s events differing only by pod suffix produce same hash."""
+        archive = MemoryArchive()
+        m1 = archive.store(
+            make_signal(signal_type="pod_crashloop",
+                        content={"message": "Pod web-app-abc12 CrashLoopBackOff"}),
+            classification="x")
+        m2 = archive.store(
+            make_signal(signal_type="pod_crashloop",
+                        content={"message": "Pod web-app-xyz99 CrashLoopBackOff"}),
+            classification="x")
+        assert m1.memory_id == m2.memory_id
+        assert archive.size == 1
+
+    def test_different_messages_still_separate(self):
+        """Genuinely different content still creates separate memories."""
+        archive = MemoryArchive()
+        archive.store(make_signal(content={"message": "OOMKilled"}), classification="x")
+        archive.store(make_signal(content={"message": "disk full"}), classification="x")
+        assert archive.size == 2
+
+
 class TestDedup:
     def test_same_content_reinforces_existing(self):
         """Storing a signal with same content_hash reinforces the existing memory."""
