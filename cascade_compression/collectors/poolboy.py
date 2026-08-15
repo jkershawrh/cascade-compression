@@ -203,7 +203,9 @@ class PoolboyCollector(BaseCollector):
             try:
                 with urlopen(req, timeout=15, context=ctx) as resp:  # nosec B310
                     return json.loads(resp.read())
-            except ssl.SSLCertVerificationError:
+            except Exception as _ssl_err:
+                if "CERTIFICATE_VERIFY_FAILED" not in str(_ssl_err):
+                    raise
                 ctx = ssl.create_default_context()
                 ctx.check_hostname = False
                 ctx.verify_mode = ssl.CERT_NONE
