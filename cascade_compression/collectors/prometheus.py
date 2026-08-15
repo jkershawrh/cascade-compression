@@ -172,6 +172,19 @@ class PrometheusCollector(BaseCollector):
     @staticmethod
     def _discover_thanos_from_clusters() -> Dict[str, Dict[str, str]]:
         clusters = {}
+        sa_token = ""
+        try:
+            with open("/var/run/secrets/kubernetes.io/serviceaccount/token") as f:
+                sa_token = f.read().strip()
+        except Exception:
+            pass
+
+        if sa_token:
+            clusters["local"] = {
+                "url": "https://thanos-querier.openshift-monitoring.svc:9091",
+                "token": sa_token,
+            }
+
         for i in range(1, 20):
             api_url = os.getenv(f"CLUSTER_{i}_API_URL", "")
             if not api_url:
