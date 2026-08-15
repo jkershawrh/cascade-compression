@@ -60,13 +60,15 @@ class StargateCollector(BaseCollector):
     def collect(self) -> list:
         signals = []
 
-        overview = self._get("/dashboard/overview")
-        if overview:
-            clusters = overview.get("clusters", {})
-            for cname, cdata in (clusters.items() if isinstance(clusters, dict) else []):
-                failing = cdata.get("failing_sandboxes", 0) or cdata.get("failing", 0)
-                total = cdata.get("total_sandboxes", 0) or cdata.get("total", 0)
-                if failing > 0:
+        cluster_data = self._get("/dashboard/clusters")
+        if cluster_data:
+            for cinfo in cluster_data.get("clusters", []):
+                if not isinstance(cinfo, dict):
+                    continue
+                cname = cinfo.get("name", cinfo.get("cluster", "unknown"))
+                failing = cinfo.get("failing_sandboxes", 0) or cinfo.get("failing", 0)
+                total = cinfo.get("total_sandboxes", 0) or cinfo.get("total", 0)
+                if isinstance(failing, int) and failing > 0:
                     signals.append(StargateSignal({
                         "signal_type": "cluster_sandboxes_failing",
                         "severity": "high" if failing > 5 else "medium",
@@ -74,17 +76,6 @@ class StargateCollector(BaseCollector):
                         "message": f"{cname}: {failing}/{total} sandboxes failing",
                         "failing": failing, "total": total,
                     }))
-
-            provisioning = overview.get("provisioning", {})
-            pending = provisioning.get("pending", 0)
-            if pending > 10:
-                signals.append(StargateSignal({
-                    "signal_type": "provisioning_backlog",
-                    "severity": "high",
-                    "kind": "provisioning", "name": "queue",
-                    "message": f"Provisioning backlog: {pending} pending",
-                    "pending": pending,
-                }))
 
         pools = self._get("/dashboard/pools")
         if pools:
