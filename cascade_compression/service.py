@@ -146,56 +146,31 @@ def cascade(request: BatchRequest):
         return {"error": "cascade not ready"}
 
     adapted = [_SignalAdapter(s) for s in request.signals]
-    input_lookup = {a.signal_id: s for a, s in zip(adapted, request.signals)}
-
-    from .cascade.protocol import Signal
-    cascade_signals = [Signal(
-        signal_id=a.signal_id,
-        signal_type=a.signal_type,
-        severity=a.severity,
-        source=a.resource_name,
-        namespace=a.namespace,
-        content=a.evidence,
-        labels=a.labels,
-    ) for a in adapted]
 
     t0 = __import__("time").monotonic()
-    cascade_result = _bridge.pipeline.run(cascade_signals)
+    bridge_result = _bridge.process(adapted)
     cascade_ms = (__import__("time").monotonic() - t0) * 1000
 
-    _bridge.stats.signals_processed += len(request.signals)
-    handled = len(request.signals) - len(cascade_result.remaining)
-    _bridge.stats.cascade_handled += handled
-    _bridge.stats.cascade_forwarded += len(cascade_result.remaining)
-    if _bridge.stats.signals_processed > 0:
-        _bridge.stats.compression_ratio = _bridge.stats.cascade_handled / _bridge.stats.signals_processed
-
-    if _memory_archive is not None:
-        for sig in cascade_result.remaining:
-            classification = ""
-            for d in cascade_result.decisions:
-                if d.signal_id == sig.signal_id and d.classification:
-                    classification = d.classification
-                    break
-            _memory_archive.store(sig, classification=classification)
-
     survivors = []
-    for sig in cascade_result.remaining:
-        original = input_lookup.get(sig.signal_id)
-        if original:
-            survivors.append({
-                "signal_type": original.signal_type,
-                "severity": original.severity,
-                "source": original.source,
-                "namespace": original.namespace,
-                "content": original.content,
-            })
+    if bridge_result.get("enabled"):
+        for sig in _bridge._last_remaining or []:
+            original = next(
+                (s for a, s in zip(adapted, request.signals)
+                 if a.signal_id == sig.signal_id), None)
+            if original:
+                survivors.append({
+                    "signal_type": original.signal_type,
+                    "severity": original.severity,
+                    "source": original.source,
+                    "namespace": original.namespace,
+                    "content": original.content,
+                })
 
     return {
         "total": len(request.signals),
-        "compressed": handled,
+        "compressed": len(request.signals) - len(survivors),
         "survivors": len(survivors),
-        "compression_ratio": round(cascade_result.compression_ratio, 3),
+        "compression_ratio": bridge_result.get("compression", 0),
         "cascade_ms": round(cascade_ms, 1),
         "signals_needing_attention": survivors,
     }
