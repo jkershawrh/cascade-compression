@@ -171,6 +171,7 @@ class CascadeBridge:
         cascade_result = self.pipeline.run(cascade_signals)
         cascade_ms = (time.monotonic() - t0) * 1000
 
+        self._last_remaining = list(cascade_result.remaining)
         remaining_count = len(cascade_result.remaining)
         handled_count = len(signals) - remaining_count
         self.stats.signals_processed += len(signals)
