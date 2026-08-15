@@ -105,6 +105,234 @@ class TestAAPSignal:
         assert sig.severity == "high"
 
 
+class TestPrometheusSignal:
+    def test_metric_signal(self):
+        from cascade_compression.collectors.prometheus import PrometheusSignal
+        sig = PrometheusSignal({
+            "signal_type": "metric_node_memory_exhausted", "severity": "critical",
+            "source": "prometheus", "cluster": "ocpv05", "namespace": "",
+            "name": "worker-01", "message": "node_memory: worker-01 value=0.95",
+        })
+        assert sig.signal_type == "metric_node_memory_exhausted"
+        assert sig.severity == "critical"
+        assert sig.labels["domain"] == "prometheus"
+        assert sig.labels["cluster"] == "ocpv05"
+
+    def test_alert_signal(self):
+        from cascade_compression.collectors.prometheus import PrometheusSignal
+        sig = PrometheusSignal({
+            "signal_type": "alert_kubenodenotready", "severity": "critical",
+            "source": "alertmanager", "cluster": "infra01", "namespace": "",
+            "name": "worker-02", "message": "Alert KubeNodeNotReady: Node not ready",
+        })
+        assert sig.signal_type == "alert_kubenodenotready"
+        assert sig.severity == "critical"
+
+
+class TestPoolboySignal:
+    def test_pool_exhausted(self):
+        from cascade_compression.collectors.poolboy import PoolboySignal
+        sig = PoolboySignal({
+            "signal_type": "pool_exhausted", "severity": "critical",
+            "kind": "ResourcePool", "name": "ocp-virt-pool", "namespace": "poolboy",
+            "message": "ResourcePool ocp-virt-pool exhausted: 0/5 available",
+        })
+        assert sig.signal_type == "pool_exhausted"
+        assert sig.severity == "critical"
+        assert sig.labels["domain"] == "poolboy"
+
+    def test_pool_healthy(self):
+        from cascade_compression.collectors.poolboy import PoolboySignal
+        sig = PoolboySignal({
+            "signal_type": "pool_healthy", "severity": "info",
+            "kind": "ResourcePool", "name": "basic-pool", "namespace": "poolboy",
+            "message": "ResourcePool basic-pool: 10/5 available",
+        })
+        assert sig.signal_type == "pool_healthy"
+        assert sig.severity == "info"
+
+
+class TestSandboxConanSignal:
+    def test_queue_depth(self):
+        from cascade_compression.collectors.sandbox_conan import SandboxConanSignal
+        sig = SandboxConanSignal({
+            "signal_type": "sandbox_queue_depth", "severity": "critical",
+            "name": "queued_placements", "message": "Sandbox queue: 60 placements queued",
+        })
+        assert sig.signal_type == "sandbox_queue_depth"
+        assert sig.severity == "critical"
+        assert sig.labels["domain"] == "sandbox"
+
+    def test_ratelimit_exhausted(self):
+        from cascade_compression.collectors.sandbox_conan import SandboxConanSignal
+        sig = SandboxConanSignal({
+            "signal_type": "sandbox_ratelimit_exhausted", "severity": "critical",
+            "cluster": "ocpv05", "name": "ratelimit-ocpv05",
+            "message": "Ratelimit exhausted on ocpv05: 0/10 slots",
+        })
+        assert sig.signal_type == "sandbox_ratelimit_exhausted"
+
+
+class TestBabylonSignal:
+    def test_subject_failed(self):
+        from cascade_compression.collectors.babylon import BabylonSignal
+        sig = BabylonSignal({
+            "signal_type": "anarchy_subject_failed", "severity": "high",
+            "kind": "AnarchySubject", "name": "sandbox-abc", "namespace": "babylon",
+            "message": "AnarchySubject sandbox-abc failed: state=provision-failed",
+        })
+        assert sig.signal_type == "anarchy_subject_failed"
+        assert sig.severity == "high"
+        assert sig.labels["domain"] == "babylon"
+
+    def test_action_failed(self):
+        from cascade_compression.collectors.babylon import BabylonSignal
+        sig = BabylonSignal({
+            "signal_type": "anarchy_action_failed", "severity": "high",
+            "kind": "AnarchyAction", "name": "provision-xyz", "namespace": "babylon",
+            "message": "AnarchyAction provision-xyz failed",
+        })
+        assert sig.signal_type == "anarchy_action_failed"
+
+
+class TestGitOpsSignal:
+    def test_app_degraded(self):
+        from cascade_compression.collectors.gitops import GitOpsSignal
+        sig = GitOpsSignal({
+            "signal_type": "app_degraded", "severity": "high",
+            "name": "sandbox-operator", "namespace": "openshift-gitops",
+            "message": "ArgoCD app sandbox-operator degraded",
+        })
+        assert sig.signal_type == "app_degraded"
+        assert sig.severity == "high"
+        assert sig.labels["domain"] == "gitops"
+
+    def test_sync_failed(self):
+        from cascade_compression.collectors.gitops import GitOpsSignal
+        sig = GitOpsSignal({
+            "signal_type": "sync_failed", "severity": "high",
+            "name": "monitoring", "namespace": "openshift-gitops",
+            "message": "ArgoCD app monitoring sync failed",
+        })
+        assert sig.signal_type == "sync_failed"
+
+
+class TestAgnosticVSignal:
+    def test_catalog_push(self):
+        from cascade_compression.collectors.agnosticv import AgnosticVSignal
+        sig = AgnosticVSignal({
+            "signal_type": "catalog_push", "severity": "medium",
+            "kind": "push", "repo": "agnosticv", "name": "jkershaw/main",
+            "message": "3 commits to agnosticv/main: update ocp4 catalog item",
+        })
+        assert sig.signal_type == "catalog_push"
+        assert sig.severity == "medium"
+        assert sig.labels["domain"] == "agnosticv"
+
+    def test_pr_merged(self):
+        from cascade_compression.collectors.agnosticv import AgnosticVSignal
+        sig = AgnosticVSignal({
+            "signal_type": "deploy_role_pr_merged", "severity": "medium",
+            "kind": "pr", "repo": "agnosticd", "name": "PR#1234",
+            "message": "PR merged in agnosticd: fix CNV role",
+        })
+        assert sig.signal_type == "deploy_role_pr_merged"
+
+
+class TestStargateSignal:
+    def test_scan_failed(self):
+        from cascade_compression.collectors.stargate import StargateSignal
+        sig = StargateSignal({
+            "signal_type": "scan_failed", "severity": "high",
+            "kind": "scan", "name": "scan-ocpv05-1", "cluster": "ocpv05",
+            "message": "Scan failed on ocpv05: 5 failures",
+        })
+        assert sig.signal_type == "scan_failed"
+        assert sig.labels["domain"] == "stargate"
+
+    def test_instance_stuck(self):
+        from cascade_compression.collectors.stargate import StargateSignal
+        sig = StargateSignal({
+            "signal_type": "instance_stuck", "severity": "high",
+            "kind": "instance", "name": "sandbox-xyz", "cluster": "ocpv07",
+            "message": "Stuck instance: sandbox-xyz on ocpv07",
+        })
+        assert sig.signal_type == "instance_stuck"
+
+
+class TestOVNSignal:
+    def test_network_unavailable(self):
+        from cascade_compression.collectors.ovn import OVNSignal
+        sig = OVNSignal({
+            "signal_type": "node_network_unavailable", "severity": "critical",
+            "kind": "Node", "name": "worker-03",
+            "message": "Node worker-03 network unavailable",
+        })
+        assert sig.signal_type == "node_network_unavailable"
+        assert sig.severity == "critical"
+        assert sig.labels["domain"] == "ovn"
+
+
+class TestGovernorSignal:
+    def test_policy_denied(self):
+        from cascade_compression.collectors.governor import GovernorSignal
+        sig = GovernorSignal({
+            "signal_type": "policy_denied", "severity": "high",
+            "kind": "decision", "name": "create-sandbox",
+            "message": "Policy denied: create on sandbox: quota exceeded",
+        })
+        assert sig.signal_type == "policy_denied"
+        assert sig.severity == "high"
+        assert sig.labels["domain"] == "governor"
+
+
+class TestLabagatorSignal:
+    def test_lab_degraded(self):
+        from cascade_compression.collectors.labagator import LabagatorSignal
+        sig = LabagatorSignal({
+            "signal_type": "lab_degraded", "severity": "high",
+            "kind": "lab", "name": "ocp-virt-roadshow",
+            "message": "Lab ocp-virt-roadshow degraded: 45/50 enrolled",
+        })
+        assert sig.signal_type == "lab_degraded"
+        assert sig.severity == "high"
+        assert sig.labels["domain"] == "labagator"
+
+    def test_session_failed(self):
+        from cascade_compression.collectors.labagator import LabagatorSignal
+        sig = LabagatorSignal({
+            "signal_type": "session_failed", "severity": "high",
+            "kind": "session", "name": "ocp-virt-room-a",
+            "message": "Session failed: ocp-virt in room-a",
+        })
+        assert sig.signal_type == "session_failed"
+
+
+class TestCollectorImports:
+    def test_all_collectors_importable(self):
+        from cascade_compression.collectors.prometheus import PrometheusCollector
+        from cascade_compression.collectors.poolboy import PoolboyCollector
+        from cascade_compression.collectors.sandbox_conan import SandboxConanCollector
+        from cascade_compression.collectors.babylon import BabylonCollector
+        from cascade_compression.collectors.gitops import GitOpsCollector
+        from cascade_compression.collectors.agnosticv import AgnosticVCollector
+        from cascade_compression.collectors.stargate import StargateCollector
+        from cascade_compression.collectors.ovn import OVNCollector
+        from cascade_compression.collectors.governor import GovernorCollector
+        from cascade_compression.collectors.labagator import LabagatorCollector
+        assert all(c.name for c in [
+            PrometheusCollector(), PoolboyCollector(), SandboxConanCollector(),
+            BabylonCollector(), GitOpsCollector(), AgnosticVCollector(),
+            StargateCollector(), OVNCollector(), GovernorCollector(), LabagatorCollector(),
+        ])
+
+    def test_sidecar_registry(self):
+        from cascade_compression.collector_sidecar import _COLLECTOR_REGISTRY
+        expected = {"prometheus", "poolboy", "sandbox_conan", "babylon", "gitops",
+                    "agnosticv", "stargate", "ovn", "governor", "labagator"}
+        assert expected == set(_COLLECTOR_REGISTRY.keys())
+
+
 class TestDomainPacks:
     def test_kubernetes_pack(self):
         from cascade_compression.domains import kubernetes

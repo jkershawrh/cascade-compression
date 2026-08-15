@@ -109,6 +109,10 @@ def replay():
     parser.add_argument("--db-url", default="", help="Database URL for collector")
     parser.add_argument("--data", default="", help="Path to data file (CSV/JSON)")
     parser.add_argument("--batch-size", type=int, default=500)
+    parser.add_argument("--state-file", default="", help="Path to save/restore cascade state")
+    parser.add_argument("--export-memories", default="", help="Export memories to JSON file on completion")
+    parser.add_argument("--consolidate-every", type=int, default=0,
+                        help="Run consolidation every N batches (0=disabled)")
     parser.add_argument("--ledger-url", default="")
     parser.add_argument("--ledger-token", default="")
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -121,6 +125,10 @@ def replay():
 
     domain = _load_domain(args.domain)
     from cascade_compression.bridge import CascadeBridge
+
+    import os as _os
+    if args.state_file:
+        _os.environ["CASCADE_STATE_FILE"] = args.state_file
 
     bridge = CascadeBridge(
         llm_url=args.llm_url,
@@ -152,16 +160,29 @@ def replay():
     all_signals = collector.collect_all()
     log.info("Loaded %d historical signals", len(all_signals))
 
+    consolidate_every = args.consolidate_every
+    batch_num = 0
     for i in range(0, len(all_signals), args.batch_size):
         batch = all_signals[i : i + args.batch_size]
         bridge.process(batch)
-        if (i // args.batch_size) % 10 == 0:
+        batch_num += 1
+        if batch_num % 10 == 0:
             log.info(
                 "Progress: %d/%d | compression=%.1f%%",
                 min(i + args.batch_size, len(all_signals)),
                 len(all_signals),
                 bridge.stats.compression_ratio * 100,
             )
+        if consolidate_every and batch_num % consolidate_every == 0 and bridge.memory_archive:
+            from .cascade.pipeline import CascadePipeline
+            from .cascade.agents import default_agents
+            bridge.memory_archive.consolidate(
+                lambda: CascadePipeline(default_agents()),
+                batch_size=1000,
+            )
+            log.info("Consolidation at batch %d: %d memories, avg strength %.2f",
+                     batch_num, bridge.memory_archive.size,
+                     bridge.memory_archive.avg_strength)
 
     stats = bridge.get_stats()
     summary = bridge.get_llm_summary()
@@ -175,3 +196,15 @@ def replay():
         log.info("  FN:          %d", stats["fn_count"])
     else:
         log.info("  FN:          not measured (no ground-truth feedback)")
+
+    if bridge.memory_archive:
+        mem_stats = bridge.memory_archive.stats()
+        log.info("  Memories:    %d (avg strength %.3f, evictions %d)",
+                 mem_stats["size"], mem_stats["avg_strength"], mem_stats["evictions_total"])
+
+    if args.export_memories and bridge.memory_archive:
+        import json as _json
+        memories = bridge.memory_archive.export_memories(min_strength=0.1)
+        with open(args.export_memories, "w") as f:
+            _json.dump(memories, f)
+        log.info("Exported %d memories to %s", len(memories.get("memories", [])), args.export_memories)

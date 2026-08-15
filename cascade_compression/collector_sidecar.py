@@ -212,9 +212,59 @@ def run_macos_collector(target_url: str, interval: int):
         time.sleep(interval)
 
 
+def _run_generic_collector(collector, target_url: str, interval: int, name: str):
+    """Generic poll loop for any BaseCollector implementation."""
+    log.info("%s collector: target=%s, interval=%ds", name, target_url, interval)
+    cycle = 0
+    while True:
+        cycle += 1
+        try:
+            signals = collector.collect()
+            if signals:
+                result = _post_signals(target_url, signals)
+                log.info("Cycle %d: %d signals → %s",
+                         cycle, len(signals), json.dumps(result)[:200])
+            else:
+                log.debug("Cycle %d: no signals", cycle)
+        except Exception as e:
+            log.error("Cycle %d error: %s", cycle, str(e)[:100])
+        time.sleep(interval)
+
+
+_COLLECTOR_REGISTRY = {
+    "prometheus": ("cascade_compression.collectors.prometheus", "PrometheusCollector"),
+    "poolboy": ("cascade_compression.collectors.poolboy", "PoolboyCollector"),
+    "sandbox_conan": ("cascade_compression.collectors.sandbox_conan", "SandboxConanCollector"),
+    "babylon": ("cascade_compression.collectors.babylon", "BabylonCollector"),
+    "gitops": ("cascade_compression.collectors.gitops", "GitOpsCollector"),
+    "agnosticv": ("cascade_compression.collectors.agnosticv", "AgnosticVCollector"),
+    "stargate": ("cascade_compression.collectors.stargate", "StargateCollector"),
+    "ovn": ("cascade_compression.collectors.ovn", "OVNCollector"),
+    "governor": ("cascade_compression.collectors.governor", "GovernorCollector"),
+    "labagator": ("cascade_compression.collectors.labagator", "LabagatorCollector"),
+}
+
+
+def run_registered_collector(mode: str, target_url: str, interval: int):
+    """Instantiate and run a collector from the registry."""
+    module_path, class_name = _COLLECTOR_REGISTRY[mode]
+    import importlib
+    module = importlib.import_module(module_path)
+    collector_cls = getattr(module, class_name)
+    collector = collector_cls()
+    config = {}
+    if hasattr(collector, "connect"):
+        if not collector.connect(config):
+            log.warning("%s collector failed to connect — will retry each cycle", mode)
+    _run_generic_collector(collector, target_url, interval, mode)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Cascade signal collector sidecar")
-    parser.add_argument("--mode", required=True, choices=["k8s", "aap", "macos"],
+    parser.add_argument("--mode", required=True,
+                        choices=["k8s", "aap", "macos", "prometheus", "poolboy",
+                                 "sandbox_conan", "babylon", "gitops", "agnosticv",
+                                 "stargate", "ovn", "governor", "labagator"],
                         help="Collector mode")
     parser.add_argument("--target", required=True,
                         help="Cascade service URL (e.g. http://cascade-k8s:8090)")
@@ -233,6 +283,8 @@ def main():
         run_aap_collector(args.target, args.interval)
     elif args.mode == "macos":
         run_macos_collector(args.target, args.interval)
+    elif args.mode in _COLLECTOR_REGISTRY:
+        run_registered_collector(args.mode, args.target, args.interval)
 
 
 if __name__ == "__main__":
