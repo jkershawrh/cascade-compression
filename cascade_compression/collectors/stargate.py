@@ -51,47 +51,63 @@ class StargateCollector(BaseCollector):
         if not self._api_url:
             log.warning("No STARGATE_API_URL configured")
             return False
-        data = self._get("/api/health")
+        data = self._get("/health")
         self._connected = data is not None
         if self._connected:
-            log.info("Stargate connected: %s", self._api_url)
+            log.info("Stargate connected: %s (status=%s)", self._api_url, data.get("status", "?"))
         return self._connected
 
     def collect(self) -> list:
         signals = []
-        scans = self._get("/api/scans?limit=50") or []
-        for scan in (scans if isinstance(scans, list) else scans.get("results", [])):
-            status = scan.get("status", "")
-            cluster = scan.get("cluster", "")
-            failures = scan.get("failure_count", 0)
-            name = f"scan-{cluster}-{scan.get('id', '')}"
 
-            if status == "failed" or failures > 0:
+        overview = self._get("/dashboard/overview")
+        if overview:
+            clusters = overview.get("clusters", {})
+            for cname, cdata in (clusters.items() if isinstance(clusters, dict) else []):
+                failing = cdata.get("failing_sandboxes", 0) or cdata.get("failing", 0)
+                total = cdata.get("total_sandboxes", 0) or cdata.get("total", 0)
+                if failing > 0:
+                    signals.append(StargateSignal({
+                        "signal_type": "cluster_sandboxes_failing",
+                        "severity": "high" if failing > 5 else "medium",
+                        "kind": "cluster", "name": cname, "cluster": cname,
+                        "message": f"{cname}: {failing}/{total} sandboxes failing",
+                        "failing": failing, "total": total,
+                    }))
+
+            provisioning = overview.get("provisioning", {})
+            pending = provisioning.get("pending", 0)
+            if pending > 10:
                 signals.append(StargateSignal({
-                    "signal_type": "scan_failed",
+                    "signal_type": "provisioning_backlog",
                     "severity": "high",
-                    "kind": "scan", "name": name, "cluster": cluster,
-                    "message": f"Scan failed on {cluster}: {failures} failures",
-                    "failure_count": failures,
-                }))
-            elif status == "completed":
-                signals.append(StargateSignal({
-                    "signal_type": "scan_completed",
-                    "severity": "info",
-                    "kind": "scan", "name": name, "cluster": cluster,
-                    "message": f"Scan completed on {cluster}",
+                    "kind": "provisioning", "name": "queue",
+                    "message": f"Provisioning backlog: {pending} pending",
+                    "pending": pending,
                 }))
 
-        instances = self._get("/api/instances?stuck=true&limit=50") or []
-        for inst in (instances if isinstance(instances, list) else instances.get("results", [])):
-            name = inst.get("name", inst.get("namespace", "unknown"))
-            cluster = inst.get("cluster", "")
-            signals.append(StargateSignal({
-                "signal_type": "instance_stuck",
-                "severity": "high",
-                "kind": "instance", "name": name, "cluster": cluster,
-                "message": f"Stuck instance: {name} on {cluster}",
-            }))
+        pools = self._get("/dashboard/pools")
+        if pools:
+            for pool in pools.get("pools", []):
+                pname = pool.get("name", "unknown")
+                available = pool.get("available", 0)
+                total_handles = pool.get("total", 0)
+                if available == 0 and total_handles > 0:
+                    signals.append(StargateSignal({
+                        "signal_type": "pool_exhausted",
+                        "severity": "critical",
+                        "kind": "pool", "name": pname,
+                        "message": f"Pool {pname} exhausted: 0/{total_handles}",
+                        "available": available, "total": total_handles,
+                    }))
+                elif available <= 1 and total_handles > 0:
+                    signals.append(StargateSignal({
+                        "signal_type": "pool_low",
+                        "severity": "high",
+                        "kind": "pool", "name": pname,
+                        "message": f"Pool {pname} low: {available}/{total_handles}",
+                        "available": available, "total": total_handles,
+                    }))
 
         return signals
 

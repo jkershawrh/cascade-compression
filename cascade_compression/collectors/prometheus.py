@@ -132,30 +132,56 @@ class PrometheusCollector(BaseCollector):
             or os.getenv("PROMETHEUS_TOKEN", "")
         )
 
-        cluster_urls = os.getenv("PROMETHEUS_CLUSTER_URLS", "")
-        if cluster_urls:
+        cluster_urls_raw = os.getenv("PROMETHEUS_CLUSTER_URLS", "")
+        if cluster_urls_raw:
             try:
-                self._clusters = json.loads(cluster_urls)
+                parsed = json.loads(cluster_urls_raw)
+                for name, val in parsed.items():
+                    if isinstance(val, str):
+                        self._clusters[name] = {"url": val, "token": ""}
+                    else:
+                        self._clusters[name] = val
             except (json.JSONDecodeError, ValueError):
                 log.warning("PROMETHEUS_CLUSTER_URLS is not valid JSON")
+
+        if not self._clusters:
+            self._clusters = self._discover_thanos_from_clusters()
 
         if not self._thanos_url and not self._clusters and not self._alertmanager_url:
             log.warning("No Prometheus/Thanos/Alertmanager URL configured")
             return False
 
-        if self._thanos_url:
-            data = self._query(self._thanos_url, "up", self._token)
-            self._connected = data is not None
-        elif self._alertmanager_url:
-            self._connected = self._get_alerts(self._alertmanager_url, self._token) is not None
-        else:
-            self._connected = True
+        working = 0
+        for name, cfg in list(self._clusters.items()):
+            url = cfg["url"] if isinstance(cfg, dict) else cfg
+            token = cfg.get("token", "") if isinstance(cfg, dict) else self._token
+            data = self._query(url, "up&limit=1", token)
+            if data is not None:
+                working += 1
 
+        if self._alertmanager_url:
+            if self._get_alerts(self._alertmanager_url, self._token) is not None:
+                working += 1
+
+        self._connected = working > 0
         if self._connected:
-            log.info("Prometheus connected: thanos=%s alertmanager=%s clusters=%d",
-                     self._thanos_url or "none", self._alertmanager_url or "none",
-                     len(self._clusters))
+            log.info("Prometheus connected: %d clusters, alertmanager=%s",
+                     len(self._clusters), bool(self._alertmanager_url))
         return self._connected
+
+    @staticmethod
+    def _discover_thanos_from_clusters() -> Dict[str, Dict[str, str]]:
+        clusters = {}
+        for i in range(1, 20):
+            api_url = os.getenv(f"CLUSTER_{i}_API_URL", "")
+            if not api_url:
+                continue
+            name = os.getenv(f"CLUSTER_{i}_NAME", f"cluster-{i}")
+            token = os.getenv(f"CLUSTER_{i}_TOKEN", "")
+            domain = api_url.replace("https://api.", "").rstrip("/").replace(":6443", "")
+            thanos_url = f"https://thanos-querier-openshift-monitoring.apps.{domain}"
+            clusters[name] = {"url": thanos_url, "token": token}
+        return clusters
 
     def collect(self) -> list:
         signals = []
@@ -184,8 +210,12 @@ class PrometheusCollector(BaseCollector):
         if self._thanos_url:
             targets.append(("central", self._thanos_url, self._token))
         for cluster, cfg in self._clusters.items():
-            url = cfg if isinstance(cfg, str) else cfg.get("url", "")
-            token = cfg.get("token", self._token) if isinstance(cfg, dict) else self._token
+            if isinstance(cfg, dict):
+                url = cfg.get("url", "")
+                token = cfg.get("token", self._token)
+            else:
+                url = cfg
+                token = self._token
             if url:
                 targets.append((cluster, url, token))
 
@@ -269,10 +299,24 @@ class PrometheusCollector(BaseCollector):
             ca_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
             if os.path.exists(ca_path):
                 ctx.load_verify_locations(ca_path)
-            with urlopen(req, timeout=15, context=ctx) as resp:  # nosec B310
-                data = json.loads(resp.read())
-                if data.get("status") == "success":
-                    return data.get("data", {}).get("result", [])
+            try:
+                with urlopen(req, timeout=15, context=ctx) as resp:  # nosec B310
+                    data = json.loads(resp.read())
+                    if data.get("status") == "success":
+                        return data.get("data", {}).get("result", [])
+            except Exception as _ssl_err:
+                if "CERTIFICATE_VERIFY_FAILED" not in str(_ssl_err):
+                    raise
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                req = Request(full_url)
+                if token:
+                    req.add_header("Authorization", f"Bearer {token}")
+                with urlopen(req, timeout=15, context=ctx) as resp:  # nosec B310
+                    data = json.loads(resp.read())
+                    if data.get("status") == "success":
+                        return data.get("data", {}).get("result", [])
         except Exception as e:
             log.debug("Prometheus query failed on %s: %s", url, str(e)[:100])
         return None
