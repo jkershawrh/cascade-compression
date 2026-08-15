@@ -155,7 +155,7 @@ class PrometheusCollector(BaseCollector):
         for name, cfg in list(self._clusters.items()):
             url = cfg["url"] if isinstance(cfg, dict) else cfg
             token = cfg.get("token", "") if isinstance(cfg, dict) else self._token
-            data = self._query(url, "up&limit=1", token)
+            data = self._query(url, "up", token)
             if data is not None:
                 working += 1
 
