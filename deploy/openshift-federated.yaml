@@ -103,7 +103,7 @@ spec:
         - name: CASCADE_LLM_MODEL
           value: "granite-3-2-8b-instruct"
         - name: CASCADE_MICRO_MODEL
-          value: "granite-2b"
+          value: "granite-2b-cpu"
         - name: CASCADE_MACRO_MODEL
           value: "granite-3-2-8b-instruct"
         - name: CASCADE_SHADOW_RATE
@@ -202,7 +202,7 @@ spec:
         - name: CASCADE_LLM_MODEL
           value: "granite-3-2-8b-instruct"
         - name: CASCADE_MICRO_MODEL
-          value: "granite-2b"
+          value: "granite-2b-cpu"
         - name: CASCADE_MACRO_MODEL
           value: "granite-3-2-8b-instruct"
         - name: CASCADE_SHADOW_RATE
@@ -301,7 +301,7 @@ spec:
         - name: CASCADE_LLM_MODEL
           value: "granite-3-2-8b-instruct"
         - name: CASCADE_MICRO_MODEL
-          value: "granite-2b"
+          value: "granite-2b-cpu"
         - name: CASCADE_MACRO_MODEL
           value: "granite-3-2-8b-instruct"
         - name: CASCADE_MEMORY_ENABLED

@@ -110,7 +110,7 @@ CDD → TDD → EDD → BDD (Contract → Test → Event → Behavior Driven)
 python3 -m uvicorn cascade_compression.service:app --port 8090
 
 # With per-tier models
-CASCADE_MICRO_MODEL=granite-2b CASCADE_MACRO_MODEL=granite-3-2-8b-instruct \
+CASCADE_MICRO_MODEL=granite-2b-cpu CASCADE_MACRO_MODEL=granite-3-2-8b-instruct \
   python3 -m uvicorn cascade_compression.service:app --port 8090
 
 # Federated deployment on OpenShift (K8s + AAP + memory aggregator)
