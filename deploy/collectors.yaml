@@ -93,3 +93,171 @@ spec:
           limits:
             cpu: 500m
             memory: 256Mi
+
+---
+# ── Poolboy Collector ───────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collector-poolboy
+  namespace: cascade-compression
+  labels:
+    app: collector-poolboy
+    component: collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: collector-poolboy
+  template:
+    metadata:
+      labels:
+        app: collector-poolboy
+        component: collector
+    spec:
+      containers:
+      - name: collector
+        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        command:
+        - python3
+        - -m
+        - cascade_compression.collector_sidecar
+        - --mode=poolboy
+        - --target=http://cascade-k8s:8090
+        - --interval=60
+        envFrom:
+        - secretRef:
+            name: collector-clusters
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+
+---
+# ── Babylon/Anarchy Collector ───────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collector-babylon
+  namespace: cascade-compression
+  labels:
+    app: collector-babylon
+    component: collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: collector-babylon
+  template:
+    metadata:
+      labels:
+        app: collector-babylon
+        component: collector
+    spec:
+      containers:
+      - name: collector
+        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        command:
+        - python3
+        - -m
+        - cascade_compression.collector_sidecar
+        - --mode=babylon
+        - --target=http://cascade-k8s:8090
+        - --interval=60
+        envFrom:
+        - secretRef:
+            name: collector-clusters
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+
+---
+# ── GitOps/ArgoCD Collector ─────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collector-gitops
+  namespace: cascade-compression
+  labels:
+    app: collector-gitops
+    component: collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: collector-gitops
+  template:
+    metadata:
+      labels:
+        app: collector-gitops
+        component: collector
+    spec:
+      containers:
+      - name: collector
+        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        command:
+        - python3
+        - -m
+        - cascade_compression.collector_sidecar
+        - --mode=gitops
+        - --target=http://cascade-k8s:8090
+        - --interval=60
+        envFrom:
+        - secretRef:
+            name: collector-clusters
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+
+---
+# ── OVN Networking Collector ────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collector-ovn
+  namespace: cascade-compression
+  labels:
+    app: collector-ovn
+    component: collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: collector-ovn
+  template:
+    metadata:
+      labels:
+        app: collector-ovn
+        component: collector
+    spec:
+      containers:
+      - name: collector
+        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        command:
+        - python3
+        - -m
+        - cascade_compression.collector_sidecar
+        - --mode=ovn
+        - --target=http://cascade-k8s:8090
+        - --interval=60
+        envFrom:
+        - secretRef:
+            name: collector-clusters
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi

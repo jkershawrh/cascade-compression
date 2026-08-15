@@ -43,34 +43,36 @@ class PoolboyCollector(BaseCollector):
     name = "poolboy"
 
     def __init__(self):
-        self._api_url = ""
-        self._token = ""
+        self._clusters: List[dict] = []
         self._connected = False
 
     def connect(self, config: dict) -> bool:
-        self._api_url = (
-            config.get("api_url", "")
-            or os.getenv("POOLBOY_API_URL", "")
-            or self._detect_in_cluster()
-        ).rstrip("/")
-        self._token = (
-            config.get("token", "")
-            or os.getenv("POOLBOY_TOKEN", "")
-            or self._load_sa_token()
-        )
-        if not self._api_url:
+        api_url = config.get("api_url", "") or os.getenv("POOLBOY_API_URL", "")
+        token = config.get("token", "") or os.getenv("POOLBOY_TOKEN", "")
+        if api_url:
+            self._clusters = [{"name": "single", "api_url": api_url.rstrip("/"), "token": token}]
+        else:
+            self._clusters = self._discover_clusters()
+        if not self._clusters:
+            in_cluster = self._detect_in_cluster()
+            if in_cluster:
+                self._clusters = [{"name": "local", "api_url": in_cluster, "token": self._load_sa_token()}]
+        if not self._clusters:
             log.warning("No K8s API URL for poolboy")
             return False
-        data = self._get(f"/apis/{API_GROUP}/{API_VERSION}/resourcepools?limit=1")
-        self._connected = data is not None
-        if self._connected:
-            log.info("Poolboy connected: %s", self._api_url)
-        return self._connected
+        for c in self._clusters:
+            data = self._get(c, f"/apis/{API_GROUP}/{API_VERSION}/resourcepools?limit=1")
+            if data is not None:
+                self._connected = True
+                log.info("Poolboy connected: %s (%d clusters)", c["name"], len(self._clusters))
+                return True
+        return False
 
     def collect(self) -> list:
         signals = []
-        signals.extend(self._collect_pools())
-        signals.extend(self._collect_claims())
+        for cluster in self._clusters:
+            signals.extend(self._collect_pools(cluster))
+            signals.extend(self._collect_claims(cluster))
         return signals
 
     def collect_all(self) -> list:
@@ -82,9 +84,10 @@ class PoolboyCollector(BaseCollector):
     def describe(self) -> dict:
         return {"name": self.name, "connected": self._connected, "api_url": self._api_url}
 
-    def _collect_pools(self) -> List[PoolboySignal]:
+    def _collect_pools(self, cluster: dict = None) -> List[PoolboySignal]:
         signals = []
-        data = self._get(f"/apis/{API_GROUP}/{API_VERSION}/resourcepools")
+        cluster = cluster or (self._clusters[0] if self._clusters else {"name": "", "api_url": "", "token": ""})
+        data = self._get(cluster, f"/apis/{API_GROUP}/{API_VERSION}/resourcepools")
         if not data:
             return signals
 
@@ -131,9 +134,10 @@ class PoolboyCollector(BaseCollector):
 
         return signals
 
-    def _collect_claims(self) -> List[PoolboySignal]:
+    def _collect_claims(self, cluster: dict = None) -> List[PoolboySignal]:
         signals = []
-        data = self._get(f"/apis/{API_GROUP}/{API_VERSION}/resourceclaims?limit=500")
+        cluster = cluster or (self._clusters[0] if self._clusters else {"name": "", "api_url": "", "token": ""})
+        data = self._get(cluster, f"/apis/{API_GROUP}/{API_VERSION}/resourceclaims?limit=500")
         if not data:
             return signals
 
@@ -166,11 +170,25 @@ class PoolboyCollector(BaseCollector):
 
         return signals
 
-    def _get(self, path: str) -> Optional[dict]:
-        url = f"{self._api_url}{path}"
+    @staticmethod
+    def _discover_clusters() -> List[dict]:
+        clusters = []
+        for i in range(1, 20):
+            url = os.getenv(f"CLUSTER_{i}_API_URL", "")
+            if not url:
+                continue
+            clusters.append({
+                "name": os.getenv(f"CLUSTER_{i}_NAME", f"cluster-{i}"),
+                "api_url": url.rstrip("/"),
+                "token": os.getenv(f"CLUSTER_{i}_TOKEN", ""),
+            })
+        return clusters
+
+    def _get(self, cluster: dict, path: str) -> Optional[dict]:
+        url = f"{cluster['api_url']}{path}"
         headers = {}
-        if self._token:
-            headers["Authorization"] = f"Bearer {self._token}"
+        if cluster.get("token"):
+            headers["Authorization"] = f"Bearer {cluster['token']}"
         try:
             req = Request(url, headers=headers)
             ctx = ssl.create_default_context()

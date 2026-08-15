@@ -38,34 +38,36 @@ class OVNCollector(BaseCollector):
     name = "ovn"
 
     def __init__(self):
-        self._api_url = ""
-        self._token = ""
+        self._clusters: List[dict] = []
         self._connected = False
 
     def connect(self, config: dict) -> bool:
-        self._api_url = (
-            config.get("api_url", "")
-            or os.getenv("OVN_API_URL", "")
-            or self._detect_in_cluster()
-        ).rstrip("/")
-        self._token = (
-            config.get("token", "")
-            or os.getenv("OVN_TOKEN", "")
-            or self._load_sa_token()
-        )
-        if not self._api_url:
+        api_url = config.get("api_url", "") or os.getenv("OVN_API_URL", "")
+        token = config.get("token", "") or os.getenv("OVN_TOKEN", "")
+        if api_url:
+            self._clusters = [{"name": "single", "api_url": api_url.rstrip("/"), "token": token}]
+        else:
+            self._clusters = self._discover_clusters()
+        if not self._clusters:
+            in_cluster = self._detect_in_cluster()
+            if in_cluster:
+                self._clusters = [{"name": "local", "api_url": in_cluster, "token": self._load_sa_token()}]
+        if not self._clusters:
             return False
-        data = self._get("/api/v1/nodes?limit=1")
-        self._connected = data is not None
-        if self._connected:
-            log.info("OVN connected: %s", self._api_url)
-        return self._connected
+        for c in self._clusters:
+            data = self._get(c, "/api/v1/nodes?limit=1")
+            if data is not None:
+                self._connected = True
+                log.info("OVN connected: %s (%d clusters)", c["name"], len(self._clusters))
+                return True
+        return False
 
     def collect(self) -> list:
         signals = []
-        signals.extend(self._collect_node_network())
-        signals.extend(self._collect_egress_firewalls())
-        signals.extend(self._collect_network_events())
+        for cluster in self._clusters:
+            signals.extend(self._collect_node_network(cluster))
+            signals.extend(self._collect_egress_firewalls(cluster))
+            signals.extend(self._collect_network_events(cluster))
         return signals
 
     def collect_all(self) -> list:
@@ -77,9 +79,10 @@ class OVNCollector(BaseCollector):
     def describe(self) -> dict:
         return {"name": self.name, "connected": self._connected, "api_url": self._api_url}
 
-    def _collect_node_network(self) -> List[OVNSignal]:
+    def _collect_node_network(self, cluster: dict = None) -> List[OVNSignal]:
         signals = []
-        data = self._get("/api/v1/nodes")
+        cluster = cluster or self._clusters[0]
+        data = self._get(cluster, "/api/v1/nodes")
         if not data:
             return signals
         for item in data.get("items", []):
@@ -95,9 +98,10 @@ class OVNCollector(BaseCollector):
                 }))
         return signals
 
-    def _collect_egress_firewalls(self) -> List[OVNSignal]:
+    def _collect_egress_firewalls(self, cluster: dict = None) -> List[OVNSignal]:
         signals = []
-        data = self._get("/apis/k8s.ovn.org/v1/egressfirewalls")
+        cluster = cluster or self._clusters[0]
+        data = self._get(cluster, "/apis/k8s.ovn.org/v1/egressfirewalls")
         if not data:
             return signals
         for item in data.get("items", []):
@@ -115,9 +119,10 @@ class OVNCollector(BaseCollector):
                 }))
         return signals
 
-    def _collect_network_events(self) -> List[OVNSignal]:
+    def _collect_network_events(self, cluster: dict = None) -> List[OVNSignal]:
         signals = []
-        data = self._get("/api/v1/events?fieldSelector=reason=NetworkNotReady&limit=50")
+        cluster = cluster or self._clusters[0]
+        data = self._get(cluster, "/api/v1/events?fieldSelector=reason=NetworkNotReady&limit=50")
         if not data:
             return signals
         for item in data.get("items", []):
@@ -132,11 +137,25 @@ class OVNCollector(BaseCollector):
             }))
         return signals
 
-    def _get(self, path: str) -> Optional[dict]:
-        url = f"{self._api_url}{path}"
+    @staticmethod
+    def _discover_clusters() -> List[dict]:
+        clusters = []
+        for i in range(1, 20):
+            url = os.getenv(f"CLUSTER_{i}_API_URL", "")
+            if not url:
+                continue
+            clusters.append({
+                "name": os.getenv(f"CLUSTER_{i}_NAME", f"cluster-{i}"),
+                "api_url": url.rstrip("/"),
+                "token": os.getenv(f"CLUSTER_{i}_TOKEN", ""),
+            })
+        return clusters
+
+    def _get(self, cluster: dict, path: str) -> Optional[dict]:
+        url = f"{cluster['api_url']}{path}"
         headers = {}
-        if self._token:
-            headers["Authorization"] = f"Bearer {self._token}"
+        if cluster.get("token"):
+            headers["Authorization"] = f"Bearer {cluster['token']}"
         try:
             req = Request(url, headers=headers)
             ctx = ssl.create_default_context()
