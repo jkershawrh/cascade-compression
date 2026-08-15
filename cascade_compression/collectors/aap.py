@@ -300,26 +300,38 @@ class AAPCollector:
         if not conn:
             return []
         try:
-            cur = conn.cursor()
-            cur.execute("""
-                SELECT e.id, e.event, e.failed, e.changed, e.host_name,
-                       e.play, e.role, e.task, e.playbook, e.job_id, e.stdout,
-                       j.name as job_name
-                FROM main_jobevent e
-                LEFT JOIN main_unifiedjob j ON e.job_id = j.id
-                WHERE e.event NOT IN ('playbook_on_start', 'playbook_on_play_start',
-                                      'playbook_on_task_start', 'runner_on_start',
-                                      'playbook_on_include')
-                ORDER BY e.id
-            """)
             signals = []
-            for row in cur.fetchall():
-                evt = dict(zip(("id", "event", "failed", "changed", "host_name",
-                                "play", "role", "task", "playbook", "job_id",
-                                "stdout", "job_name"), row))
-                evt = {k: (v if v is not None else "") for k, v in evt.items()}
-                signals.append(AAPSignal(evt, source="task"))
-            cur.close()
+            last_id = 0
+            page_size = 10000
+            while True:
+                cur = conn.cursor()
+                cur.execute("""
+                    SELECT e.id, e.event, e.failed, e.changed, e.host_name,
+                           e.play, e.role, e.task, e.playbook, e.job_id, e.stdout,
+                           j.name as job_name
+                    FROM main_jobevent e
+                    LEFT JOIN main_unifiedjob j ON e.job_id = j.id
+                    WHERE e.event NOT IN ('playbook_on_start', 'playbook_on_play_start',
+                                          'playbook_on_task_start', 'runner_on_start',
+                                          'playbook_on_include')
+                      AND e.id > %s
+                    ORDER BY e.id
+                    LIMIT %s
+                """, (last_id, page_size))
+                rows = cur.fetchall()
+                cur.close()
+                if not rows:
+                    break
+                for row in rows:
+                    evt = dict(zip(("id", "event", "failed", "changed", "host_name",
+                                    "play", "role", "task", "playbook", "job_id",
+                                    "stdout", "job_name"), row))
+                    evt = {k: (v if v is not None else "") for k, v in evt.items()}
+                    signals.append(AAPSignal(evt, source="task"))
+                last_id = rows[-1][0]
+                if len(rows) < page_size:
+                    break
+                log.info("AAP task events: loaded %d so far (last_id=%d)", len(signals), last_id)
             return signals
         except Exception as e:
             log.warning("AAP all task events error: %s", str(e)[:60])
