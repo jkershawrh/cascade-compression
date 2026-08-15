@@ -56,12 +56,17 @@ class BabylonCollector(BaseCollector):
                 self._clusters = [{"name": "local", "api_url": in_cluster, "token": self._load_sa_token()}]
         if not self._clusters:
             return False
+        working = []
         for c in self._clusters:
             data = self._get(c, "/apis/anarchy.gpte.redhat.com/v1/anarchysubjects?limit=1")
             if data is not None:
-                self._connected = True
-                log.info("Babylon connected: %s (%d clusters)", c["name"], len(self._clusters))
-                return True
+                working.append(c)
+        if working:
+            self._clusters = working
+            self._connected = True
+            log.info("Babylon connected: %d clusters with CRDs", len(working))
+            return True
+        log.warning("Babylon: no clusters have accessible AnarchySubject CRDs")
         return False
 
     def collect(self) -> list:
