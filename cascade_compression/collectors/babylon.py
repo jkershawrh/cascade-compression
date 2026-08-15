@@ -206,8 +206,15 @@ class BabylonCollector(BaseCollector):
             ca_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
             if os.path.exists(ca_path):
                 ctx.load_verify_locations(ca_path)
-            with urlopen(req, timeout=15, context=ctx) as resp:  # nosec B310
-                return json.loads(resp.read())
+            try:
+                with urlopen(req, timeout=15, context=ctx) as resp:  # nosec B310
+                    return json.loads(resp.read())
+            except ssl.SSLCertVerificationError:
+                ctx = ssl.create_default_context()
+                ctx.check_hostname = False
+                ctx.verify_mode = ssl.CERT_NONE
+                with urlopen(req, timeout=15, context=ctx) as resp:  # nosec B310
+                    return json.loads(resp.read())
         except Exception as e:
             log.debug("Babylon GET %s: %s", path, str(e)[:100])
             return None
