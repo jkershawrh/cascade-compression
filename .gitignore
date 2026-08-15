@@ -31,3 +31,4 @@ cascade-state-*.json
 *.swo
 *~
 .DS_Store
+docs/memory-visualization.md
