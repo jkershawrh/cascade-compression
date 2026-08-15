@@ -60,12 +60,17 @@ class PoolboyCollector(BaseCollector):
         if not self._clusters:
             log.warning("No K8s API URL for poolboy")
             return False
+        working = []
         for c in self._clusters:
             data = self._get(c, f"/apis/{API_GROUP}/{API_VERSION}/resourcepools?limit=1")
             if data is not None:
-                self._connected = True
-                log.info("Poolboy connected: %s (%d clusters)", c["name"], len(self._clusters))
-                return True
+                working.append(c)
+        if working:
+            self._clusters = working
+            self._connected = True
+            log.info("Poolboy connected: %d clusters with CRDs", len(working))
+            return True
+        log.warning("Poolboy: no clusters have accessible ResourcePool CRDs")
         return False
 
     def collect(self) -> list:
