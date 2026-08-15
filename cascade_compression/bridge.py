@@ -121,9 +121,12 @@ class CascadeBridge:
         )
 
         self._llm_buffer: list = []
-        self._llm_max_buffer = 2000
+        self._llm_max_buffer = int(os.getenv("CASCADE_LLM_BUFFER", "10000"))
+        self._llm_batch_size = int(os.getenv("CASCADE_LLM_BATCH", "500"))
+        self._llm_max_concurrent = int(os.getenv("CASCADE_LLM_THREADS", "3"))
         self._llm_results: list = []
-        self._llm_running = False
+        self._llm_active_threads = 0
+        self._llm_lock = threading.Lock()
         self._llm_noise_counts: Dict[str, int] = defaultdict(int)
         self._llm_important_counts: Dict[str, int] = defaultdict(int)
 
@@ -209,9 +212,11 @@ class CascadeBridge:
         if len(self._llm_buffer) > self._llm_max_buffer:
             self._llm_buffer = self._llm_buffer[-self._llm_max_buffer:]
 
-        if self._llm_buffer and not self._llm_running and self._llm_url:
-            batch = list(self._llm_buffer[:200])
-            self._llm_buffer = self._llm_buffer[200:]
+        while self._llm_buffer and self._llm_active_threads < self._llm_max_concurrent and self._llm_url:
+            batch = list(self._llm_buffer[:self._llm_batch_size])
+            self._llm_buffer = self._llm_buffer[self._llm_batch_size:]
+            with self._llm_lock:
+                self._llm_active_threads += 1
             threading.Thread(target=self._run_llm, args=(batch,), daemon=True).start()
 
         if self._shadow_buffer and not self._shadow_running and self._llm_url:
@@ -394,13 +399,13 @@ class CascadeBridge:
         return sig, ans, ms, model, sev
 
     def _run_llm(self, signals):
-        self._llm_running = True
         try:
             import httpx
             from concurrent.futures import ThreadPoolExecutor, as_completed
 
+            llm_workers = int(os.getenv("CASCADE_LLM_WORKERS", "8"))
             with httpx.Client(timeout=60) as client:
-                with ThreadPoolExecutor(max_workers=4) as pool:
+                with ThreadPoolExecutor(max_workers=llm_workers) as pool:
                     futures = {pool.submit(self._classify_one, sig, client): sig for sig in signals}
                     for future in as_completed(futures):
                         try:
@@ -429,7 +434,8 @@ class CascadeBridge:
         except Exception as e:
             log.warning("LLM error: %s", e)
         finally:
-            self._llm_running = False
+            with self._llm_lock:
+                self._llm_active_threads -= 1
 
     def _queue_shadow_samples(self, cascade_result, cascade_signals):
         """Sample suppressed signals from activated agents for LLM re-check."""
@@ -784,7 +790,7 @@ class CascadeBridge:
             } for k, v in top_noise],
             "activated_types": list(self._activated_types),
             "buffer_size": len(self._llm_buffer),
-            "running": self._llm_running,
+            "running": self._llm_active_threads > 0,
         }
 
     def get_promotion_log(self, limit: int = 30) -> list:
