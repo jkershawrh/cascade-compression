@@ -121,7 +121,7 @@ class CascadeBridge:
         )
 
         self._llm_buffer: list = []
-        self._llm_max_buffer = 500
+        self._llm_max_buffer = 2000
         self._llm_results: list = []
         self._llm_running = False
         self._llm_noise_counts: Dict[str, int] = defaultdict(int)
@@ -210,8 +210,8 @@ class CascadeBridge:
             self._llm_buffer = self._llm_buffer[-self._llm_max_buffer:]
 
         if self._llm_buffer and not self._llm_running and self._llm_url:
-            batch = list(self._llm_buffer[:50])
-            self._llm_buffer = self._llm_buffer[50:]
+            batch = list(self._llm_buffer[:200])
+            self._llm_buffer = self._llm_buffer[200:]
             threading.Thread(target=self._run_llm, args=(batch,), daemon=True).start()
 
         if self._shadow_buffer and not self._shadow_running and self._llm_url:
@@ -366,58 +366,66 @@ class CascadeBridge:
             self._deactivate_agent(sig_type)
             self._activation_timestamps.pop(sig_type, None)
 
+    def _classify_one(self, sig, client):
+        text = (
+            f"{sig['signal_type']} {sig['severity']}: "
+            f"{sig.get('content', {}).get('message', '')} "
+            f"namespace={sig.get('namespace', '')}"
+        )
+        sev = sig.get("severity", "medium")
+        model = self._macro_model if sev in ("critical", "high") else self._micro_model
+        t0 = time.monotonic()
+        r = client.post(
+            f"{self._llm_url}/v1/chat/completions",
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": self._system_prompt},
+                    {"role": "user", "content": text},
+                ],
+                "max_tokens": 5,
+                "temperature": 0,
+            },
+            headers={"Authorization": f"Bearer {self._llm_key}"},
+        )
+        r.raise_for_status()
+        ms = (time.monotonic() - t0) * 1000
+        ans = r.json()["choices"][0]["message"]["content"].strip().lower()
+        return sig, ans, ms, model, sev
+
     def _run_llm(self, signals):
         self._llm_running = True
         try:
             import httpx
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+
             with httpx.Client(timeout=60) as client:
-                for sig in signals:
-                    text = (
-                        f"{sig['signal_type']} {sig['severity']}: "
-                        f"{sig.get('content', {}).get('message', '')} "
-                        f"namespace={sig.get('namespace', '')}"
-                    )
-                    try:
-                        sev = sig.get("severity", "medium")
-                        model = self._macro_model if sev in ("critical", "high") else self._micro_model
-                        t0 = time.monotonic()
-                        r = client.post(
-                            f"{self._llm_url}/v1/chat/completions",
-                            json={
+                with ThreadPoolExecutor(max_workers=4) as pool:
+                    futures = {pool.submit(self._classify_one, sig, client): sig for sig in signals}
+                    for future in as_completed(futures):
+                        try:
+                            sig, ans, ms, model, sev = future.result()
+                            self.stats.llm_classified += 1
+
+                            self._llm_results.append({
+                                "signal_type": sig["signal_type"],
+                                "classification": ans,
+                                "latency_ms": round(ms),
                                 "model": model,
-                                "messages": [
-                                    {"role": "system", "content": self._system_prompt},
-                                    {"role": "user", "content": text},
-                                ],
-                                "max_tokens": 5,
-                                "temperature": 0,
-                            },
-                            headers={"Authorization": f"Bearer {self._llm_key}"},
-                        )
-                        r.raise_for_status()
-                        ms = (time.monotonic() - t0) * 1000
-                        ans = r.json()["choices"][0]["message"]["content"].strip().lower()
-                        self.stats.llm_classified += 1
+                                "tier": "macro" if sev in ("critical", "high") else "micro",
+                            })
+                            if len(self._llm_results) > 1000:
+                                self._llm_results = self._llm_results[-1000:]
 
-                        self._llm_results.append({
-                            "signal_type": sig["signal_type"],
-                            "classification": ans,
-                            "latency_ms": round(ms),
-                            "model": model,
-                            "tier": "macro" if sev in ("critical", "high") else "micro",
-                        })
-                        if len(self._llm_results) > 1000:
-                            self._llm_results = self._llm_results[-1000:]
+                            if _is_noise_classification(ans):
+                                self.stats.llm_noise += 1
+                                self._llm_noise_counts[sig["signal_type"]] += 1
+                            else:
+                                self.stats.llm_important += 1
+                                self._llm_important_counts[sig["signal_type"]] += 1
 
-                        if _is_noise_classification(ans):
-                            self.stats.llm_noise += 1
-                            self._llm_noise_counts[sig["signal_type"]] += 1
-                        else:
-                            self.stats.llm_important += 1
-                            self._llm_important_counts[sig["signal_type"]] += 1
-
-                    except Exception as e:
-                        log.debug("LLM call failed: %s", str(e)[:60])
+                        except Exception as e:
+                            log.debug("LLM call failed: %s", str(e)[:60])
         except Exception as e:
             log.warning("LLM error: %s", e)
         finally:
