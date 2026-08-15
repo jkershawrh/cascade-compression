@@ -82,7 +82,7 @@ spec:
     spec:
       containers:
       - name: cascade
-        image: quay.io/redhat-ai-incubation/cascade-compression:latest
+        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
         ports:
         - containerPort: 8090
         env:
@@ -181,7 +181,7 @@ spec:
     spec:
       containers:
       - name: cascade
-        image: quay.io/redhat-ai-incubation/cascade-compression:latest
+        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
         ports:
         - containerPort: 8090
         env:
@@ -280,7 +280,7 @@ spec:
     spec:
       containers:
       - name: cascade
-        image: quay.io/redhat-ai-incubation/cascade-compression:latest
+        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
         ports:
         - containerPort: 8090
         env:
