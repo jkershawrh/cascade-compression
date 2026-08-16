@@ -32,3 +32,5 @@ cascade-state-*.json
 *~
 .DS_Store
 docs/memory-visualization.md
+docs/rhdp-biography.md
+docs/rhdp-platform-memory.md
