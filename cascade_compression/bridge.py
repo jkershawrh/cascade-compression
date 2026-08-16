@@ -98,6 +98,11 @@ class CascadeBridge:
         self._llm_model = llm_model or os.getenv("CASCADE_LLM_MODEL", "microsoft-phi-4")
         self._micro_model = os.getenv("CASCADE_MICRO_MODEL", "") or self._llm_model
         self._macro_model = os.getenv("CASCADE_MACRO_MODEL", "") or self._llm_model
+        self._gpu_url = os.getenv("CASCADE_GPU_URL", "")
+        self._gpu_key = os.getenv("CASCADE_GPU_KEY", "") or self._llm_key
+        self._gpu_model = os.getenv("CASCADE_GPU_MODEL", "microsoft-phi-4")
+        self._gpu_analyses: list = []
+        self._gpu_analyses_file = os.getenv("CASCADE_GPU_ANALYSES_FILE", "")
         self._system_prompt = system_prompt
         self._ledger_url = ledger_url or os.getenv("CASCADE_LEDGER_URL", "")
         self._ledger_token = ledger_token or os.getenv("CASCADE_LEDGER_TOKEN", "")
@@ -129,6 +134,7 @@ class CascadeBridge:
         self._llm_lock = threading.Lock()
         self._llm_noise_counts: Dict[str, int] = defaultdict(int)
         self._llm_important_counts: Dict[str, int] = defaultdict(int)
+        self._llm_failure_counts: Dict[str, int] = defaultdict(int)
 
         self._agent_metrics: Dict[str, AgentMetrics] = {}
         self._agent_rules: Dict[str, RuleAgent] = {}
@@ -398,6 +404,111 @@ class CascadeBridge:
         ans = r.json()["choices"][0]["message"]["content"].strip().lower()
         return sig, ans, ms, model, sev
 
+    def _build_evidence_bundle(self, sig: dict) -> dict:
+        bundle = {"signal": sig, "related_memories": [], "causal_chain": [], "entity_context": []}
+        if not self.memory_archive:
+            return bundle
+        try:
+            from .cascade.recall import RecallEngine
+            from .cascade.protocol import Signal
+            query_signal = Signal(
+                signal_type=sig.get("signal_type", ""),
+                severity=sig.get("severity", "info"),
+                source="", namespace=sig.get("namespace", ""),
+                content=sig.get("content", {}), labels={},
+            )
+            engine = RecallEngine(self.memory_archive)
+            results = engine.recall(query_signal, top_k=5, reinforce=False)
+            bundle["related_memories"] = [
+                {"signal_type": r.memory.signal.signal_type,
+                 "strength": round(r.memory.strength, 3),
+                 "message": r.memory.signal.content.get("message", "")[:150],
+                 "score": round(r.score, 3)}
+                for r in results
+            ]
+        except Exception as e:
+            log.debug("Evidence bundle recall failed: %s", str(e)[:60])
+        return bundle
+
+    def _escalate_to_gpu(self, sig: dict, classification: str, client):
+        if not self._gpu_url:
+            return None
+        try:
+            bundle = self._build_evidence_bundle(sig)
+            memories_text = "\n".join(
+                f"- [{m['signal_type']}] (str={m['strength']}) {m['message']}"
+                for m in bundle.get("related_memories", [])
+            ) or "No related memories found."
+
+            prompt = (
+                f"Analyze this infrastructure signal with full context.\n\n"
+                f"Signal: {sig['signal_type']} {sig['severity']}\n"
+                f"Message: {sig.get('content', {}).get('message', '')}\n"
+                f"Namespace: {sig.get('namespace', '')}\n"
+                f"CPU classification: {classification}\n\n"
+                f"Related memories (what the platform remembers):\n{memories_text}\n\n"
+                f"Respond in JSON:\n"
+                f'{{"root_cause": "...", "impact": "...", '
+                f'"remediation": ["step1", "step2"], "confidence": 0.0-1.0}}'
+            )
+
+            t0 = time.monotonic()
+            r = client.post(
+                f"{self._gpu_url}/v1/chat/completions",
+                json={
+                    "model": self._gpu_model,
+                    "messages": [
+                        {"role": "system", "content": "You are an infrastructure analyst. Analyze signals and provide structured root cause analysis in JSON."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "max_tokens": 500,
+                    "temperature": 0,
+                },
+                headers={"Authorization": f"Bearer {self._gpu_key}"},
+            )
+            r.raise_for_status()
+            ms = (time.monotonic() - t0) * 1000
+            raw = r.json()["choices"][0]["message"]["content"].strip()
+
+            try:
+                analysis = json.loads(raw)
+            except json.JSONDecodeError:
+                analysis = {"raw_response": raw}
+
+            analysis["model"] = self._gpu_model
+            analysis["latency_ms"] = round(ms)
+            analysis["signal_type"] = sig["signal_type"]
+            analysis["severity"] = sig.get("severity", "")
+            analysis["namespace"] = sig.get("namespace", "")
+            analysis["classification"] = classification
+            analysis["timestamp"] = datetime.now(timezone.utc).isoformat()
+            analysis["evidence_bundle_size"] = len(bundle.get("related_memories", []))
+
+            self._gpu_analyses.append(analysis)
+            if len(self._gpu_analyses) > 500:
+                self._gpu_analyses = self._gpu_analyses[-500:]
+
+            if self._gpu_analyses_file:
+                try:
+                    self._append_gpu_analysis(analysis)
+                except Exception as e:
+                    log.debug("GPU analysis file write failed: %s", str(e)[:60])
+
+            log.info("GPU analysis: %s → %s (%.0fms, model=%s)",
+                     sig["signal_type"], analysis.get("root_cause", "?")[:50], ms, self._gpu_model)
+
+            return analysis
+        except Exception as e:
+            log.debug("GPU escalation failed: %s", str(e)[:60])
+            return None
+
+    def _append_gpu_analysis(self, analysis: dict):
+        import fcntl
+        with open(self._gpu_analyses_file, "a") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            f.write(json.dumps(analysis) + "\n")
+            fcntl.flock(f, fcntl.LOCK_UN)
+
     def _run_llm(self, signals):
         try:
             import httpx
@@ -429,8 +540,27 @@ class CascadeBridge:
                                 self.stats.llm_important += 1
                                 self._llm_important_counts[sig["signal_type"]] += 1
 
+                                if self._gpu_url:
+                                    gpu_result = self._escalate_to_gpu(sig, ans, client)
+                                    if gpu_result and self.memory_archive:
+                                        from .cascade.protocol import Signal as CascadeSignal
+                                        mem_sig = CascadeSignal(
+                                            signal_type=sig["signal_type"],
+                                            severity=sig.get("severity", "info"),
+                                            source="", namespace=sig.get("namespace", ""),
+                                            content=sig.get("content", {}), labels={},
+                                        )
+                                        self.memory_archive.store(
+                                            mem_sig, classification=ans,
+                                            metadata={"analysis": gpu_result},
+                                        )
+
                         except Exception as e:
-                            log.debug("LLM call failed: %s", str(e)[:60])
+                            model_key = sig.get("signal_type", "unknown")
+                            self._llm_failure_counts[model_key] += 1
+                            count = self._llm_failure_counts[model_key]
+                            if count <= 5 or count % 100 == 0:
+                                log.warning("LLM call failed (%dx): %s", count, str(e)[:80])
         except Exception as e:
             log.warning("LLM error: %s", e)
         finally:
@@ -792,6 +922,9 @@ class CascadeBridge:
             "buffer_size": len(self._llm_buffer),
             "running": self._llm_active_threads > 0,
         }
+
+    def get_gpu_analyses(self, limit: int = 20) -> list:
+        return self._gpu_analyses[-limit:]
 
     def get_promotion_log(self, limit: int = 30) -> list:
         return self._promotion_log[-limit:]

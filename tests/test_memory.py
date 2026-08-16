@@ -94,6 +94,46 @@ class TestMemoryStore:
         assert events[0].event_type == "formed"
 
 
+class TestMemoryAnalysis:
+    def test_store_with_analysis(self):
+        archive = MemoryArchive()
+        analysis = {"root_cause": "ceph pool full", "confidence": 0.9}
+        m = archive.store(make_signal(), classification="real_incident",
+                          metadata={"analysis": analysis})
+        assert m.analysis == analysis
+        assert m.analysis["root_cause"] == "ceph pool full"
+
+    def test_analysis_in_to_dict(self):
+        archive = MemoryArchive()
+        analysis = {"root_cause": "test", "remediation": ["fix it"]}
+        m = archive.store(make_signal(), metadata={"analysis": analysis})
+        d = m.to_dict()
+        assert d["analysis"] == analysis
+
+    def test_analysis_roundtrip_from_dict(self):
+        from cascade_compression.cascade.memory import Memory
+        archive = MemoryArchive()
+        analysis = {"root_cause": "storage", "confidence": 0.85}
+        m = archive.store(make_signal(), metadata={"analysis": analysis})
+        d = m.to_dict()
+        restored = Memory.from_dict(d)
+        assert restored.analysis == analysis
+
+    def test_store_without_analysis(self):
+        archive = MemoryArchive()
+        m = archive.store(make_signal())
+        assert m.analysis is None
+
+    def test_reinforce_updates_analysis(self):
+        archive = MemoryArchive()
+        sig = make_signal(signal_type="test_type")
+        m1 = archive.store(sig)
+        assert m1.analysis is None
+        m2 = archive.store(sig, metadata={"analysis": {"root_cause": "found it"}})
+        assert m2.analysis["root_cause"] == "found it"
+        assert m2.memory_id == m1.memory_id
+
+
 class TestMemoryQuery:
     def test_query_returns_all_when_no_filters(self):
         """Query with no filters returns all memories."""

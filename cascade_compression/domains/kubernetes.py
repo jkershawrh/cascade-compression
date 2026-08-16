@@ -39,6 +39,16 @@ MEMORY_CONFIG = {
         ("node_notready", "event_failedscheduling"),
         ("node_notready", "pod_pending"),
         ("event_backofflimitexceeded", "pod_crashloop"),
+        ("metric_node_disk_pressure", "event_provisioningfailed"),
+        ("metric_node_disk_pressure", "event_volumefaileddelete"),
+        ("metric_node_memory_pressure", "event_unhealthy"),
+        ("metric_node_memory_exhausted", "event_unhealthy"),
+        ("metric_node_notready", "event_failedscheduling"),
+        ("metric_node_cpu_saturated", "metric_api_server_slow"),
+        ("metric_etcd_slow_commits", "metric_api_server_slow"),
+        ("pool_exhausted", "anarchy_subject_failed"),
+        ("pool_low", "anarchy_subject_failed"),
+        ("sync_failed", "app_degraded"),
     ],
 
     "decay_overrides": {

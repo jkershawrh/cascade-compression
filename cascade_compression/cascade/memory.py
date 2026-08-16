@@ -115,6 +115,7 @@ class Memory:
     feature_vector: Dict[str, float] = field(default_factory=dict)
     last_modified_at: Optional[str] = None
     last_consolidated_at: Optional[str] = None
+    analysis: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -137,6 +138,7 @@ class Memory:
             "cluster": self.signal.cluster,
             "last_modified_at": self.last_modified_at,
             "last_consolidated_at": self.last_consolidated_at,
+            "analysis": self.analysis,
         }
 
     @staticmethod
@@ -164,6 +166,7 @@ class Memory:
             feature_vector=d.get("feature_vector", {}),
             last_modified_at=d.get("last_modified_at"),
             last_consolidated_at=d.get("last_consolidated_at"),
+            analysis=d.get("analysis"),
         )
 
 
@@ -243,6 +246,8 @@ class MemoryArchive:
             if existing is not None:
                 existing.strength += 0.1 * (1.0 - existing.strength)
                 existing.last_modified_at = datetime.now(timezone.utc).isoformat()
+                if metadata and "analysis" in metadata:
+                    existing.analysis = metadata["analysis"]
                 return existing
 
         if self.size >= self._max_capacity:
@@ -262,6 +267,7 @@ class MemoryArchive:
             content_hash=content_hash,
             feature_vector=_extract_features(signal),
             last_modified_at=now,
+            analysis=metadata.get("analysis") if metadata else None,
         )
 
         self._memories[memory.memory_id] = memory
