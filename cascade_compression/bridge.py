@@ -19,7 +19,7 @@ from uuid import uuid4
 
 from .cascade.agents import default_agents
 from .cascade.corpus_analyzer import CorpusAnalyzer
-from .cascade.dynamic_agents import DominantNoiseSuppressor, RepeatFloodSuppressor
+from .cascade.dynamic_agents import ContextualNoiseSuppressor, DominantNoiseSuppressor, RepeatFloodSuppressor
 from .cascade.inverse import SuppressionArchive
 from .cascade.memory import MemoryArchive
 from .cascade.pipeline import CascadePipeline
@@ -115,10 +115,16 @@ class CascadeBridge:
 
         self._repeat_suppressor = RepeatFloodSuppressor(max_repeats=3, window_seconds=300)
         self._noise_suppressor = DominantNoiseSuppressor(window_seconds=300)
+        self._contextual_suppressor = ContextualNoiseSuppressor(
+            context_key=os.getenv("CASCADE_CONTEXT_KEY", "namespace"),
+            window_seconds=300,
+        )
         self.pipeline.register(self._repeat_suppressor)
         self.pipeline.register(self._noise_suppressor)
+        self.pipeline.register(self._contextual_suppressor)
         self._activated_types: set = set()
         self._activated_patterns: Dict[str, str] = {}
+        self._activated_contexts: Dict[str, set] = defaultdict(set)
 
         self.corpus_analyzer = CorpusAnalyzer(
             min_frequency=0.05, min_repeat_count=10,
@@ -135,6 +141,8 @@ class CascadeBridge:
         self._llm_noise_counts: Dict[str, int] = defaultdict(int)
         self._llm_important_counts: Dict[str, int] = defaultdict(int)
         self._llm_failure_counts: Dict[str, int] = defaultdict(int)
+        self._llm_context_noise: Dict[str, int] = defaultdict(int)
+        self._llm_context_important: Dict[str, int] = defaultdict(int)
 
         self._agent_metrics: Dict[str, AgentMetrics] = {}
         self._agent_rules: Dict[str, RuleAgent] = {}
@@ -382,8 +390,53 @@ class CascadeBridge:
                 samples=total, noise=noise, important=important,
             )
 
+        self._discover_contextual_noise()
         self._check_activation_ttl()
         self._flush_promotion_events()
+
+    def _discover_contextual_noise(self):
+        """Promote (signal_type, context) pairs as contextual noise.
+
+        When a type has mixed importance overall (can't be promoted),
+        check if specific contexts within it are pure noise.
+        """
+        _CTX_MIN_SAMPLES = 100
+        _CTX_MAX_IMPORTANT_RATE = 0.02
+
+        for ctx_key, noise_count in self._llm_context_noise.items():
+            sig_type, ctx_value = ctx_key.split(":", 1)
+            if not ctx_value:
+                continue
+            if sig_type in self._activated_types:
+                continue
+            if ctx_value in self._activated_contexts.get(sig_type, set()):
+                continue
+
+            important = self._llm_context_important.get(ctx_key, 0)
+            total = noise_count + important
+            if total < _CTX_MIN_SAMPLES:
+                continue
+            important_rate = important / total
+            if important_rate > _CTX_MAX_IMPORTANT_RATE:
+                continue
+
+            self._contextual_suppressor.add_noise_context(sig_type, ctx_value)
+            self._activated_contexts[sig_type].add(ctx_value)
+            self._promotion_log.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "event": "contextual_activated",
+                "agent": f"ctx_{sig_type}_{ctx_value}",
+                "tier": "nano",
+                "status": "validated",
+                "samples": total,
+                "important": important,
+                "important_rate": round(important_rate, 4),
+                "context_key": self._contextual_suppressor._context_key,
+                "context_value": ctx_value,
+            })
+            log.info("CONTEXTUAL ACTIVATION: %s in %s=%s (%d samples, %.1f%% important)",
+                     sig_type, self._contextual_suppressor._context_key,
+                     ctx_value, total, important_rate * 100)
 
     def _check_activation_ttl(self):
         """Suspend agents whose activation has expired."""
@@ -578,12 +631,15 @@ class CascadeBridge:
                             if len(self._llm_results) > 1000:
                                 self._llm_results = self._llm_results[-1000:]
 
+                            ctx_key = f"{sig['signal_type']}:{sig.get('namespace', '')}"
                             if _is_noise_classification(ans):
                                 self.stats.llm_noise += 1
                                 self._llm_noise_counts[sig["signal_type"]] += 1
+                                self._llm_context_noise[ctx_key] += 1
                             else:
                                 self.stats.llm_important += 1
                                 self._llm_important_counts[sig["signal_type"]] += 1
+                                self._llm_context_important[ctx_key] += 1
 
                                 if self._gpu_url:
                                     gpu_result = self._escalate_to_gpu(sig, ans, client)
@@ -835,10 +891,13 @@ class CascadeBridge:
             return
         try:
             state = {
-                "version": 2,
+                "version": 3,
                 "activated_agents": dict(self._activated_patterns),
+                "activated_contexts": {k: sorted(v) for k, v in self._activated_contexts.items()},
                 "llm_noise_counts": dict(self._llm_noise_counts),
                 "llm_important_counts": dict(self._llm_important_counts),
+                "llm_context_noise": dict(self._llm_context_noise),
+                "llm_context_important": dict(self._llm_context_important),
                 "known_patterns": list(self.corpus_analyzer._known_patterns),
                 "candidate_agents": [{
                     "name": metrics.name,
@@ -878,7 +937,7 @@ class CascadeBridge:
 
             self._verdict_watermark = state.get("verdict_watermark", "")
             self._activation_timestamps = state.get("activation_timestamps", {})
-            if state.get("version") == 2:
+            if state.get("version") in (2, 3):
                 self.corpus_analyzer._known_patterns = set(state.get("known_patterns", []))
                 for candidate in state.get("candidate_agents", []):
                     metrics = AgentMetrics(
@@ -896,6 +955,13 @@ class CascadeBridge:
                         self._repeat_suppressor.add_signal_type(sig_type)
                     elif pattern_type == "dominant_type":
                         self._noise_suppressor.add_noise_type(sig_type)
+
+                self._llm_context_noise = defaultdict(int, state.get("llm_context_noise", {}))
+                self._llm_context_important = defaultdict(int, state.get("llm_context_important", {}))
+                for sig_type, contexts in state.get("activated_contexts", {}).items():
+                    for ctx in contexts:
+                        self._contextual_suppressor.add_noise_context(sig_type, ctx)
+                        self._activated_contexts[sig_type].add(ctx)
             else:
                 # Legacy state did not preserve the suppressor kind. Revalidate it
                 # instead of restoring a type with broader suppression semantics.
@@ -1079,6 +1145,8 @@ class CascadeBridge:
                 "activated": k in self._activated_types,
             } for k, v in top_noise],
             "activated_types": list(self._activated_types),
+            "activated_contexts": {k: sorted(v) for k, v in self._activated_contexts.items()},
+            "contextual_suppressor_count": sum(len(v) for v in self._activated_contexts.values()),
             "buffer_size": len(self._llm_buffer),
             "running": self._llm_active_threads > 0,
         }
