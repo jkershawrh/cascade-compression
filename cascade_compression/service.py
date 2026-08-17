@@ -10,7 +10,7 @@ what is noise, validates it, and compresses your signal volume.
 Environment variables:
     CASCADE_LLM_URL          LLM API base URL (required for agent discovery)
     CASCADE_LLM_KEY          LLM API key
-    CASCADE_LLM_MODEL        LLM model name (default: microsoft-phi-4)
+    CASCADE_LLM_MODEL        LLM model name (deployment-specific, no default)
     CASCADE_MICRO_MODEL      Model for micro tier / medium severity (default: CASCADE_LLM_MODEL)
     CASCADE_MACRO_MODEL      Model for macro tier / high+critical severity (default: CASCADE_LLM_MODEL)
     CASCADE_DOMAIN           Domain pack (default: kubernetes)

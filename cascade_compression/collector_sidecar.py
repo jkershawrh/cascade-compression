@@ -262,10 +262,10 @@ def run_registered_collector(mode: str, target_url: str, interval: int):
 
 def main():
     parser = argparse.ArgumentParser(description="Cascade signal collector sidecar")
+    _builtin_modes = ["k8s", "aap", "macos"]
+    _all_modes = _builtin_modes + sorted(_COLLECTOR_REGISTRY.keys())
     parser.add_argument("--mode", required=True,
-                        choices=["k8s", "aap", "macos", "prometheus", "poolboy",
-                                 "sandbox_conan", "babylon", "gitops", "agnosticv",
-                                 "stargate", "ovn", "ceph", "governor", "labagator"],
+                        choices=_all_modes,
                         help="Collector mode")
     parser.add_argument("--target", required=True,
                         help="Cascade service URL (e.g. http://cascade-k8s:8090)")
