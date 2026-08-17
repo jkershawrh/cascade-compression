@@ -71,6 +71,8 @@ metadata:
     component: cascade
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: cascade-k8s
@@ -116,6 +118,22 @@ spec:
           value: "10000"
         - name: CASCADE_STATE_FILE
           value: "/state/cascade-k8s.json"
+        - name: CASCADE_GPU_URL
+          valueFrom:
+            secretKeyRef:
+              name: cascade-llm
+              key: url
+              optional: true
+        - name: CASCADE_GPU_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cascade-llm
+              key: key
+              optional: true
+        - name: CASCADE_GPU_MODEL
+          value: "microsoft-phi-4"
+        - name: CASCADE_GPU_ANALYSES_FILE
+          value: "/state/gpu-analyses.jsonl"
         volumeMounts:
         - name: state
           mountPath: /state
@@ -170,6 +188,8 @@ metadata:
     component: cascade
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: cascade-aap
@@ -269,6 +289,8 @@ metadata:
     component: aggregator
 spec:
   replicas: 1
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app: cascade-memory

@@ -24,6 +24,11 @@ dev = [
     "pytest-asyncio",
     "jsonschema>=4.0",
 ]
+search = [
+    "psycopg2-binary>=2.9",
+    "pgvector>=0.2.0",
+    "sentence-transformers>=2.2.0",
+]
 aap = ["psycopg2-binary>=2.9"]
 finance = ["psycopg2-binary>=2.9"]
 

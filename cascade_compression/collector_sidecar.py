@@ -240,6 +240,7 @@ _COLLECTOR_REGISTRY = {
     "agnosticv": ("cascade_compression.collectors.agnosticv", "AgnosticVCollector"),
     "stargate": ("cascade_compression.collectors.stargate", "StargateCollector"),
     "ovn": ("cascade_compression.collectors.ovn", "OVNCollector"),
+    "ceph": ("cascade_compression.collectors.ceph", "CephCollector"),
     "governor": ("cascade_compression.collectors.governor", "GovernorCollector"),
     "labagator": ("cascade_compression.collectors.labagator", "LabagatorCollector"),
 }
@@ -264,7 +265,7 @@ def main():
     parser.add_argument("--mode", required=True,
                         choices=["k8s", "aap", "macos", "prometheus", "poolboy",
                                  "sandbox_conan", "babylon", "gitops", "agnosticv",
-                                 "stargate", "ovn", "governor", "labagator"],
+                                 "stargate", "ovn", "ceph", "governor", "labagator"],
                         help="Collector mode")
     parser.add_argument("--target", required=True,
                         help="Cascade service URL (e.g. http://cascade-k8s:8090)")

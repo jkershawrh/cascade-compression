@@ -25,7 +25,9 @@ Environment variables:
 import importlib
 import logging
 import os
+from collections import defaultdict
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -39,12 +41,17 @@ from .cascade.memory import MemoryArchive
 from .cascade.inverse import SuppressionArchive, inverse_analysis, export_learned_agents
 from .cascade.memory_intelligence import MemoryIntelligence
 from .cascade.recall import RecallEngine
+from .memory_search import (
+    MemorySearchEngine, _available as _search_available,
+    _unavailable_reason as _search_unavailable_reason,
+)
 
 log = logging.getLogger(__name__)
 
 _bridge: CascadeBridge = None
 _memory_archive: MemoryArchive = None
 _memory_intel: MemoryIntelligence = None
+_search_engine: MemorySearchEngine = None
 
 
 def _load_prompt(domain: str) -> str:
@@ -80,8 +87,23 @@ async def lifespan(app: FastAPI):
             log.info("Registered memory config for domain=%s", domain)
     except (ImportError, AttributeError):
         pass
+    # Optional: connect pgvector search engine
+    global _search_engine
+    db_url = os.getenv("CASCADE_SEARCH_DB_URL", "")
+    if db_url and _search_available():
+        try:
+            _search_engine = MemorySearchEngine()
+            _search_engine.connect(db_url)
+            _search_engine.ensure_schema()
+            log.info("pgvector search engine connected")
+        except Exception as e:
+            log.warning("pgvector search engine failed to connect: %s", e)
+            _search_engine = None
+
     log.info("Cascade compression ready (domain=%s)", domain)
     yield
+    if _search_engine:
+        _search_engine.close()
 
 
 app = FastAPI(
@@ -187,6 +209,19 @@ def agents():
     }
 
 
+@app.get("/meta")
+def meta(limit: int = 50):
+    """Meta-cascade: signals about the cascade's own operations."""
+    if not _bridge:
+        return {"meta_signals": [], "count": 0}
+    signals = _bridge.get_meta_signals(limit)
+    return {
+        "meta_signals": signals,
+        "count": len(signals),
+        "meta_target": bool(_bridge._meta_target),
+    }
+
+
 class MemoryQueryRequest(BaseModel):
     signal_type: str = None
     labels: Dict[str, str] = None
@@ -254,10 +289,12 @@ def consolidate(batch_size: int = 1000):
         return {"processed": 0, "evicted": 0, "compression_ratio": 0.0}
     from .cascade.agents import default_agents
     from .cascade.pipeline import CascadePipeline
-    return _memory_archive.consolidate(
+    result = _memory_archive.consolidate(
         lambda: CascadePipeline(default_agents()),
         batch_size=batch_size,
     )
+    _bridge.check_consolidation_meta(result)
+    return result
 
 
 @app.get("/memories/stats")
@@ -296,6 +333,369 @@ def memory_query(request: MemoryQueryRequest = None):
     )
     return {"memories": [m.to_dict() for m in results]}
 
+
+# ---------------------------------------------------------------------------
+# Semantic search endpoints (optional — requires pgvector)
+# ---------------------------------------------------------------------------
+
+@app.get("/memories/search")
+def memory_search(q: str = "", top_k: int = 10, min_similarity: float = 0.5,
+                  signal_type: str = None, severity: str = None,
+                  namespace: str = None):
+    """Semantic search over indexed memories and GPU analyses.
+
+    Query params:
+        q:              Search text (required)
+        top_k:          Max results (default 10)
+        min_similarity: Minimum cosine similarity threshold (default 0.5)
+        signal_type:    Filter by signal type (optional)
+        severity:       Filter by severity (optional)
+        namespace:      Filter by namespace (optional)
+    """
+    if not _search_available():
+        return {
+            "error": _search_unavailable_reason(),
+            "results": [],
+        }
+    if not _search_engine or not _search_engine.connected:
+        return {
+            "error": (
+                "Semantic search is not connected. Set CASCADE_SEARCH_DB_URL "
+                "to a PostgreSQL connection string with pgvector enabled."
+            ),
+            "results": [],
+        }
+    if not q:
+        return {"error": "Query parameter 'q' is required", "results": []}
+
+    filters = {}
+    if signal_type:
+        filters["signal_type"] = signal_type
+    if severity:
+        filters["severity"] = severity
+    if namespace:
+        filters["namespace"] = namespace
+
+    try:
+        if filters:
+            results = _search_engine.search_memories(
+                q, top_k=top_k, filters=filters, min_similarity=min_similarity,
+            )
+        else:
+            results = _search_engine.search(
+                q, top_k=top_k, min_similarity=min_similarity,
+            )
+        return {
+            "query": q,
+            "results": [r.to_dict() for r in results],
+            "count": len(results),
+        }
+    except Exception as e:
+        log.error("Search failed: %s", e)
+        return {"error": str(e), "results": []}
+
+
+@app.get("/memories/search/stats")
+def memory_search_stats():
+    """Return pgvector index statistics."""
+    if not _search_available():
+        return {"error": _search_unavailable_reason()}
+    if not _search_engine:
+        return {"error": "Search engine not initialized"}
+    return _search_engine.stats()
+
+
+@app.post("/memories/search/index")
+def memory_search_reindex():
+    """Trigger a full reindex of current memories into pgvector."""
+    if not _search_available():
+        return {"error": _search_unavailable_reason()}
+    if not _search_engine or not _search_engine.connected:
+        return {"error": "Search engine not connected"}
+    if not _memory_archive:
+        return {"indexed": 0}
+
+    memories = _memory_archive.query(limit=_memory_archive._max_capacity)
+    count = _search_engine.index_memories_bulk(memories)
+
+    # Also index GPU analyses if the file exists
+    gpu_path = "/state/gpu-analyses.jsonl"
+    ana_count = _search_engine.index_analyses_from_jsonl(gpu_path)
+
+    return {
+        "memories_indexed": count,
+        "analyses_indexed": ana_count,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Biography — structured platform autobiography from memory + inverse data
+# ---------------------------------------------------------------------------
+
+def generate_biography(bridge, memory_archive, memory_intel) -> Dict[str, Any]:
+    """Generate a structured platform biography from cascade state.
+
+    Pure data aggregation — no LLM calls, no file I/O. Tells the story
+    of what the platform has experienced through its memory and inverse
+    cascade data.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    # ── 1. Timeline ──────────────────────────────────────────────────
+    timeline = {"generated_at": now}
+    if bridge:
+        timeline["started_at"] = bridge.stats.started_at
+        timeline["signals_processed"] = bridge.stats.signals_processed
+        timeline["domain"] = bridge.domain
+
+        # Extract milestone events from promotion log
+        milestones = []
+        for entry in bridge.get_promotion_log(1000):
+            event = entry.get("event", "")
+            if event in ("activated", "promoted", "discovered"):
+                milestones.append({
+                    "timestamp": entry.get("timestamp", ""),
+                    "event": event,
+                    "agent": entry.get("agent", ""),
+                    "tier": entry.get("tier", ""),
+                })
+        activations = [m for m in milestones if m["event"] == "activated"]
+        if activations:
+            timeline["first_activation"] = activations[0]
+            timeline["latest_activation"] = activations[-1]
+            timeline["total_activations"] = len(activations)
+
+        demotions = [e for e in bridge.get_promotion_log(1000)
+                     if e.get("event") == "demotion"
+                     or e.get("event_type") == "demotion"]
+        if demotions:
+            timeline["first_demotion"] = {
+                "timestamp": demotions[0].get("timestamp", ""),
+                "agent": demotions[0].get("agent",
+                                          demotions[0].get("agent_name", "")),
+                "reason": demotions[0].get("reason", ""),
+            }
+            timeline["total_demotions"] = len(demotions)
+
+        timeline["milestone_count"] = len(milestones)
+
+    # ── 2. Top Memories ──────────────────────────────────────────────
+    top_memories = []
+    if memory_archive and memory_archive.size > 0:
+        strongest = memory_archive.query(min_strength=0.0, limit=20)
+        for m in strongest:
+            entry = {
+                "signal_type": m.signal.signal_type,
+                "severity": m.signal.severity,
+                "strength": round(m.strength, 4),
+                "formed_at": m.formed_at,
+                "recall_count": m.recall_count,
+                "consolidation_count": m.consolidation_count,
+                "classification": m.classification,
+                "message": m.signal.content.get("message", "")[:200],
+            }
+            if m.analysis:
+                entry["has_analysis"] = True
+                entry["root_cause"] = m.analysis.get("root_cause", "")[:200]
+            top_memories.append(entry)
+
+    # ── 3. Patterns Learned ──────────────────────────────────────────
+    patterns_learned = []
+    if bridge:
+        for sig_type in sorted(bridge._activated_types):
+            pattern_type = bridge._activated_patterns.get(sig_type, "unknown")
+            noise_count = bridge._llm_noise_counts.get(sig_type, 0)
+            important_count = bridge._llm_important_counts.get(sig_type, 0)
+            activated_at = bridge._activation_timestamps.get(sig_type, "")
+            patterns_learned.append({
+                "signal_type": sig_type,
+                "pattern_type": pattern_type,
+                "noise_count": noise_count,
+                "important_count": important_count,
+                "activated_at": activated_at,
+                "action": (
+                    "repeat flood suppression"
+                    if pattern_type == "repeat_flood"
+                    else "dominant noise suppression"
+                ),
+            })
+
+    # ── 4. Noise Profile ─────────────────────────────────────────────
+    noise_profile: Dict[str, Any] = {"baseline_types": 0, "top_noise": []}
+    suppression = bridge.suppression_archive if bridge else None
+    if suppression and suppression.size > 0:
+        from .cascade.inverse import generate_baseline
+        baseline = generate_baseline(suppression)
+        noise_profile["baseline_types"] = len(baseline.signal_types)
+        noise_profile["total_suppression_decisions"] = suppression._total_decisions
+        top_noise = sorted(
+            [{"signal_type": k, "frequency": v.get("frequency", 0),
+              "strength": round(v.get("strength", 0), 3),
+              "agents": v.get("agents", [])}
+             for k, v in baseline.signal_types.items()],
+            key=lambda x: x["frequency"],
+            reverse=True,
+        )[:15]
+        noise_profile["top_noise"] = top_noise
+        noise_profile["interpretation"] = (
+            f"The platform considers {len(baseline.signal_types)} signal types "
+            f"to be normal background noise, learned from "
+            f"{suppression._total_decisions} suppression decisions."
+        )
+
+    # ── 5. Causal Chains ─────────────────────────────────────────────
+    causal_chains: List[Dict[str, str]] = []
+    if memory_intel:
+        graph = memory_intel.causal_graph
+        for cause, effects in graph._forward.items():
+            for effect in effects:
+                causal_chains.append({"cause": cause, "effect": effect})
+
+    # ── 6. Gaps ──────────────────────────────────────────────────────
+    causal_gaps: List[Dict[str, Any]] = []
+    if memory_archive and memory_intel:
+        from .cascade.inverse import find_all_gaps
+        causal_gaps = find_all_gaps(memory_archive, memory_intel.causal_graph)
+
+    # ── 7. Absences ──────────────────────────────────────────────────
+    absences: List[Dict[str, Any]] = []
+    if memory_intel:
+        detector = memory_intel.absence_detector
+        if detector.expectations:
+            absences = detector.check_missing(now)
+
+    # ── 8. GPU Analyses ──────────────────────────────────────────────
+    gpu_summary: Dict[str, Any] = {"count": 0, "analyses": []}
+    if bridge and bridge._gpu_analyses:
+        analyses = bridge._gpu_analyses
+        gpu_summary["count"] = len(analyses)
+        by_type: Dict[str, list] = defaultdict(list)
+        for a in analyses:
+            by_type[a.get("signal_type", "unknown")].append(a)
+        gpu_summary["by_signal_type"] = {
+            sig_type: {
+                "count": len(items),
+                "root_causes": list({
+                    a.get("root_cause", "")[:150]
+                    for a in items if a.get("root_cause")
+                })[:5],
+                "avg_confidence": round(
+                    sum(a.get("confidence", 0) for a in items) / len(items), 3
+                ) if items else 0,
+            }
+            for sig_type, items in sorted(
+                by_type.items(), key=lambda kv: len(kv[1]), reverse=True
+            )[:10]
+        }
+        gpu_summary["recent"] = [
+            {
+                "signal_type": a.get("signal_type", ""),
+                "severity": a.get("severity", ""),
+                "root_cause": a.get("root_cause", "")[:200],
+                "confidence": a.get("confidence", 0),
+                "model": a.get("model", ""),
+                "timestamp": a.get("timestamp", ""),
+            }
+            for a in analyses[-5:]
+        ]
+
+    # ── 9. Health Score ──────────────────────────────────────────────
+    health = _compute_health_score(
+        memory_archive=memory_archive,
+        causal_gaps=causal_gaps,
+        causal_chains=causal_chains,
+        absences=absences,
+    )
+
+    return {
+        "biography": {
+            "timeline": timeline,
+            "top_memories": top_memories,
+            "patterns_learned": patterns_learned,
+            "noise_profile": noise_profile,
+            "causal_chains": causal_chains,
+            "causal_gaps": causal_gaps[:20],
+            "absences": absences,
+            "gpu_analyses": gpu_summary,
+            "health": health,
+        },
+    }
+
+
+def _compute_health_score(
+    memory_archive,
+    causal_gaps: List[Dict],
+    causal_chains: List[Dict],
+    absences: List[Dict],
+) -> Dict[str, Any]:
+    """Compute platform health from memory state and inverse data.
+
+    Factors:
+    - gap_ratio: causal gaps / total causal rules (lower = healthier)
+    - absence_count: missing expected signals (lower = healthier)
+    - strength_distribution: how strong memories are on average
+    - memory_coverage: how full the archive is relative to capacity
+    """
+    total_rules = len(causal_chains) if causal_chains else 0
+    gap_count = len(causal_gaps)
+    gap_ratio = gap_count / max(1, total_rules)
+
+    absence_count = len(absences)
+
+    avg_strength = 0.0
+    strength_std = 0.0
+    memory_count = 0
+    if memory_archive and memory_archive.size > 0:
+        stats = memory_archive.stats()
+        avg_strength = stats.get("avg_strength", 0.0)
+        memory_count = stats.get("size", 0)
+        memories = memory_archive.query(limit=memory_archive.size or 1)
+        if memories:
+            strengths = [m.strength for m in memories]
+            mean = sum(strengths) / len(strengths)
+            variance = sum((s - mean) ** 2 for s in strengths) / len(strengths)
+            strength_std = variance ** 0.5
+
+    score = 100.0
+    score -= min(30.0, gap_ratio * 30.0)
+    score -= min(20.0, absence_count * 5.0)
+    if memory_count > 0:
+        strength_penalty = max(0.0, (0.3 - avg_strength)) * 66.7
+        score -= min(20.0, strength_penalty)
+    if memory_count == 0:
+        score -= 10.0
+    score -= min(20.0, strength_std * 20.0)
+    score = max(0.0, min(100.0, score))
+
+    return {
+        "score": round(score, 1),
+        "grade": (
+            "excellent" if score >= 90 else
+            "good" if score >= 75 else
+            "fair" if score >= 50 else
+            "poor"
+        ),
+        "factors": {
+            "gap_ratio": round(gap_ratio, 3),
+            "gap_count": gap_count,
+            "total_causal_rules": total_rules,
+            "absence_count": absence_count,
+            "avg_memory_strength": round(avg_strength, 4),
+            "strength_std": round(strength_std, 4),
+            "memory_count": memory_count,
+        },
+    }
+
+
+@app.get("/biography")
+def biography():
+    """Auto-generated structured biography from cascade memory and inverse data."""
+    return generate_biography(_bridge, _memory_archive, _memory_intel)
+
+
+# ---------------------------------------------------------------------------
+# Frontend
+# ---------------------------------------------------------------------------
 
 _FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
 

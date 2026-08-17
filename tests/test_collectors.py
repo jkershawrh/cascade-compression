@@ -329,7 +329,7 @@ class TestCollectorImports:
     def test_sidecar_registry(self):
         from cascade_compression.collector_sidecar import _COLLECTOR_REGISTRY
         expected = {"prometheus", "poolboy", "sandbox_conan", "babylon", "gitops",
-                    "agnosticv", "stargate", "ovn", "governor", "labagator"}
+                    "agnosticv", "stargate", "ovn", "ceph", "governor", "labagator"}
         assert expected == set(_COLLECTOR_REGISTRY.keys())
 
 
