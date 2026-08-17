@@ -618,6 +618,7 @@ class CascadeBridge:
                 with ThreadPoolExecutor(max_workers=llm_workers) as pool:
                     futures = {pool.submit(self._classify_one, sig, client): sig for sig in signals}
                     for future in as_completed(futures):
+                        orig_sig = futures[future]
                         try:
                             sig, ans, ms, model, sev = future.result()
                             self.stats.llm_classified += 1
@@ -658,7 +659,7 @@ class CascadeBridge:
                                         )
 
                         except Exception as e:
-                            model_key = sig.get("signal_type", "unknown")
+                            model_key = orig_sig.get("signal_type", "unknown")
                             self._llm_failure_counts[model_key] += 1
                             count = self._llm_failure_counts[model_key]
                             if count <= 5 or count % 100 == 0:
