@@ -261,3 +261,45 @@ spec:
           limits:
             cpu: 200m
             memory: 128Mi
+
+---
+# ── Ceph/ODF Storage Collector ─────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collector-ceph
+  namespace: cascade-compression
+  labels:
+    app: collector-ceph
+    component: collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: collector-ceph
+  template:
+    metadata:
+      labels:
+        app: collector-ceph
+        component: collector
+    spec:
+      containers:
+      - name: collector
+        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        command:
+        - python3
+        - -m
+        - cascade_compression.collector_sidecar
+        - --mode=ceph
+        - --target=http://cascade-k8s:8090
+        - --interval=60
+        envFrom:
+        - secretRef:
+            name: collector-clusters
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi

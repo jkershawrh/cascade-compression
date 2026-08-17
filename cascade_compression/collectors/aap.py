@@ -179,6 +179,8 @@ class AAPCollector:
                      sum(1 for s in signals if s.labels.get("source") == "job"),
                      sum(1 for s in signals if s.labels.get("source") == "task"),
                      sum(1 for s in signals if s.labels.get("source") == "activity"))
+        elif not self._get_conn():
+            log.warning("AAP collector: no DB connection — all sub-collectors returned empty")
         return signals
 
     def _collect_jobs(self) -> List[AAPSignal]:

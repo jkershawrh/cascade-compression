@@ -168,6 +168,11 @@ class CascadeBridge:
 
         self._state_file = os.getenv("CASCADE_STATE_FILE", "")
 
+        # Meta-cascade: self-monitoring signals
+        self._meta_signals: list = []
+        self._meta_max_buffer = 500
+        self._meta_target = os.getenv("CASCADE_META_TARGET", "")
+
         self._restore_state()
 
     def process(self, signals: list) -> Dict:
@@ -208,6 +213,19 @@ class CascadeBridge:
                         break
                 self.memory_archive.store(sig, classification=classification)
 
+        # Meta: detect memory pressure (above 80% capacity)
+        if self.memory_archive is not None:
+            mem_usage = self.memory_archive.size / max(1, self.memory_archive._max_capacity)
+            if mem_usage > 0.8:
+                self._emit_meta(
+                    "meta_memory_pressure", "medium",
+                    f"Memory archive at {mem_usage:.0%} "
+                    f"({self.memory_archive.size}/{self.memory_archive._max_capacity})",
+                    usage=round(mem_usage, 3),
+                    size=self.memory_archive.size,
+                    capacity=self.memory_archive._max_capacity,
+                )
+
         for sig in cascade_result.remaining:
             self._llm_buffer.append({
                 "signal_type": sig.signal_type,
@@ -217,6 +235,21 @@ class CascadeBridge:
             })
         if len(self._llm_buffer) > self._llm_max_buffer:
             self._llm_buffer = self._llm_buffer[-self._llm_max_buffer:]
+
+        # Meta: detect LLM starvation (buffer above 80% and all threads busy)
+        buffer_pct = len(self._llm_buffer) / max(1, self._llm_max_buffer)
+        if (buffer_pct > 0.8
+                and self._llm_active_threads >= self._llm_max_concurrent
+                and self._llm_url):
+            self._emit_meta(
+                "meta_llm_starvation", "high",
+                f"LLM buffer at {buffer_pct:.0%} ({len(self._llm_buffer)}/{self._llm_max_buffer}) "
+                f"with {self._llm_active_threads}/{self._llm_max_concurrent} threads busy",
+                buffer_size=len(self._llm_buffer),
+                buffer_max=self._llm_max_buffer,
+                active_threads=self._llm_active_threads,
+                max_threads=self._llm_max_concurrent,
+            )
 
         while self._llm_buffer and self._llm_active_threads < self._llm_max_concurrent and self._llm_url:
             batch = list(self._llm_buffer[:self._llm_batch_size])
@@ -342,6 +375,12 @@ class CascadeBridge:
             })
             log.info("ACTIVATED: %s (%d noise, %d important)",
                      sig_type, noise, important)
+            self._emit_meta(
+                "meta_agent_activated", "info",
+                f"Agent activated for {sig_type} ({pattern_type})",
+                agent=name, pattern_type=pattern_type,
+                samples=total, noise=noise, important=important,
+            )
 
         self._check_activation_ttl()
         self._flush_promotion_events()
@@ -373,6 +412,12 @@ class CascadeBridge:
                     metrics.samples_tested = 0
                     log.warning("Agent '%s' TTL expired for %s — must re-qualify",
                                 name, sig_type)
+                    self._emit_meta(
+                        "meta_agent_demoted", "high",
+                        f"Agent '{name}' TTL expired for {sig_type}",
+                        agent=name, related_type=sig_type,
+                        reason="ttl_expired",
+                    )
                     break
             self._deactivate_agent(sig_type)
             self._activation_timestamps.pop(sig_type, None)
@@ -637,6 +682,13 @@ class CascadeBridge:
                                 "(classified '%s') — demotion triggered",
                                 sig["signal_type"], ans,
                             )
+                            self._emit_meta(
+                                "meta_shadow_demotion", "critical",
+                                f"Shadow validation caught FN: {sig['signal_type']} "
+                                f"classified as '{ans}'",
+                                related_type=sig["signal_type"],
+                                llm_classification=ans,
+                            )
 
                     except Exception as e:
                         log.debug("Shadow LLM call failed: %s", str(e)[:60])
@@ -852,11 +904,46 @@ class CascadeBridge:
             memory_data = state.get("memory_archive")
             if memory_data and self.memory_archive is not None:
                 self.memory_archive = MemoryArchive.from_dict(memory_data)
+
+            self._promote_orphaned_noise_types()
+
             log.info("Restored: %d activated, %d LLM counts, %d patterns",
                      len(self._activated_types), len(self._llm_noise_counts),
                      len(self.corpus_analyzer._known_patterns))
         except Exception as e:
             log.warning("Failed to restore state: %s", e)
+
+    def _promote_orphaned_noise_types(self):
+        """Activate noise types with strong historical LLM evidence on restore.
+
+        Uses a 2% important-rate threshold (vs zero-tolerance for live promotion)
+        because historical data accumulates borderline classifications over time.
+        A type with 40K noise and 369 important (0.9%) is safe to suppress.
+        """
+        for sig_type, noise_count in self._llm_noise_counts.items():
+            if sig_type in self._activated_types:
+                continue
+            important = self._llm_important_counts.get(sig_type, 0)
+            total = noise_count + important
+            important_rate = important / total if total > 0 else 1.0
+            if total < _PROMOTION_MIN_SAMPLES or important_rate > 0.02:
+                continue
+            self._noise_suppressor.add_noise_type(sig_type)
+            self._activated_types.add(sig_type)
+            self._activated_patterns[sig_type] = "dominant_type"
+            self._activation_timestamps[sig_type] = datetime.now(timezone.utc).isoformat()
+            self._promotion_log.append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "event": "activated",
+                "agent": f"restored_{sig_type}",
+                "tier": "nano",
+                "status": "validated_from_history",
+                "samples": total,
+                "important": important,
+                "important_rate": round(important_rate, 4),
+            })
+            log.info("RESTORED ACTIVATION: %s (%d noise, %d important, %.1f%% rate)",
+                     sig_type, noise_count, important, important_rate * 100)
 
     def get_stats(self) -> Dict:
         stats = asdict(self.stats)
@@ -875,6 +962,66 @@ class CascadeBridge:
         stats["activation_ttl_hours"] = self._activation_ttl_hours
         return stats
 
+    # -- Meta-cascade: self-monitoring -----------------------------------------
+
+    def _emit_meta(self, signal_type: str, severity: str, message: str,
+                   **kwargs) -> None:
+        """Append a meta signal describing an internal cascade event."""
+        meta = {
+            "signal_type": signal_type,
+            "severity": severity,
+            "message": message,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "domain": self.domain,
+            **kwargs,
+        }
+        self._meta_signals.append(meta)
+        if len(self._meta_signals) > self._meta_max_buffer:
+            self._meta_signals = self._meta_signals[-self._meta_max_buffer:]
+        log.debug("META: %s [%s] %s", signal_type, severity, message)
+        if self._meta_target:
+            threading.Thread(
+                target=self._post_meta_signal, args=(meta,), daemon=True,
+            ).start()
+
+    def _post_meta_signal(self, meta: dict) -> None:
+        """POST a meta signal to an external meta-cascade instance."""
+        try:
+            import httpx
+            with httpx.Client(timeout=10) as client:
+                client.post(
+                    self._meta_target.rstrip("/") + "/cascade",
+                    json={"signals": [{
+                        "signal_type": meta["signal_type"],
+                        "severity": meta["severity"],
+                        "content": {"message": meta["message"], **{
+                            k: v for k, v in meta.items()
+                            if k not in ("signal_type", "severity", "message",
+                                         "timestamp", "domain")
+                        }},
+                    }]},
+                )
+        except Exception as e:
+            log.debug("Meta POST failed: %s", str(e)[:60])
+
+    def get_meta_signals(self, limit: int = 50) -> list:
+        """Return the most recent meta signals."""
+        return self._meta_signals[-limit:]
+
+    def check_consolidation_meta(self, result: dict) -> None:
+        """Emit meta signal if consolidation evicted a large fraction."""
+        processed = result.get("processed", 0)
+        evicted = result.get("evicted", 0)
+        if processed > 0 and evicted / processed > 0.10:
+            self._emit_meta(
+                "meta_consolidation_eviction_spike", "high",
+                f"Consolidation evicted {evicted}/{processed} memories "
+                f"({evicted / processed:.0%})",
+                evicted=evicted,
+                processed=processed,
+                eviction_rate=round(evicted / processed, 3),
+            )
+
     def record_feedback(
         self, signal_type: str, *, was_suppressed: bool, is_important: bool
     ) -> None:
@@ -887,6 +1034,13 @@ class CascadeBridge:
         if was_suppressed and is_important:
             self._fn_count += 1
             self._fn_types[signal_type] += 1
+            self._emit_meta(
+                "meta_fn_detected", "critical",
+                f"False negative confirmed: {signal_type} was suppressed but important",
+                related_type=signal_type,
+                fn_total=self._fn_count,
+                fn_evaluated=self._fn_evaluated,
+            )
 
             if signal_type in self._activated_types:
                 for name, metrics in self._agent_metrics.items():
@@ -901,6 +1055,12 @@ class CascadeBridge:
                         self._flush_promotion_events()
                         log.warning("Agent '%s' demoted via feedback: %s was important",
                                     name, signal_type)
+                        self._emit_meta(
+                            "meta_agent_demoted", "high",
+                            f"Agent '{name}' demoted: FN confirmed for {signal_type}",
+                            agent=name, related_type=signal_type,
+                            reason="fn_confirmed",
+                        )
                         break
 
     def get_llm_results(self, limit: int = 20) -> list:
