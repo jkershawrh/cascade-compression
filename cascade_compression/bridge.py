@@ -205,7 +205,8 @@ class CascadeBridge:
 
         self.corpus_analyzer.observe(cascade_signals)
 
-        if self._activated_types and self._shadow_sample_rate > 0 and self._llm_url:
+        has_suppressors = self._activated_types or self._activated_contexts
+        if has_suppressors and self._shadow_sample_rate > 0 and self._llm_url:
             self._queue_shadow_samples(cascade_result, cascade_signals)
 
         if self.suppression_archive is not None:
@@ -669,15 +670,24 @@ class CascadeBridge:
                 self._llm_active_threads -= 1
 
     def _queue_shadow_samples(self, cascade_result, cascade_signals):
-        """Sample suppressed signals from activated agents for LLM re-check."""
+        """Sample suppressed signals from activated agents for LLM re-check.
+
+        Covers both type-level and contextual suppressions.
+        """
         signal_map = {s.signal_id: s for s in cascade_signals}
         candidates = []
         for d in cascade_result.decisions:
             if d.outcome.value not in ("suppress", "drop"):
                 continue
             sig = signal_map.get(d.signal_id)
-            if sig and sig.signal_type in self._activated_types:
+            if not sig:
+                continue
+            if sig.signal_type in self._activated_types:
                 candidates.append(sig)
+            elif sig.signal_type in self._activated_contexts:
+                ctx = getattr(sig, self._contextual_suppressor._context_key, "")
+                if ctx in self._activated_contexts[sig.signal_type]:
+                    candidates.append(sig)
 
         if not candidates or self._shadow_sample_rate <= 0:
             return
@@ -695,10 +705,17 @@ class CascadeBridge:
             self._shadow_buffer = self._shadow_buffer[-self._shadow_max_buffer:]
 
     def _run_shadow_llm(self, signals):
-        """Re-classify suppressed signals via LLM. Disagreement → demotion."""
+        """Re-classify suppressed signals via independent model.
+
+        Uses the GPU model (different from micro/macro) when available
+        to break circular validation. Falls back to macro model.
+        """
         self._shadow_running = True
         try:
             import httpx
+            shadow_url = self._gpu_url or self._llm_url
+            shadow_key = self._gpu_key or self._llm_key
+            shadow_model = self._gpu_model if self._gpu_url else self._macro_model
             with httpx.Client(timeout=60) as client:
                 for sig in signals:
                     text = (
@@ -707,12 +724,10 @@ class CascadeBridge:
                         f"namespace={sig.get('namespace', '')}"
                     )
                     try:
-                        sev = sig.get("severity", "medium")
-                        model = self._macro_model if sev in ("critical", "high") else self._micro_model
                         r = client.post(
-                            f"{self._llm_url}/v1/chat/completions",
+                            f"{shadow_url}/v1/chat/completions",
                             json={
-                                "model": model,
+                                "model": shadow_model,
                                 "messages": [
                                     {"role": "system", "content": self._system_prompt},
                                     {"role": "user", "content": text},
@@ -720,7 +735,7 @@ class CascadeBridge:
                                 "max_tokens": 5,
                                 "temperature": 0,
                             },
-                            headers={"Authorization": f"Bearer {self._llm_key}"},
+                            headers={"Authorization": f"Bearer {shadow_key}"},
                         )
                         r.raise_for_status()
                         ans = r.json()["choices"][0]["message"]["content"].strip().lower()
@@ -728,21 +743,35 @@ class CascadeBridge:
 
                         if not _is_noise_classification(ans):
                             self._shadow_demotions += 1
-                            self.record_feedback(
-                                sig["signal_type"],
-                                was_suppressed=True,
-                                is_important=True,
-                            )
-                            log.warning(
-                                "SHADOW VALIDATION: LLM says '%s' is important "
-                                "(classified '%s') — demotion triggered",
-                                sig["signal_type"], ans,
-                            )
+                            ns = sig.get("namespace", "")
+                            ctx_key = self._contextual_suppressor._context_key
+
+                            if (sig["signal_type"] in self._activated_contexts
+                                    and ns in self._activated_contexts.get(sig["signal_type"], set())):
+                                self._contextual_suppressor.remove_noise_context(sig["signal_type"], ns)
+                                self._activated_contexts[sig["signal_type"]].discard(ns)
+                                log.warning(
+                                    "SHADOW: contextual FN — %s in %s=%s is important "
+                                    "(classified '%s'), context demoted",
+                                    sig["signal_type"], ctx_key, ns, ans,
+                                )
+                            else:
+                                self.record_feedback(
+                                    sig["signal_type"],
+                                    was_suppressed=True,
+                                    is_important=True,
+                                )
+                                log.warning(
+                                    "SHADOW: type-level FN — %s is important "
+                                    "(classified '%s'), agent demoted",
+                                    sig["signal_type"], ans,
+                                )
                             self._emit_meta(
                                 "meta_shadow_demotion", "critical",
-                                f"Shadow validation caught FN: {sig['signal_type']} "
-                                f"classified as '{ans}'",
+                                f"Shadow caught FN: {sig['signal_type']} "
+                                f"in {ctx_key}={ns} classified '{ans}'",
                                 related_type=sig["signal_type"],
+                                context_value=ns,
                                 llm_classification=ans,
                             )
 
