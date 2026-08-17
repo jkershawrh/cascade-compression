@@ -28,7 +28,7 @@ class TestBridgeInit:
 
     def test_env_defaults(self):
         bridge = CascadeBridge()
-        assert bridge._llm_model == "microsoft-phi-4"
+        assert bridge._llm_model == ""
 
 
 class TestBridgeProcess:

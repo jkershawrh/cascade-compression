@@ -108,6 +108,14 @@ spec:
           value: "granite-2b-cpu"
         - name: CASCADE_MACRO_MODEL
           value: "granite-3-2-8b-instruct"
+        - name: CASCADE_LLM_THREADS
+          value: "5"
+        - name: CASCADE_LLM_BATCH
+          value: "700"
+        - name: CASCADE_LLM_WORKERS
+          value: "8"
+        - name: CASCADE_LLM_BUFFER
+          value: "10000"
         - name: CASCADE_SHADOW_RATE
           value: "0.05"
         - name: CASCADE_ACTIVATION_TTL_HOURS

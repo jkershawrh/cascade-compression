@@ -73,9 +73,9 @@ class CascadeBridge:
     Usage::
 
         bridge = CascadeBridge(
-            llm_url="https://maas.example.com/v1",
+            llm_url="https://llm.example.com/v1",
             llm_key="sk-...",
-            llm_model="granite-3-2-8b-instruct-cpu",
+            llm_model="your-model-name",
             system_prompt="You are classifying...",
         )
         signals = collector.collect()
@@ -86,7 +86,7 @@ class CascadeBridge:
         self,
         llm_url: str = "",
         llm_key: str = "",
-        llm_model: str = "microsoft-phi-4",
+        llm_model: str = "",
         system_prompt: str = "",
         domain: str = "default",
         ledger_url: str = "",
@@ -95,12 +95,12 @@ class CascadeBridge:
         self.domain = domain
         self._llm_url = llm_url or os.getenv("CASCADE_LLM_URL", os.getenv("LITELLM_API_BASE", ""))
         self._llm_key = llm_key or os.getenv("CASCADE_LLM_KEY", os.getenv("LITELLM_API_KEY", ""))
-        self._llm_model = llm_model or os.getenv("CASCADE_LLM_MODEL", "microsoft-phi-4")
+        self._llm_model = llm_model or os.getenv("CASCADE_LLM_MODEL", "")
         self._micro_model = os.getenv("CASCADE_MICRO_MODEL", "") or self._llm_model
         self._macro_model = os.getenv("CASCADE_MACRO_MODEL", "") or self._llm_model
         self._gpu_url = os.getenv("CASCADE_GPU_URL", "")
         self._gpu_key = os.getenv("CASCADE_GPU_KEY", "") or self._llm_key
-        self._gpu_model = os.getenv("CASCADE_GPU_MODEL", "microsoft-phi-4")
+        self._gpu_model = os.getenv("CASCADE_GPU_MODEL", "")
         self._gpu_analyses: list = []
         self._gpu_analyses_file = os.getenv("CASCADE_GPU_ANALYSES_FILE", "")
         self._system_prompt = system_prompt
