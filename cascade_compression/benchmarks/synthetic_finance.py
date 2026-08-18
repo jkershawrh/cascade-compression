@@ -82,10 +82,11 @@ def generate(count: int = 100_000, seed: int = 42) -> List[SyntheticTransaction]
     transactions = []
     txn_id = 0
 
-    normal_count = int(count * 0.92)
-    fraud_count = int(count * 0.03)
-    dispute_count = int(count * 0.03)
-    compliance_count = count - normal_count - fraud_count - dispute_count
+    # Real-world ratios: Nilson Report (0.064% fraud), FinCEN FY2024 (<0.01% SAR)
+    normal_count = int(count * 0.9970)
+    fraud_count = max(1, int(count * 0.0006))
+    dispute_count = max(1, int(count * 0.0015))
+    compliance_count = max(1, count - normal_count - fraud_count - dispute_count)
 
     # Normal transactions (92%)
     for _ in range(normal_count):

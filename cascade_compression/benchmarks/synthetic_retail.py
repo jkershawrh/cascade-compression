@@ -39,10 +39,11 @@ def generate(count: int = 100_000, seed: int = 42) -> List[SyntheticRetailEvent]
     events = []
     eid = 0
 
-    normal_count = int(count * 0.91)
-    shrinkage_count = int(count * 0.04)
-    operational_count = int(count * 0.03)
-    compliance_count = count - normal_count - shrinkage_count - operational_count
+    # Real-world ratios: NRF 2023 (1.6% shrinkage), NRF 2025 (36% external theft)
+    normal_count = int(count * 0.9800)
+    shrinkage_count = max(1, int(count * 0.0160))
+    operational_count = max(1, int(count * 0.0020))
+    compliance_count = max(1, count - normal_count - shrinkage_count - operational_count)
 
     for _ in range(normal_count):
         eid += 1

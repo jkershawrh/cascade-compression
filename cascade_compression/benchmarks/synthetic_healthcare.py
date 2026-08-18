@@ -55,10 +55,11 @@ def generate(count: int = 100_000, seed: int = 42) -> List[SyntheticHealthcareEv
     events = []
     eid = 0
 
-    normal_count = int(count * 0.88)
-    critical_count = int(count * 0.05)
-    compliance_count = int(count * 0.04)
-    operational_count = count - normal_count - critical_count - compliance_count
+    # Real-world ratios: AHRQ PSNet (80-99% alarm noise), Joint Commission (~1% critical)
+    normal_count = int(count * 0.9500)
+    critical_count = max(1, int(count * 0.0100))
+    compliance_count = max(1, int(count * 0.0050))
+    operational_count = max(1, count - normal_count - critical_count - compliance_count)
 
     for _ in range(normal_count):
         eid += 1

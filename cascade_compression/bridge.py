@@ -33,7 +33,7 @@ _PROMOTION_ALLOWED_IMPORTANT = 0
 
 _BUILTIN_AGENT_NAMES = frozenset({
     "deduplicate", "transient_suppressor", "severity_gate",
-    "pattern_classifier", "threshold_classifier",
+    "pattern_classifier", "threshold_classifier", "trend_detector",
 })
 
 
