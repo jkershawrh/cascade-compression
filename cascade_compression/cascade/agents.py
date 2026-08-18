@@ -29,7 +29,7 @@ class DeduplicateAgent:
 
     DEDUP_BYPASS_LABELS = frozenset({"compliance", "fraud", "sanctions"})
     LOCATION_FIELDS = ("location", "span_id", "circuit_id", "node", "host",
-                       "region", "zone", "rack", "site")
+                       "region", "zone", "rack", "site", "service", "instance")
 
     def __init__(self, window_seconds: float = 60.0):
         self._window = window_seconds
@@ -264,7 +264,7 @@ class TrendDetector:
     stage = 0
 
     ENTITY_KEYS = ("patient_id", "account_id", "device_id", "node",
-                   "host", "circuit_id", "instance_id")
+                   "host", "circuit_id", "instance_id", "instance")
     IGNORE_FIELDS = frozenset({
         "message", "raw", "description", "name", "type",
         "reading_number", "sequence", "burst_id", "total",
@@ -273,7 +273,7 @@ class TrendDetector:
         r"(heart_rate|bp_|spo2|temp|respiratory|pulse|"
         r"cpu_|memory_|disk_|latency|error_|fail_|"
         r"velocity_|restart|queue_|saturation|utilization|"
-        r"packet_loss|jitter|signal_strength|"
+        r"packet_loss|jitter|signal_strength|consecutive_|"
         r"load_|iops|throughput|response_time)",
         re.I,
     )
@@ -307,7 +307,8 @@ class TrendDetector:
                 continue
 
             recent = history[-self._min_readings:]
-            trends = self._detect_trends(recent)
+            osc_window = history[-max(self._min_readings + 1, 4):]
+            trends = self._detect_trends(recent, osc_window)
             if trends:
                 decisions.append(CascadeDecision(
                     signal_id=s.signal_id, agent_name=self.name,
@@ -343,7 +344,8 @@ class TrendDetector:
                 result[k] = float(v)
         return result
 
-    def _detect_trends(self, readings: List[dict]) -> List[str]:
+    def _detect_trends(self, readings: List[dict],
+                       osc_readings: List[dict] = None) -> List[str]:
         if len(readings) < self._min_readings:
             return []
 
@@ -370,7 +372,35 @@ class TrendDetector:
                 pct = abs(delta / values[0]) * 100 if values[0] != 0 else 100
                 if pct >= 5:
                     trends.append(f"{field} falling ({values[0]:.1f}→{values[-1]:.1f})")
+
+        if not trends and osc_readings and len(osc_readings) >= 4:
+            osc_fields: Set[str] = set()
+            for r in osc_readings:
+                osc_fields.update(r["values"].keys())
+            for field in osc_fields:
+                values = [r["values"].get(field) for r in osc_readings]
+                if any(v is None for v in values):
+                    continue
+                osc = self._detect_oscillation(field, values)
+                if osc:
+                    trends.append(osc)
         return trends
+
+    def _detect_oscillation(self, field: str, values: List[float]) -> str:
+        """Detect flapping — direction reverses on most consecutive readings."""
+        if len(values) < 4:
+            return ""
+        reversals = 0
+        for i in range(1, len(values) - 1):
+            prev_dir = values[i] - values[i - 1]
+            next_dir = values[i + 1] - values[i]
+            if prev_dir * next_dir < 0:
+                reversals += 1
+        if reversals >= len(values) - 2:
+            mn, mx = min(values), max(values)
+            if mx - mn > 0:
+                return f"{field} oscillating ({mn:.0f}↔{mx:.0f}, {reversals} reversals)"
+        return ""
 
     def _cleanup(self, now: float):
         expired = []

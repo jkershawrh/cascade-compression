@@ -255,6 +255,173 @@ def burst_then_silence(target, domain):
     return _check(target, signals, 1, f"BURST: 100 signals, critical at position 99")
 
 
+# ─── CROSS-DOMAIN FEDERATION SCENARIOS ───
+# These test whether correlated signals across independent cascades
+# produce the right memories for federation to connect.
+
+def cross_outage_finance_telecom(finance_target, telecom_target):
+    """A telecom outage causes payment processing failures.
+    Each domain sees its half — federation should correlate them."""
+    telecom_signals = [
+        {"signal_type": "tmf_fiber_cut", "severity": "critical",
+         "source": "nms", "namespace": "backbone",
+         "content": {"span_id": "SPAN-DATACENTER-1", "location": "NYC-DC-1",
+                     "region": "northeast", "affected_services": ["payment_gateway"]},
+         "labels": {"region": "northeast", "label": "real_incident",
+                    "label_detail": "datacenter_fiber_cut"}},
+    ]
+    finance_signals = [
+        {"signal_type": "txn_wire_transfer", "severity": "critical",
+         "source": "payment_gateway", "namespace": "banking",
+         "content": {"error": "connection_timeout", "gateway": "NYC-DC-1",
+                     "failed_transactions": 847, "duration_minutes": 12},
+         "labels": {"account_id": "SYSTEM", "label": "real_incident",
+                    "label_detail": "payment_gateway_outage"}},
+    ]
+    results = []
+    r1 = _check(telecom_target, telecom_signals, 1, "CROSS-OUTAGE TELECOM: fiber cut at datacenter")
+    results.append(r1)
+    r2 = _check(finance_target, finance_signals, 1, "CROSS-OUTAGE FINANCE: payment gateway timeout")
+    results.append(r2)
+    return results
+
+
+def cross_breach_healthcare_finance(healthcare_target, finance_target):
+    """A data breach spans healthcare and finance — patient billing records
+    exfiltrated. Each cascade sees its domain's signals independently."""
+    healthcare_signals = [
+        {"signal_type": "hl7_hipaa_access", "severity": "critical",
+         "source": "ehr_audit", "namespace": "compliance",
+         "content": {"record_type": "billing_records", "accessor_role": "external_api",
+                     "records_accessed": 15000, "access_pattern": "bulk_export",
+                     "source_ip": "198.51.100.42", "is_treating_provider": False},
+         "labels": {"patient_id": "BULK", "label": "fraud",
+                    "label_detail": "unauthorized_bulk_access"}},
+    ]
+    finance_signals = [
+        {"signal_type": "txn_card_purchase", "severity": "critical",
+         "source": "fraud_detection", "namespace": "banking",
+         "content": {"pattern": "card_not_present", "source_breach": "healthcare_provider",
+                     "affected_cards": 15000, "fraud_rate": 0.12,
+                     "geographic_spread": "nationwide"},
+         "labels": {"account_id": "BREACH-001", "label": "fraud",
+                    "label_detail": "breach_originated_fraud"}},
+    ]
+    results = []
+    r1 = _check(healthcare_target, healthcare_signals, 1, "CROSS-BREACH HEALTHCARE: bulk record exfiltration")
+    results.append(r1)
+    r2 = _check(finance_target, finance_signals, 1, "CROSS-BREACH FINANCE: breach-originated card fraud")
+    results.append(r2)
+    return results
+
+
+def cross_infrastructure_all(k8s_target, telecom_target, finance_target, healthcare_target):
+    """Power outage affects all domains simultaneously.
+    Tests whether each cascade independently recognizes the impact."""
+    base = {"content": {"event": "power_outage", "datacenter": "NYC-DC-1",
+                        "ups_remaining_minutes": 15}}
+    signals_per_domain = [
+        (k8s_target, [
+            {"signal_type": "event_nodenotready", "severity": "critical",
+             "source": "kubelet", "namespace": "kube-system",
+             **base, "labels": {"node": "worker-1", "label": "real_incident"}},
+            {"signal_type": "event_nodenotready", "severity": "critical",
+             "source": "kubelet", "namespace": "kube-system",
+             "content": {**base["content"], "node": "worker-2"},
+             "labels": {"node": "worker-2", "label": "real_incident"}},
+        ]),
+        (telecom_target, [
+            {"signal_type": "tmf_power_failure", "severity": "critical",
+             "source": "dcim", "namespace": "facilities",
+             "content": {**base["content"], "affected_racks": 12, "generator_status": "starting"},
+             "labels": {"region": "northeast", "label": "real_incident"}},
+        ]),
+        (finance_target, [
+            {"signal_type": "txn_wire_transfer", "severity": "critical",
+             "source": "core_banking", "namespace": "banking",
+             "content": {"error": "database_unreachable", "failover_status": "activating",
+                         "queued_transactions": 2300},
+             "labels": {"account_id": "SYSTEM", "label": "real_incident",
+                        "label_detail": "datacenter_power_loss"}},
+        ]),
+        (healthcare_target, [
+            {"signal_type": "hl7_system_alert", "severity": "critical",
+             "source": "ehr_monitor", "namespace": "infrastructure",
+             "content": {**base["content"], "affected_systems": ["ehr", "pacs", "lab_interface"],
+                         "patient_safety_impact": "high"},
+             "labels": {"label": "real_incident",
+                        "label_detail": "datacenter_power_clinical_systems"}},
+        ]),
+    ]
+    results = []
+    for target, sigs in signals_per_domain:
+        r = _check(target, sigs, len(sigs),
+                   f"CROSS-INFRA POWER: {len(sigs)} signals to {target.split('/')[-1].split(':')[0]}")
+        results.append(r)
+    return results
+
+
+def temporal_slow_burn(target, domain):
+    """Signals that individually are low severity but arrive at increasing
+    frequency — the rate itself is the signal. 5 signals over 'hours' with
+    decreasing intervals (simulated by decreasing content timestamps)."""
+    signals = [
+        {"signal_type": f"{domain}_slow_burn", "severity": "low",
+         "source": "monitoring", "namespace": "operations",
+         "content": {"error_count": 1 + i * 3, "error_rate_per_hour": 0.5 * (2 ** i),
+                     "interval_hours": max(0.25, 4.0 / (2 ** i))},
+         "labels": {"instance": "SVC-DEGRADE-001", "label": "needs_attention",
+                    "label_detail": "accelerating_degradation"}}
+        for i in range(5)
+    ]
+    return _check(target, signals, 1,
+                  f"SLOW BURN: accelerating error rate ({domain})")
+
+
+def temporal_oscillation(target, domain):
+    """Service flapping — alternating healthy/unhealthy. Individual signals
+    are normal but the PATTERN indicates instability."""
+    signals = [
+        {"signal_type": f"{domain}_health_check", "severity": "info",
+         "source": "lb_monitor", "namespace": "operations",
+         "content": {"status": "unhealthy" if i % 2 else "healthy",
+                     "response_time_ms": 50 if i % 2 == 0 else 5000 + i * 1000,
+                     "consecutive_failures": (i // 2) + 1 if i % 2 else 0,
+                     "error_rate_per_hour": 0 if i % 2 == 0 else 10 + i * 5},
+         "labels": {"instance": "SVC-FLAP-001", "label": "needs_attention",
+                    "label_detail": "service_flapping"}}
+        for i in range(6)
+    ]
+    return _check(target, signals, 1,
+                  f"OSCILLATION: service flapping 6 readings ({domain})")
+
+
+def recall_precedent(target, domain):
+    """Send a signal, then send a similar one later. The second should
+    trigger recall and benefit from the memory of the first. Tests that
+    the memory archive is actually being used."""
+    first = [
+        {"signal_type": f"{domain}_known_failure", "severity": "high",
+         "source": "monitoring", "namespace": "production",
+         "content": {"error": "certificate_expired", "service": "auth-gateway",
+                     "impact": "all_logins_failing", "resolution": "renew_cert"},
+         "labels": {"instance": "AUTH-GW-001", "label": "real_incident",
+                    "label_detail": "cert_expiry"}},
+    ]
+    _post(target, first)
+    time.sleep(1)
+    second = [
+        {"signal_type": f"{domain}_known_failure", "severity": "high",
+         "source": "monitoring", "namespace": "production",
+         "content": {"error": "certificate_expired", "service": "api-gateway",
+                     "impact": "api_requests_failing"},
+         "labels": {"instance": "API-GW-001", "label": "real_incident",
+                    "label_detail": "cert_expiry"}},
+    ]
+    return _check(target, second, 1,
+                  f"RECALL PRECEDENT: similar cert failure after first ({domain})")
+
+
 # ─── SCENARIO REGISTRY ───
 
 SCENARIOS = {
@@ -275,62 +442,149 @@ SCENARIOS = {
         telecom_cascade_failure,
         telecom_bgp_anomaly,
     ],
-    "cross_domain": [
-        burst_then_silence,
-    ],
 }
 
+CROSS_DOMAIN_SCENARIOS = {
+    "outage": cross_outage_finance_telecom,
+    "breach": cross_breach_healthcare_finance,
+    "infrastructure": cross_infrastructure_all,
+}
 
-def main():
-    parser = argparse.ArgumentParser(description="Edge case scenario runner")
-    parser.add_argument("--target", required=True, help="Cascade service URL")
-    parser.add_argument("--domain", required=True, help="Domain to test")
-    parser.add_argument("--scenario", default="all", help="Specific scenario or 'all'")
-    args = parser.parse_args()
+TEMPORAL_SCENARIOS = [
+    temporal_slow_burn,
+    temporal_oscillation,
+    recall_precedent,
+]
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
+def run_single_domain(target, domain):
     results = []
-    domain_scenarios = SCENARIOS.get(args.domain, [])
-
+    domain_scenarios = SCENARIOS.get(domain, [])
     if not domain_scenarios:
-        log.error("No scenarios for domain: %s (available: %s)", args.domain, list(SCENARIOS.keys()))
-        return
+        log.error("No scenarios for domain: %s", domain)
+        return results
 
-    log.info("Running %d edge scenarios for %s against %s", len(domain_scenarios), args.domain, args.target)
-
+    log.info("Running %d edge scenarios for %s", len(domain_scenarios), domain)
     for fn in domain_scenarios:
         try:
-            r = fn(args.target)
-            results.append(r)
+            results.append(fn(target))
         except Exception as e:
             log.error("Scenario %s failed: %s", fn.__name__, e)
             results.append({"scenario": fn.__name__, "status": "ERROR", "error": str(e)})
         time.sleep(0.5)
 
-    # Cross-domain burst test
+    # Burst test
     try:
-        r = burst_then_silence(args.target, args.domain)
-        results.append(r)
+        results.append(burst_then_silence(target, domain))
     except Exception as e:
         log.error("Burst test failed: %s", e)
 
+    # Temporal tests
+    for fn in TEMPORAL_SCENARIOS:
+        try:
+            results.append(fn(target, domain))
+        except Exception as e:
+            log.error("Temporal %s failed: %s", fn.__name__, e)
+            results.append({"scenario": fn.__name__, "status": "ERROR", "error": str(e)})
+        time.sleep(0.5)
+
+    return results
+
+
+def run_cross_domain(targets):
+    """Run cross-domain federation scenarios.
+    targets = {"finance": url, "healthcare": url, "telecom": url, "k8s": url}
+    """
+    results = []
+
+    log.info("Running cross-domain federation scenarios")
+
+    if "finance" in targets and "telecom" in targets:
+        try:
+            r = cross_outage_finance_telecom(targets["finance"], targets["telecom"])
+            results.extend(r)
+        except Exception as e:
+            log.error("Cross-outage failed: %s", e)
+            results.append({"scenario": "cross_outage", "status": "ERROR", "error": str(e)})
+
+    if "healthcare" in targets and "finance" in targets:
+        try:
+            r = cross_breach_healthcare_finance(targets["healthcare"], targets["finance"])
+            results.extend(r)
+        except Exception as e:
+            log.error("Cross-breach failed: %s", e)
+            results.append({"scenario": "cross_breach", "status": "ERROR", "error": str(e)})
+
+    if all(k in targets for k in ("k8s", "telecom", "finance", "healthcare")):
+        try:
+            r = cross_infrastructure_all(
+                targets["k8s"], targets["telecom"],
+                targets["finance"], targets["healthcare"])
+            results.extend(r)
+        except Exception as e:
+            log.error("Cross-infra failed: %s", e)
+            results.append({"scenario": "cross_infrastructure", "status": "ERROR", "error": str(e)})
+
+    return results
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Edge case scenario runner")
+    parser.add_argument("--target", help="Cascade service URL (single domain)")
+    parser.add_argument("--domain", help="Domain to test (single domain)")
+    parser.add_argument("--cross-domain", action="store_true",
+                        help="Run cross-domain federation scenarios")
+    parser.add_argument("--finance-url", help="Finance cascade URL")
+    parser.add_argument("--healthcare-url", help="Healthcare cascade URL")
+    parser.add_argument("--telecom-url", help="Telecom cascade URL")
+    parser.add_argument("--k8s-url", help="K8s cascade URL")
+    parser.add_argument("--all", action="store_true",
+                        help="Run all scenarios (single + cross-domain)")
+    args = parser.parse_args()
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+
+    all_results = []
+
+    # Single-domain scenarios
+    if args.domain and args.target:
+        all_results.extend(run_single_domain(args.target, args.domain))
+
+    # Cross-domain scenarios
+    if args.cross_domain or args.all:
+        targets = {}
+        if args.finance_url: targets["finance"] = args.finance_url
+        if args.healthcare_url: targets["healthcare"] = args.healthcare_url
+        if args.telecom_url: targets["telecom"] = args.telecom_url
+        if args.k8s_url: targets["k8s"] = args.k8s_url
+        if targets:
+            all_results.extend(run_cross_domain(targets))
+
+    # All single domains if --all
+    if args.all:
+        url_map = {"finance": args.finance_url, "healthcare": args.healthcare_url,
+                   "telecom": args.telecom_url, "k8s": args.k8s_url}
+        for domain, url in url_map.items():
+            if url and not (args.domain == domain):
+                all_results.extend(run_single_domain(url, domain))
+
     # Summary
-    passed = sum(1 for r in results if r.get("status") == "PASS")
-    failed = sum(1 for r in results if r.get("status") == "FAIL")
-    errors = sum(1 for r in results if r.get("status") == "ERROR")
+    passed = sum(1 for r in all_results if r.get("status") == "PASS")
+    failed = sum(1 for r in all_results if r.get("status") == "FAIL")
+    errors = sum(1 for r in all_results if r.get("status") == "ERROR")
 
     log.info("")
     log.info("=" * 60)
-    log.info("EDGE SCENARIO RESULTS: %s", args.domain)
+    log.info("EDGE SCENARIO RESULTS")
     log.info("=" * 60)
-    for r in results:
+    for r in all_results:
         log.info("  [%s] %s", r.get("status", "?"), r.get("scenario", "?"))
     log.info("")
-    log.info("PASSED: %d  FAILED: %d  ERROR: %d  TOTAL: %d", passed, failed, errors, len(results))
+    log.info("PASSED: %d  FAILED: %d  ERROR: %d  TOTAL: %d",
+             passed, failed, errors, len(all_results))
     log.info("=" * 60)
 
-    print(json.dumps(results, indent=2))
+    print(json.dumps(all_results, indent=2))
 
 
 if __name__ == "__main__":
