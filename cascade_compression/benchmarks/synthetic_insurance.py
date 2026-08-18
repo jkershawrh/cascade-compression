@@ -44,10 +44,11 @@ def generate(count: int = 100_000, seed: int = 42) -> List[SyntheticInsuranceEve
     events = []
     eid = 0
 
-    normal_count = int(count * 0.90)
-    fraud_count = int(count * 0.04)
-    compliance_count = int(count * 0.03)
-    operational_count = count - normal_count - fraud_count - compliance_count
+    # Real-world ratios: NAIC/FBI (~10% flagged, 1-2.5% investigated), Coalition Against Insurance Fraud
+    normal_count = int(count * 0.9750)
+    fraud_count = max(1, int(count * 0.0100))
+    compliance_count = max(1, int(count * 0.0050))
+    operational_count = max(1, count - normal_count - fraud_count - compliance_count)
 
     for _ in range(normal_count):
         eid += 1

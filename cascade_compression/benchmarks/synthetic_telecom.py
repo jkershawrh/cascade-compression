@@ -39,10 +39,11 @@ def generate(count: int = 100_000, seed: int = 42) -> List[SyntheticTelecomEvent
     events = []
     eid = 0
 
-    normal_count = int(count * 0.92)
-    incident_count = int(count * 0.03)
-    compliance_count = int(count * 0.02)
-    customer_count = count - normal_count - incident_count - compliance_count
+    # Real-world ratios: 3GPP TR 32 (>80% alarm noise), FCC NORS (<1% reportable)
+    normal_count = int(count * 0.9700)
+    incident_count = max(1, int(count * 0.0150))
+    compliance_count = max(1, int(count * 0.0050))
+    customer_count = max(1, count - normal_count - incident_count - compliance_count)
 
     for _ in range(normal_count):
         eid += 1

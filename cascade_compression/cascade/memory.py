@@ -187,11 +187,24 @@ def _normalize_value(value):
     return value
 
 
+_PRESERVE_FIELDS = frozenset({
+    "location", "span_id", "circuit_id", "node", "host",
+    "region", "zone", "rack", "site", "sector",
+    "patient_id", "account_id", "circuit", "prefix",
+})
+
+
 def _normalize_content(content: dict) -> dict:
-    """Normalize content dict for dedup — strip UUIDs, pod suffixes, timestamps."""
+    """Normalize content dict for dedup — strip UUIDs, pod suffixes, timestamps.
+
+    Location-bearing fields are preserved verbatim so that distinct-origin
+    signals (e.g. fiber cuts at different locations) produce different hashes.
+    """
     normalized = {}
     for key, value in content.items():
-        if isinstance(value, dict):
+        if key in _PRESERVE_FIELDS:
+            normalized[key] = value
+        elif isinstance(value, dict):
             normalized[key] = _normalize_content(value)
         elif isinstance(value, str):
             normalized[key] = _normalize_value(value)
