@@ -31,6 +31,11 @@ log = logging.getLogger(__name__)
 _PROMOTION_MIN_SAMPLES = 200
 _PROMOTION_ALLOWED_IMPORTANT = 0
 
+_BUILTIN_AGENT_NAMES = frozenset({
+    "deduplicate", "transient_suppressor", "severity_gate",
+    "pattern_classifier", "threshold_classifier",
+})
+
 
 def _is_noise_classification(classification: str) -> bool:
     return "routine_noise" in classification or "known_pattern" in classification
@@ -153,6 +158,7 @@ class CascadeBridge:
         self._fn_count = 0
         self._fn_evaluated = 0
         self._fn_types: Dict[str, int] = defaultdict(int)
+        self._gcl_builtin_fails = 0
         self._verdict_watermark: str = ""
         self._verdict_poll_running = False
 
@@ -898,6 +904,14 @@ class CascadeBridge:
                 signal_type = content.get("subject_type", "")
                 reason = content.get("reason", "GCL audit verdict: FAILS")
 
+                if agent_name in _BUILTIN_AGENT_NAMES:
+                    self._gcl_builtin_fails += 1
+                    log.debug(
+                        "GCL FAILS for built-in agent %s (not counting as FN): %s",
+                        agent_name, reason,
+                    )
+                    continue
+
                 if signal_type:
                     self.record_feedback(
                         signal_type, was_suppressed=True, is_important=True,
@@ -942,6 +956,7 @@ class CascadeBridge:
                 } for name, metrics in self._agent_metrics.items()
                   if (rule := self._agent_rules.get(name)) is not None],
                 "verdict_watermark": self._verdict_watermark,
+                "gcl_builtin_fails": self._gcl_builtin_fails,
                 "activation_timestamps": dict(self._activation_timestamps),
                 "stats_snapshot": {
                     "signals_processed": self.stats.signals_processed,
@@ -966,6 +981,7 @@ class CascadeBridge:
             )
 
             self._verdict_watermark = state.get("verdict_watermark", "")
+            self._gcl_builtin_fails = state.get("gcl_builtin_fails", 0)
             self._activation_timestamps = state.get("activation_timestamps", {})
             if state.get("version") in (2, 3):
                 self.corpus_analyzer._known_patterns = set(state.get("known_patterns", []))
@@ -1056,6 +1072,7 @@ class CascadeBridge:
         stats["shadow_demotions"] = self._shadow_demotions
         stats["shadow_sample_rate"] = self._shadow_sample_rate
         stats["activation_ttl_hours"] = self._activation_ttl_hours
+        stats["gcl_builtin_fails"] = self._gcl_builtin_fails
         return stats
 
     # -- Meta-cascade: self-monitoring -----------------------------------------

@@ -1,6 +1,6 @@
 """Tests for the standalone CascadeBridge."""
 
-from cascade_compression.bridge import CascadeBridge, _to_cascade_signal
+from cascade_compression.bridge import CascadeBridge, _to_cascade_signal, _BUILTIN_AGENT_NAMES
 
 
 class FakeSignal:
@@ -130,3 +130,37 @@ class TestLedgerIntegration:
     def test_ledger_url_set(self):
         bridge = CascadeBridge(ledger_url="http://fake:28099")
         assert bridge._ledger_url == "http://fake:28099"
+
+
+class TestGCLBuiltinFiltering:
+    def test_builtin_agent_names_match_agents_py(self):
+        from cascade_compression.cascade.agents import default_agents
+        agents = default_agents()
+        builtin_names = {a.name for a in agents}
+        assert builtin_names == _BUILTIN_AGENT_NAMES
+
+    def test_builtin_agent_fails_not_counted_as_fn(self):
+        bridge = CascadeBridge()
+        assert bridge._fn_count == 0
+        assert bridge._gcl_builtin_fails == 0
+        assert "deduplicate" in _BUILTIN_AGENT_NAMES
+
+    def test_dynamic_agent_fails_counted_as_fn(self):
+        bridge = CascadeBridge()
+        bridge.record_feedback("my_dynamic_type", was_suppressed=True, is_important=True)
+        assert bridge._fn_count == 1
+        assert bridge._fn_evaluated == 1
+
+    def test_gcl_builtin_fails_in_stats(self):
+        bridge = CascadeBridge()
+        bridge._gcl_builtin_fails = 42
+        stats = bridge.get_stats()
+        assert stats["gcl_builtin_fails"] == 42
+
+    def test_gcl_builtin_fails_persisted(self):
+        bridge = CascadeBridge()
+        bridge._gcl_builtin_fails = 100
+        bridge._fn_count = 0
+        stats = bridge.get_stats()
+        assert stats["gcl_builtin_fails"] == 100
+        assert stats["fn_count"] is None  # no FN evaluated
