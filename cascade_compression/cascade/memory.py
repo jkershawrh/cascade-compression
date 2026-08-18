@@ -191,6 +191,7 @@ _PRESERVE_FIELDS = frozenset({
     "location", "span_id", "circuit_id", "node", "host",
     "region", "zone", "rack", "site", "sector",
     "patient_id", "account_id", "circuit", "prefix",
+    "service", "instance",
 })
 
 
