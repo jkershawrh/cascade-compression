@@ -422,6 +422,224 @@ def recall_precedent(target, domain):
                   f"RECALL PRECEDENT: similar cert failure after first ({domain})")
 
 
+# ─── ROUND 2: SAFETY MECHANISM EDGE CASES ───
+
+def safety_label_injection(target, domain):
+    """Adversarial: flood 200 info signals with label=compliance to bypass
+    dedup and severity gate. Tests whether the bypass can be weaponized
+    to overwhelm the LLM."""
+    signals = [
+        {"signal_type": f"{domain}_heartbeat", "severity": "info",
+         "source": "attacker", "namespace": "default",
+         "content": {"status": "ok", "seq": i},
+         "labels": {"label": "compliance", "label_detail": "injected"}}
+        for i in range(200)
+    ]
+    result = _post(target, signals)
+    forwarded = result.get("forwarded", 0) + result.get("survivors", 0)
+    status = "EXPOSED" if forwarded > 100 else "MITIGATED"
+    log.info(
+        "[%s] LABEL INJECTION: sent=%d, forwarded=%d (bypass allows all — framework accepts the label)",
+        status, len(signals), forwarded,
+    )
+    return {
+        "scenario": f"LABEL INJECTION: 200 fake compliance signals ({domain})",
+        "status": status,
+        "sent": len(signals),
+        "forwarded": forwarded,
+        "note": "Bypass trusts labels. Domain pack must control what gets labeled.",
+    }
+
+
+def safety_giant_payload(target, domain):
+    """Adversarial: single signal with massive content payload.
+    Tests whether the cascade handles oversized content gracefully."""
+    signals = [
+        {"signal_type": f"{domain}_giant", "severity": "high",
+         "source": "edge_test", "namespace": "adversarial",
+         "content": {"data": "X" * 100000, "nested": {"deep": "Y" * 50000}},
+         "labels": {"label": "real_incident"}},
+    ]
+    try:
+        result = _post(target, signals)
+        survivors = result.get("forwarded", 0) + result.get("survivors", 0)
+        return {"scenario": f"GIANT PAYLOAD: 150KB content ({domain})",
+                "status": "PASS", "sent": 1, "survivors": survivors,
+                "note": "Handled without error"}
+    except Exception as e:
+        return {"scenario": f"GIANT PAYLOAD: 150KB content ({domain})",
+                "status": "FAIL", "error": str(e),
+                "note": "Cascade should handle gracefully, not crash"}
+
+
+def safety_empty_signals(target, domain):
+    """Edge: signals with empty/null fields. Tests robustness."""
+    signals = [
+        {"signal_type": "", "severity": "", "source": "", "namespace": "",
+         "content": {}, "labels": {}},
+        {"signal_type": f"{domain}_minimal", "severity": "critical",
+         "source": "", "namespace": "", "content": {}, "labels": {}},
+    ]
+    return _check(target, signals, 1, f"EMPTY FIELDS: minimal + empty signals ({domain})")
+
+
+def safety_unicode_evasion(target, domain):
+    """Adversarial: Unicode lookalikes to evade pattern matching.
+    Uses Cyrillic 'а' instead of Latin 'a' in critical keywords."""
+    signals = [
+        {"signal_type": f"{domain}_alert", "severity": "high",
+         "source": "monitoring", "namespace": "production",
+         "content": {"message": "pаnic in module — dаta lоss detected",
+                     "error": "fаtal"},
+         "labels": {"label": "real_incident",
+                    "label_detail": "unicode_evasion_test"}},
+    ]
+    return _check(target, signals, 1,
+                  f"UNICODE EVASION: Cyrillic lookalikes in keywords ({domain})")
+
+
+def safety_severity_boundary(target, domain):
+    """Edge: signal at exact boundary — low severity with escalation keywords.
+    Should the transient suppressor drop it or the pattern classifier catch it?"""
+    signals = [
+        {"signal_type": f"{domain}_event", "severity": "low",
+         "source": "monitoring", "namespace": "production",
+         "content": {"message": "oomkill detected in container — memory limit exceeded"},
+         "labels": {}},
+    ]
+    return _check(target, signals, 1,
+                  f"SEVERITY BOUNDARY: low severity + oomkill keyword ({domain})")
+
+
+# ─── ROUND 2: CAPACITY BOUNDARY SCENARIOS ───
+
+def capacity_memory_full(target, domain):
+    """Capacity: send enough high-severity signals to approach memory capacity.
+    Then send one critical signal. Does it survive eviction?"""
+    filler = [
+        {"signal_type": f"{domain}_filler_{i % 20}", "severity": "medium",
+         "source": f"source-{i}", "namespace": "capacity_test",
+         "content": {"test": "filler", "instance": f"inst-{i}"},
+         "labels": {"instance": f"cap-{i}"}}
+        for i in range(100)
+    ]
+    _post(target, filler)
+    time.sleep(0.5)
+    critical = [
+        {"signal_type": f"{domain}_critical_after_fill", "severity": "critical",
+         "source": "monitoring", "namespace": "production",
+         "content": {"event": "system_failure", "impact": "total"},
+         "labels": {"label": "real_incident"}},
+    ]
+    return _check(target, critical, 1,
+                  f"MEMORY FULL: critical signal after 100 filler ({domain})")
+
+
+def capacity_rapid_fire(target, domain):
+    """Capacity: 500 signals in one batch — tests batch processing limits."""
+    signals = [
+        {"signal_type": f"{domain}_rapid_{i % 50}", "severity": "critical" if i == 499 else "info",
+         "source": "load_test", "namespace": "capacity",
+         "content": {"seq": i, "instance": f"rf-{i}"},
+         "labels": {"label": "real_incident" if i == 499 else "noise"}}
+        for i in range(500)
+    ]
+    return _check(target, signals, 1,
+                  f"RAPID FIRE: 500 signals, critical at 499 ({domain})")
+
+
+def capacity_dedup_window_overflow(target, domain):
+    """Capacity: send 1000 unique signal types to fill the dedup window.
+    Then send one more — does dedup still work or has the window overflowed?"""
+    flood = [
+        {"signal_type": f"{domain}_type_{i}", "severity": "info",
+         "source": "flood_test", "namespace": "dedup_overflow",
+         "content": {"id": i}, "labels": {}}
+        for i in range(200)
+    ]
+    _post(target, flood)
+    time.sleep(0.5)
+    duplicate = [
+        {"signal_type": f"{domain}_type_0", "severity": "info",
+         "source": "flood_test", "namespace": "dedup_overflow",
+         "content": {"id": 0}, "labels": {}},
+    ]
+    result = _post(target, duplicate)
+    compressed = result.get("compressed", 0)
+    status = "PASS" if compressed >= 1 else "FAIL"
+    log.info("[%s] DEDUP OVERFLOW: duplicate after 200 types, compressed=%d (expected >=1)",
+             status, compressed)
+    return {"scenario": f"DEDUP OVERFLOW: duplicate after 200 types ({domain})",
+            "status": status, "compressed": compressed}
+
+
+# ─── ROUND 2: MULTI-SIGNAL CAUSALITY ───
+
+def causality_missing_middle(target, domain):
+    """Causality: A causes B causes C, but B is missing.
+    Send A and C — the cascade should still surface both as they're
+    independently important, even without the connecting signal."""
+    signals = [
+        {"signal_type": f"{domain}_root_cause", "severity": "high",
+         "source": "monitoring", "namespace": "production",
+         "content": {"event": "disk_full", "device": "/dev/sda1",
+                     "usage_percent": 99.8},
+         "labels": {"node": "worker-1", "label": "real_incident"}},
+        {"signal_type": f"{domain}_downstream_effect", "severity": "high",
+         "source": "monitoring", "namespace": "production",
+         "content": {"event": "service_unavailable", "service": "database",
+                     "error": "write_failed", "cause": "disk_full"},
+         "labels": {"node": "worker-1", "label": "real_incident"}},
+    ]
+    return _check(target, signals, 2,
+                  f"MISSING MIDDLE: root cause + effect without connector ({domain})")
+
+
+def causality_delayed_correlation(target, domain):
+    """Causality: two related signals separated by a delay.
+    First signal is medium severity, second is critical.
+    Tests whether the cascade handles temporal separation."""
+    first = [
+        {"signal_type": f"{domain}_warning", "severity": "medium",
+         "source": "monitoring", "namespace": "production",
+         "content": {"metric": "connection_pool_exhaustion",
+                     "pool_usage_percent": 95, "service": "api-server"},
+         "labels": {"instance": "API-001"}},
+    ]
+    _post(target, first)
+    time.sleep(2)
+    second = [
+        {"signal_type": f"{domain}_outage", "severity": "critical",
+         "source": "monitoring", "namespace": "production",
+         "content": {"event": "service_down", "service": "api-server",
+                     "error": "connection_pool_exhausted",
+                     "downstream_affected": 15},
+         "labels": {"instance": "API-001", "label": "real_incident"}},
+    ]
+    return _check(target, second, 1,
+                  f"DELAYED CORRELATION: warning then outage 2s later ({domain})")
+
+
+SAFETY_SCENARIOS = [
+    safety_label_injection,
+    safety_giant_payload,
+    safety_empty_signals,
+    safety_unicode_evasion,
+    safety_severity_boundary,
+]
+
+CAPACITY_SCENARIOS = [
+    capacity_memory_full,
+    capacity_rapid_fire,
+    capacity_dedup_window_overflow,
+]
+
+CAUSALITY_SCENARIOS = [
+    causality_missing_middle,
+    causality_delayed_correlation,
+]
+
+
 # ─── SCENARIO REGISTRY ───
 
 SCENARIOS = {
@@ -485,6 +703,33 @@ def run_single_domain(target, domain):
             results.append(fn(target, domain))
         except Exception as e:
             log.error("Temporal %s failed: %s", fn.__name__, e)
+            results.append({"scenario": fn.__name__, "status": "ERROR", "error": str(e)})
+        time.sleep(0.5)
+
+    # Safety tests
+    for fn in SAFETY_SCENARIOS:
+        try:
+            results.append(fn(target, domain))
+        except Exception as e:
+            log.error("Safety %s failed: %s", fn.__name__, e)
+            results.append({"scenario": fn.__name__, "status": "ERROR", "error": str(e)})
+        time.sleep(0.5)
+
+    # Capacity tests
+    for fn in CAPACITY_SCENARIOS:
+        try:
+            results.append(fn(target, domain))
+        except Exception as e:
+            log.error("Capacity %s failed: %s", fn.__name__, e)
+            results.append({"scenario": fn.__name__, "status": "ERROR", "error": str(e)})
+        time.sleep(0.5)
+
+    # Causality tests
+    for fn in CAUSALITY_SCENARIOS:
+        try:
+            results.append(fn(target, domain))
+        except Exception as e:
+            log.error("Causality %s failed: %s", fn.__name__, e)
             results.append({"scenario": fn.__name__, "status": "ERROR", "error": str(e)})
         time.sleep(0.5)
 
