@@ -3,6 +3,9 @@
 #
 # K8s collector: polls 5 OCP clusters, pushes to cascade-k8s
 # AAP collector: polls AAP database, pushes to cascade-aap
+# Jira collector: polls Jira issues, pushes to cascade-knowledge
+# Git collector: polls rhpds GitHub org, pushes to cascade-knowledge
+# Confluence collector: polls Confluence pages, pushes to cascade-knowledge
 #
 # Reuses the same cluster tokens and AAP credentials as deepfield.
 # Apply after openshift-federated.yaml.
@@ -296,6 +299,138 @@ spec:
         envFrom:
         - secretRef:
             name: collector-clusters
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+
+---
+# ── Jira Collector (Knowledge Domain) ─────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collector-jira
+  namespace: cascade-compression
+  labels:
+    app: collector-jira
+    component: collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: collector-jira
+  template:
+    metadata:
+      labels:
+        app: collector-jira
+        component: collector
+    spec:
+      containers:
+      - name: collector
+        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        command:
+        - python3
+        - -m
+        - cascade_compression.collector_sidecar
+        - --mode=jira
+        - --target=http://cascade-knowledge:8090
+        - --interval=60
+        envFrom:
+        - secretRef:
+            name: collector-atlassian
+        env:
+        - name: JIRA_PROJECT
+          value: "GPTEINFRA,RHDP,CPEX"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+
+---
+# ── Git/GitHub Collector (Knowledge Domain) ────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collector-git
+  namespace: cascade-compression
+  labels:
+    app: collector-git
+    component: collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: collector-git
+  template:
+    metadata:
+      labels:
+        app: collector-git
+        component: collector
+    spec:
+      containers:
+      - name: collector
+        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        command:
+        - python3
+        - -m
+        - cascade_compression.collector_sidecar
+        - --mode=git
+        - --target=http://cascade-knowledge:8090
+        - --interval=3600
+        envFrom:
+        - secretRef:
+            name: collector-github
+        env:
+        - name: GIT_ORG
+          value: "rhpds"
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 128Mi
+
+---
+# ── Confluence Collector (Knowledge Domain) ────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collector-confluence
+  namespace: cascade-compression
+  labels:
+    app: collector-confluence
+    component: collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: collector-confluence
+  template:
+    metadata:
+      labels:
+        app: collector-confluence
+        component: collector
+    spec:
+      containers:
+      - name: collector
+        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        command:
+        - python3
+        - -m
+        - cascade_compression.collector_sidecar
+        - --mode=confluence
+        - --target=http://cascade-knowledge:8090
+        - --interval=7200
+        envFrom:
+        - secretRef:
+            name: collector-atlassian
         resources:
           requests:
             cpu: 50m

@@ -286,6 +286,119 @@ spec:
     targetPort: 8090
 
 ---
+# ── Knowledge Cascade ──────────────────────────────────────────────
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: cascade-knowledge-state
+  namespace: cascade-compression
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 100Mi
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cascade-knowledge
+  namespace: cascade-compression
+  labels:
+    app: cascade-knowledge
+    component: cascade
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: cascade-knowledge
+  template:
+    metadata:
+      labels:
+        app: cascade-knowledge
+        component: cascade
+    spec:
+      containers:
+      - name: cascade
+        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        ports:
+        - containerPort: 8090
+        env:
+        - name: CASCADE_DOMAIN
+          value: "knowledge"
+        - name: CASCADE_LLM_URL
+          valueFrom:
+            secretKeyRef:
+              name: cascade-llm
+              key: url
+              optional: true
+        - name: CASCADE_LLM_KEY
+          valueFrom:
+            secretKeyRef:
+              name: cascade-llm
+              key: key
+              optional: true
+        - name: CASCADE_LLM_MODEL
+          value: "granite-3-2-8b-instruct"
+        - name: CASCADE_MICRO_MODEL
+          value: "granite-2b-cpu"
+        - name: CASCADE_MACRO_MODEL
+          value: "granite-3-2-8b-instruct"
+        - name: CASCADE_SHADOW_RATE
+          value: "0.05"
+        - name: CASCADE_ACTIVATION_TTL_HOURS
+          value: "72"
+        - name: CASCADE_MEMORY_ENABLED
+          value: "1"
+        - name: CASCADE_MEMORY_MAX
+          value: "10000"
+        - name: CASCADE_STATE_FILE
+          value: "/state/cascade-knowledge.json"
+        volumeMounts:
+        - name: state
+          mountPath: /state
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: "4"
+            memory: 4Gi
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+          initialDelaySeconds: 10
+          periodSeconds: 30
+      volumes:
+      - name: state
+        persistentVolumeClaim:
+          claimName: cascade-knowledge-state
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cascade-knowledge
+  namespace: cascade-compression
+  labels:
+    app: cascade-knowledge
+spec:
+  selector:
+    app: cascade-knowledge
+  ports:
+  - port: 8090
+    targetPort: 8090
+
+---
 # ── Memory Aggregator ───────────────────────────────────────────────
 apiVersion: apps/v1
 kind: Deployment
@@ -429,6 +542,7 @@ spec:
 
               K8S = "http://cascade-k8s:8090"
               AAP = "http://cascade-aap:8090"
+              KNOWLEDGE = "http://cascade-knowledge:8090"
               MEM = "http://cascade-memory:8090"
 
               def get(url):
@@ -454,7 +568,7 @@ spec:
               print("=== Federation cycle ===")
               print(f"  Incremental since: {since}")
 
-              for name, src in [("K8s", K8S), ("AAP", AAP)]:
+              for name, src in [("K8s", K8S), ("AAP", AAP), ("Knowledge", KNOWLEDGE)]:
                   exported = get(f"{src}/memories/export?min_strength=0.3&since={since}")
                   if not exported:
                       print(f"  {name}: export failed")
