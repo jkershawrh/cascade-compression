@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
@@ -111,6 +112,13 @@ app = FastAPI(
     version="1.0.0",
     description="Self-tuning signal compression — discover what needs AI and what does not.",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
