@@ -615,6 +615,11 @@ def generate_biography(bridge, memory_archive, memory_intel) -> Dict[str, Any]:
         absences=absences,
     )
 
+    narrative = _generate_narrative(
+        timeline, top_memories, patterns_learned, noise_profile,
+        causal_gaps[:20], absences, gpu_summary, health,
+    )
+
     return {
         "biography": {
             "timeline": timeline,
@@ -626,6 +631,7 @@ def generate_biography(bridge, memory_archive, memory_intel) -> Dict[str, Any]:
             "absences": absences,
             "gpu_analyses": gpu_summary,
             "health": health,
+            "narrative": narrative,
         },
     }
 
@@ -693,6 +699,119 @@ def _compute_health_score(
             "memory_count": memory_count,
         },
     }
+
+
+def _generate_narrative(timeline, top_memories, patterns_learned, noise_profile,
+                        causal_gaps, absences, gpu_summary, health) -> Dict[str, Any]:
+    """Generate English prose chapters from structured biography data."""
+    chapters = []
+    signals = timeline.get("signals_processed", 0)
+    domain = timeline.get("domain", "unknown")
+    agents = timeline.get("total_activations", 0)
+    grade = health.get("grade", "unknown")
+    score = health.get("score", 0)
+    mem_count = health.get("factors", {}).get("memory_count", 0)
+
+    # Opening
+    opening = f"This {domain} cascade has processed {signals:,} signals"
+    started = timeline.get("started_at", "")
+    if started:
+        opening += f" since {started[:10]}"
+    opening += f". It discovered {agents} suppression agents and formed {mem_count} memories."
+    opening += f" Platform health: {grade} ({score:.0f}/100)."
+
+    # Chapter 1: What it learned
+    ch1_lines = []
+    if patterns_learned:
+        ch1_lines.append(f"The cascade taught itself {len(patterns_learned)} suppression rules by observing the signal stream.")
+        for p in patterns_learned[:5]:
+            noise = p.get("noise_count", 0)
+            imp = p.get("important_count", 0)
+            ch1_lines.append(
+                f"  {p['signal_type']}: {noise:,} noise / {imp:,} important — {p.get('action', 'suppressed')}."
+            )
+        if len(patterns_learned) > 5:
+            ch1_lines.append(f"  ...and {len(patterns_learned) - 5} more patterns.")
+    else:
+        ch1_lines.append("No suppression patterns discovered yet. The cascade is still learning.")
+    chapters.append({"title": "What It Learned", "text": "\n".join(ch1_lines)})
+
+    # Chapter 2: What it remembers
+    ch2_lines = []
+    if top_memories:
+        all_max = all(m.get("strength", 0) >= 0.99 for m in top_memories[:10])
+        if all_max:
+            ch2_lines.append(f"Every top memory is at maximum strength. These are chronic conditions, not transient events.")
+        else:
+            ch2_lines.append(f"The strongest memories tell the story of what keeps happening.")
+
+        from collections import Counter
+        type_counts = Counter(m["signal_type"] for m in top_memories)
+        for sig_type, count in type_counts.most_common(5):
+            sample = next(m for m in top_memories if m["signal_type"] == sig_type)
+            strength = sample.get("strength", 0)
+            msg = sample.get("message", "")
+            root = sample.get("root_cause", "")
+            line = f"  {sig_type}: {count} memories at strength {strength:.2f}"
+            if msg:
+                line += f" — \"{msg[:80]}\""
+            if root:
+                line += f" Root cause: {root[:80]}"
+            ch2_lines.append(line)
+    else:
+        ch2_lines.append("No memories formed yet. The cascade needs more time to identify what matters.")
+    chapters.append({"title": "What It Remembers", "text": "\n".join(ch2_lines)})
+
+    # Chapter 3: What it ignores
+    ch3_lines = []
+    baseline_count = noise_profile.get("baseline_types", 0)
+    total_supp = noise_profile.get("total_suppression_decisions", 0)
+    if total_supp > 0:
+        ch3_lines.append(f"{total_supp:,} suppression decisions across {baseline_count} signal types. This is what the platform considers normal.")
+        for n in noise_profile.get("top_noise", [])[:5]:
+            ch3_lines.append(f"  {n['signal_type']}: {n.get('frequency', 0):,} occurrences (strength {n.get('strength', 0):.2f})")
+        interp = noise_profile.get("interpretation", "")
+        if interp:
+            ch3_lines.append(interp)
+    else:
+        ch3_lines.append("No suppression baseline yet. The cascade hasn't processed enough signals to define normal.")
+    chapters.append({"title": "What It Ignores", "text": "\n".join(ch3_lines)})
+
+    # Chapter 4: What's missing
+    ch4_lines = []
+    if causal_gaps:
+        ch4_lines.append(f"{len(causal_gaps)} causal gaps detected — effects observed without their expected upstream causes.")
+        for g in causal_gaps[:5]:
+            ch4_lines.append(f"  Expected {g.get('expected_cause', '?')} before {g.get('effect', '?')}")
+            interp = g.get("interpretation", "")
+            if interp:
+                ch4_lines.append(f"    {interp}")
+    if absences:
+        ch4_lines.append(f"{len(absences)} expected signals are missing — monitoring blind spots.")
+        for a in absences[:3]:
+            overdue = a.get("hours_overdue")
+            line = f"  {a['signal_type']}: expected every {a.get('expected_interval_hours', '?')}h"
+            if overdue:
+                line += f", overdue by {overdue:.1f}h"
+            ch4_lines.append(line)
+    if not causal_gaps and not absences:
+        ch4_lines.append("No causal gaps or missing signals detected. Full observability coverage.")
+    chapters.append({"title": "What's Missing", "text": "\n".join(ch4_lines)})
+
+    # Chapter 5: What it analyzed (GPU)
+    ch5_lines = []
+    gpu_count = gpu_summary.get("count", 0)
+    if gpu_count > 0:
+        ch5_lines.append(f"{gpu_count} deep analyses produced by the GPU macro tier.")
+        for a in gpu_summary.get("recent", [])[:3]:
+            rc = a.get("root_cause", "")
+            conf = a.get("confidence", 0)
+            ch5_lines.append(f"  {a.get('signal_type', '?')} ({a.get('severity', '?')}): {rc[:100]} [confidence: {conf:.0%}]")
+    else:
+        ch5_lines.append("No GPU analyses yet. Critical signals have not reached the macro tier.")
+    chapters.append({"title": "What It Analyzed", "text": "\n".join(ch5_lines)})
+
+    return {"opening": opening, "chapters": chapters}
 
 
 @app.get("/biography")
