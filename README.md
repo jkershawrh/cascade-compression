@@ -31,7 +31,7 @@ cascade-run --domain kubernetes --llm-url https://your-llm/v1 --llm-key sk-...
 # Replay historical data
 cascade-replay --domain finance --data transactions.csv --llm-url https://your-llm/v1
 
-# Run tests (460+ tests)
+# Run tests (776 tests)
 make test-all
 
 # Start the service with real-time dashboard
@@ -55,9 +55,21 @@ Cold-start numbers from synthetic data — no learned agents, no LLM feedback lo
 | Insurance | Synthetic | 81.2% | 100% fraud, 99.8% compliance |
 | Retail | Synthetic | 88.3% | 100% shrinkage, 100% compliance |
 | Telecom | Synthetic | 94.3% | 92.1% incidents |
-| **Memory** | Live (2,485 claims) | N/A | 22 institutional topics across 63 projects |
+| **Org Knowledge** | Live (Jira/Git/Confluence) | 83% | Runbook decay, decision churn, hotfix patterns |
 
-Each domain is a "domain pack" — a collector, a one-paragraph prompt, and historical data. The cascade framework stays untouched. The memory domain pack extracts institutional knowledge from agent memory files across any agentic framework.
+Each domain is a "domain pack" — a collector, a one-paragraph prompt, and historical data. The cascade framework stays untouched.
+
+## Organizational Knowledge Domain
+
+The knowledge domain applies the same cascade pattern to non-operational signals — Jira tickets, GitHub commits/PRs, and Confluence pages. Three collectors feed a dedicated `cascade-knowledge` instance:
+
+| Collector | Source | Interval | What it surfaces |
+|-----------|--------|----------|-----------------|
+| **jira** | Atlassian Cloud (REST API v3) | 60s | Incident repeats, decision churn (16+ comments), documentation gaps |
+| **git** | GitHub (org-level, 819 repos) | 1h | Hotfix/revert patterns, heavy PR reviews, expertise concentration |
+| **confluence** | Confluence Cloud (REST API v2) | 2h | Runbook decay (frequent revisions), stale runbooks (v1 never updated), postmortem docs |
+
+The cascade compresses 83% of organizational noise (routine commits, status updates, regular ticket flow) and surfaces the signals that indicate knowledge gaps, process decay, and expertise concentration. Knowledge survivors federate into the same aggregator as K8s and AAP memories — the causal graph links operational incidents to their organizational context.
 
 ## Three Tiers
 
@@ -111,15 +123,17 @@ The calculator produces workload-specific estimates only when measured throughpu
 
 ```
 Containerfile              Single-container deployment (UBI9 Python 3.11)
-deploy/openshift.yaml      OpenShift Deployment + Service + Route
+deploy/openshift.yaml      OpenShift single-instance deployment
+deploy/openshift-federated.yaml  Federated: K8s + AAP + Knowledge + aggregator (19 pods)
+deploy/collectors.yaml     15 collector deployments (operational + knowledge)
 frontend/index.html        Real-time dashboard (polls /stats every 5s)
 cascade_compression/
   service.py               Standalone FastAPI service (serves dashboard + API)
   bridge.py                Orchestrator — collector → pipeline → LLM → shadow → feedback
   cli.py                   cascade-run, cascade-replay entrypoints
   cascade/                 Pipeline, agents, promotion (hardened), corpus analyzer
-  collectors/              8 domain collectors (k8s, aap, finance, healthcare, insurance, retail, telecom, memory)
-  domains/                 8 domain packs (prompt, model, collector class)
+  collectors/              20 collectors (k8s, aap, jira, git, confluence, prometheus, ceph, gitops, ovn, poolboy, babylon, stargate, labagator, agnosticv, sandbox_conan, finance, healthcare, insurance, retail, telecom)
+  domains/                 10 domain packs (kubernetes, aap, knowledge, finance, healthcare, insurance, retail, telecom, memory, + synthetic)
   routing/                 Benchmark-graded model selection (19 models, 5 lanes)
   infra/                   Pressure-aware scaler, fleet manager
   tco/                     TCO calculator, FastAPI API, FSI scenarios
