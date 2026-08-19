@@ -54,6 +54,14 @@ don't need a GPU.
 - Export/import: GET /memories/export, POST /memories/import
 - Cross-source correlation: same content_hash from 2+ instances → strength boost
 - Source provenance preserved via source_instance field
+- 3 federated sources: cascade-k8s, cascade-aap, cascade-knowledge → cascade-memory aggregator
+
+**Organizational Knowledge** (`cascade_compression/collectors/jira.py`, `git.py`, `confluence.py`)
+- Jira: Atlassian Cloud REST API v3 (POST /search/jql), multi-project JQL
+- Git: GitHub REST API with org-level repo discovery (GIT_ORG → auto-discovers all repos)
+- Confluence: Confluence REST API v2, page revision analysis
+- Knowledge domain pack (`cascade_compression/domains/knowledge.py`): causal rules for expertise_departure, documentation_gap, incident_repeat, runbook_decay, decision_revisited
+- Signals: hotfix_pattern, decision_revisited, documentation_gap, runbook_decay, incident_learning, onboarding_question, code_review_repeat
 
 **Infrastructure** (`cascade_compression/infra/`)
 - Pressure-aware scaler (Linux PSI + cgroup v2, green/yellow/red rubric)
@@ -100,7 +108,8 @@ CDD → TDD → EDD → BDD (Contract → Test → Event → Behavior Driven)
 - Single-container deployment via Containerfile
 - FastAPI with /health, /stats, /cascade, /agents, /memories/*, /recall, /consolidate endpoints
 - Real-time dashboard at / (frontend/index.html)
-- OpenShift manifests: deploy/openshift.yaml (single), deploy/openshift-federated.yaml (K8s + AAP + aggregator)
+- OpenShift manifests: deploy/openshift.yaml (single), deploy/openshift-federated.yaml (K8s + AAP + Knowledge + aggregator)
+- Collector manifests: deploy/collectors.yaml (15 collectors including Jira/Git/Confluence)
 - Per-tier model routing: CASCADE_MICRO_MODEL (medium/low), CASCADE_MACRO_MODEL (critical/high)
 
 ## Running the Service
@@ -120,9 +129,28 @@ oc create secret generic cascade-llm \
   -n cascade-compression
 ```
 
+## Collectors
+
+20 collectors registered in `cascade_compression/collector_sidecar.py`:
+
+```bash
+# Operational collectors → cascade-k8s / cascade-aap
+python3 -m cascade_compression.collector_sidecar --mode=k8s --target=http://cascade-k8s:8090
+python3 -m cascade_compression.collector_sidecar --mode=aap --target=http://cascade-aap:8090
+
+# Knowledge collectors → cascade-knowledge
+JIRA_PROJECT=GPTEINFRA,RHDP,CPEX \
+  python3 -m cascade_compression.collector_sidecar --mode=jira --target=http://cascade-knowledge:8090 --interval=60
+GIT_ORG=rhpds \
+  python3 -m cascade_compression.collector_sidecar --mode=git --target=http://cascade-knowledge:8090 --interval=3600
+python3 -m cascade_compression.collector_sidecar --mode=confluence --target=http://cascade-knowledge:8090 --interval=7200
+```
+
+Env vars: `ATLASSIAN_BASE_URL`, `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN` (shared by Jira+Confluence), `GITHUB_TOKEN`, `GIT_ORG`.
+
 ## Next Steps
 
 - Customer pilot (Amex via Ron) with hardened engine
 - OCP Operator packaging (single Helm chart for cascade + governance)
 - Edge deployment validation (robotics/IoT domain pack)
-- Whitepaper update with final replay numbers
+- Knowledge domain soak: causal graph linking Git hotfixes → Jira tickets → Confluence runbook gaps
