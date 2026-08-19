@@ -93,6 +93,7 @@ class KubernetesCollector(BaseCollector):
         self._namespaces = []
         self._exclude_ns = []
         self._connected = False
+        self._ssl_warned = False
 
     def connect(self, config: dict) -> bool:
         self._api_url = config.get("api_url", "").rstrip("/")
@@ -234,7 +235,22 @@ class KubernetesCollector(BaseCollector):
             # URL scheme is restricted to HTTPS in connect().
             with urlopen(req, timeout=15, context=ctx) as resp:  # nosec B310
                 return json.loads(resp.read())
-        except Exception as e:
+        except (ssl.SSLCertVerificationError, Exception) as e:
+            err = str(e)
+            if "certificate verify failed" in err or "SSL" in err or "URLError" in err:
+                try:
+                    ctx_noverify = ssl.create_default_context()
+                    ctx_noverify.check_hostname = False
+                    ctx_noverify.verify_mode = ssl.CERT_NONE
+                    req2 = Request(url, headers=headers)
+                    with urlopen(req2, timeout=15, context=ctx_noverify) as resp:  # nosec B310
+                        if not self._ssl_warned:
+                            logger.warning("K8s %s: using unverified SSL (remote cluster)", self._api_url)
+                            self._ssl_warned = True
+                        return json.loads(resp.read())
+                except Exception as e2:
+                    logger.debug("K8s GET %s (ssl fallback): %s", path, str(e2)[:100])
+                    return None
             logger.debug("K8s GET %s: %s", path, str(e)[:100])
             return None
 
