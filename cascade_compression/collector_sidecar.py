@@ -243,6 +243,9 @@ _COLLECTOR_REGISTRY = {
     "ceph": ("cascade_compression.collectors.ceph", "CephCollector"),
     "governor": ("cascade_compression.collectors.governor", "GovernorCollector"),
     "labagator": ("cascade_compression.collectors.labagator", "LabagatorCollector"),
+    "jira": ("cascade_compression.collectors.jira", "JiraCollector"),
+    "git": ("cascade_compression.collectors.git", "GitCollector"),
+    "confluence": ("cascade_compression.collectors.confluence", "ConfluenceCollector"),
 }
 
 

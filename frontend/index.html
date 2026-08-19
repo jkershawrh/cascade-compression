@@ -370,6 +370,31 @@ h1, h2, h3, h4 {
     </div>
   </div>
 
+  <!-- Federated domains -->
+  <div class="section-title">Federated domains</div>
+  <div class="defense-grid" id="domain-grid">
+    <div class="defense-tile">
+      <div class="defense-label">Kubernetes</div>
+      <div class="defense-value green" id="domain-k8s">—</div>
+    </div>
+    <div class="defense-tile">
+      <div class="defense-label">AAP</div>
+      <div class="defense-value green" id="domain-aap">—</div>
+    </div>
+    <div class="defense-tile">
+      <div class="defense-label">Knowledge</div>
+      <div class="defense-value blue" id="domain-knowledge">—</div>
+    </div>
+    <div class="defense-tile">
+      <div class="defense-label">Aggregator</div>
+      <div class="defense-value teal" id="domain-aggregator">—</div>
+    </div>
+    <div class="defense-tile">
+      <div class="defense-label">Sources</div>
+      <div class="defense-value" id="domain-sources">—</div>
+    </div>
+  </div>
+
   <!-- Two-column cards -->
   <div class="card-grid">
 
@@ -421,7 +446,7 @@ h1, h2, h3, h4 {
 
 <!-- Footer -->
 <div class="footer">
-  Red Hat Cascade Compression — Self-tuning signal processing for CPU inference at scale
+  Red Hat Cascade Compression — Self-tuning signal processing for CPU inference at scale — 10 domains, 20 collectors, 3 federated cascades
 </div>
 
 <script>
@@ -502,6 +527,32 @@ async function fetchStats() {
   }
 }
 
+async function fetchDomains() {
+  const endpoints = [
+    {id: 'domain-k8s', path: '/federated/k8s'},
+    {id: 'domain-aap', path: '/federated/aap'},
+    {id: 'domain-knowledge', path: '/federated/knowledge'},
+  ];
+  for (const ep of endpoints) {
+    try {
+      const r = await fetch(API_BASE + ep.path);
+      if (r.ok) {
+        const d = await r.json();
+        const size = d.size || d.memories || 0;
+        document.getElementById(ep.id).textContent = fmt(size);
+      }
+    } catch (e) {}
+  }
+  try {
+    const r = await fetch(API_BASE + '/memories/stats');
+    if (r.ok) {
+      const d = await r.json();
+      document.getElementById('domain-aggregator').textContent = fmt(d.size || 0);
+      document.getElementById('domain-sources').textContent = (d.federated_sources || 0) + ' fed';
+    }
+  } catch (e) {}
+}
+
 async function fetchReplay() {
   try {
     const r = await fetch(API_BASE + '/stats');
@@ -521,6 +572,7 @@ async function fetchReplay() {
 
 async function poll() {
   await fetchStats();
+  await fetchDomains();
   await fetchReplay();
 }
 

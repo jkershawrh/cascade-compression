@@ -10,7 +10,7 @@ Most AI signals do not need a model. Cascade compression proves it — a self-tu
 
 But compression is only the beginning. The 1% of signals that survive the cascade — the ones that actually matter — become institutional memory. The same pipeline that reduces inference cost by 93% also forms, recalls, consolidates, and federates knowledge across domains. After 72 hours on production infrastructure, the system had discovered 462 causal links between storage failures and volume corruption, identified 5 missing upstream signal sources, and formed 10,964 memories representing the compressed operational history of the entire platform.
 
-The framework is domain-agnostic. Nine domain packs and 17 collectors ship ready to use (Kubernetes, Ansible Automation Platform, Prometheus, Ceph, ArgoCD, OVN, and more). Adding a new domain requires three things: a data connector, a one-paragraph prompt, and historical data for replay. The cascade bootstraps itself from signal observation, discovers suppression patterns automatically, and continuously validates that those patterns are still correct.
+The framework is domain-agnostic. Ten domain packs and 20 collectors ship ready to use — operational (Kubernetes, Ansible Automation Platform, Prometheus, Ceph, ArgoCD, OVN) and organizational knowledge (Jira, GitHub, Confluence). Adding a new domain requires three things: a data connector, a one-paragraph prompt, and historical data for replay. The cascade bootstraps itself from signal observation, discovers suppression patterns automatically, and continuously validates that those patterns are still correct.
 
 Five layers of defense — zero-FN gate, shadow validation, independent GCL audit, 72-hour TTL, and optional human gate — ensure that no activated agent can silently drop a real signal. An immutable ledger records the full evidence chain for every promotion and demotion. A GPU reasoning tier produces structured root-cause analyses for the signals that matter most. Sixty-one adversarial edge scenarios — across functional, safety, capacity, and causality categories — validate the framework against structuring attacks, label injection, service flapping, cross-domain breaches, and burst traffic. All pass.
 
@@ -202,37 +202,40 @@ The system runs on Red Hat OpenShift on Intel Xeon 6 hardware. No GPU in the inf
                     │  collector-poolboy     │  memory (50K) │ │
  AAP prod0 ───────→ │  collector-aap ──→    │  aggregator   │ │
                     │  collector-ceph   ──→  └──────────────┘ │
-                    │  collector-stargate                      │
-                    │  collector-babylon                       │
-                    │  collector-labagator                     │
-                    │  collector-agnosticv                     │
-                    │  collector-sandbox-conan                 │
-                    │                                         │
-                    │  cascade-aap (10K)                      │
-                    │  immutable-ledger                        │
-                    │  gcl-audit                               │
+                    │  collector-stargate        ↑             │
+                    │  collector-babylon         │             │
+                    │  collector-labagator       │             │
+                    │  collector-agnosticv       │             │
+                    │  collector-sandbox-conan   │             │
+                    │                            │             │
+                    │  cascade-aap (10K)     ────┘             │
+                    │  cascade-knowledge (10K) ──┘             │
+                    │    ↑ collector-jira                      │
+ Jira/GH/Conflu ─→ │    ↑ collector-git (819 repos)          │
+                    │    ↑ collector-confluence                │
                     └─────────────────────────────────────────┘
                                     │
-                    15 pods, 17 collectors, 9 clusters
+                    19 pods, 20 collectors, 9 clusters
 ```
 
 ### Live Soak Results (sustained, multi-day)
 
 | Metric | Value |
 |--------|-------|
-| **Signals processed** | **5.38M+** (current run) |
-| **Nano compression** | **81% K8s / 97% AAP** (live, contextual) |
+| **Signals processed** | **5.38M+** operational + **34K+** knowledge (current run) |
+| **Nano compression** | **81% K8s / 97% AAP / 83% knowledge** (live, contextual) |
 | **CPU classifications (micro tier)** | **290K+** |
 | **GPU analyses (macro tier)** | **19K+** |
-| **Agents activated** | **38** (32 nano + 6 learned) |
-| **Suppression patterns** | **59** (discovered organically) |
-| **Baseline types** | **49** |
-| **Aggregator memories** | **12,900+** (from 2 federated sources) |
+| **Agents activated** | **42** (35 K8s + 6 AAP + 1 knowledge) |
+| **Suppression patterns** | **58** (discovered organically) |
+| **Baseline types** | **48** |
+| **Aggregator memories** | **6,100+** (from 3 federated sources) |
 | **Shadow checks** | **25,700+** |
 | **Shadow demotions** | **296** (self-correcting) |
 | **Clusters monitored** | **10** (incl. racmaas AI infrastructure) |
-| **Collectors running** | **12** |
-| **Pods deployed** | **15** |
+| **Signal sources** | **3 domains**: operational (K8s/AAP), organizational (Jira/Git/Confluence) |
+| **Collectors running** | **15** (12 operational + 3 knowledge) |
+| **Pods deployed** | **19** |
 
 ### Replay Validation (142.4M signals)
 
@@ -391,10 +394,11 @@ Nine domain packs ship ready to use:
 
 ### Collectors
 
-17 collectors, each a standalone module that maps a data source to the Signal protocol:
+20 collectors, each a standalone module that maps a data source to the Signal protocol:
 
 | Collector | Source | Integration |
 |-----------|--------|-------------|
+| **Operational** | | |
 | kubernetes | K8s API (pods, events, nodes) | Service account token |
 | prometheus | Thanos/Prometheus | Federation API + Alertmanager |
 | aap | Ansible Automation Platform | Database read replica |
@@ -407,11 +411,16 @@ Nine domain packs ship ready to use:
 | labagator | Labagator | REST API |
 | agnosticv | AgnosticV | GitHub API |
 | sandbox_conan | Sandbox-Conan | Prometheus metrics endpoint |
-| finance | Synthetic | ISO 20022 transaction generator |
-| healthcare | Synthetic | HL7 FHIR signal generator |
-| insurance | Synthetic | ACORD claims generator |
-| retail | Synthetic | GS1 event generator |
-| telecom | Synthetic | TMF621 event generator |
+| **Organizational Knowledge** | | |
+| jira | Jira Cloud (issues, comments) | Atlassian REST API v3 |
+| git | GitHub (commits, PRs, reviews) | GitHub REST API (org-level discovery) |
+| confluence | Confluence (pages, runbooks) | Confluence REST API v2 |
+| **Synthetic (industry benchmarks)** | | |
+| finance | ISO 20022 transaction generator | Calibrated to Nilson/FinCEN ratios |
+| healthcare | HL7 FHIR signal generator | Calibrated to AHRQ PSNet ratios |
+| insurance | ACORD claims generator | Calibrated to NAIC/FBI ratios |
+| retail | GS1 event generator | Calibrated to NRF ratios |
+| telecom | TMF621 event generator | Calibrated to 3GPP/FCC ratios |
 
 Adding a new domain requires:
 1. A collector (data source adapter → Signal protocol)
@@ -428,6 +437,7 @@ All benchmarks run with the same cascade framework. No engine modifications betw
 |--------|---------|-------------|-------------------------|--------|
 | **Kubernetes** | **6.2M** live / **142.4M** replay | **82%** / **99.1%** | 100% | Production |
 | **AAP** | **1.0M+** | **96.0%** | 100% | Production |
+| **Org Knowledge** | **34K+** (Jira/Git/Confluence) | **83%** | Runbook decay, decision churn, hotfix patterns | Production |
 | Financial Services | 110K synthetic | 61.1% | 92.7% fraud, 100% compliance | Cold start |
 | Healthcare | 100K synthetic | 91.0% | 96.6% critical, 99.0% compliance | Cold start |
 | Insurance | 100K synthetic | 81.2% | 100% fraud, 99.8% compliance | Cold start |
