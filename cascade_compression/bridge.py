@@ -607,11 +607,31 @@ class CascadeBridge:
             log.debug("GPU escalation failed: %s", str(e)[:60])
             return None
 
+    _GPU_MAX_LINES = 10000
+    _CONTEXT_MAP_MAX = 5000
+
+    def _prune_context_map(self, ctx_map: dict) -> dict:
+        if len(ctx_map) <= self._CONTEXT_MAP_MAX:
+            return ctx_map
+        sorted_keys = sorted(ctx_map, key=ctx_map.get, reverse=True)
+        return {k: ctx_map[k] for k in sorted_keys[:self._CONTEXT_MAP_MAX]}
+
     def _append_gpu_analysis(self, analysis: dict):
         import fcntl
-        with open(self._gpu_analyses_file, "a") as f:
+        path = self._gpu_analyses_file
+        with open(path, "a") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
             f.write(json.dumps(analysis) + "\n")
+        try:
+            with open(path) as f:
+                lines = f.readlines()
+            if len(lines) > self._GPU_MAX_LINES:
+                keep = lines[-self._GPU_MAX_LINES:]
+                with open(path, "w") as f:
+                    f.writelines(keep)
+                log.info("GPU analyses rotated: %d → %d lines", len(lines), len(keep))
+        except Exception:
+            pass
             fcntl.flock(f, fcntl.LOCK_UN)
 
     def _run_llm(self, signals):
@@ -940,8 +960,8 @@ class CascadeBridge:
                 "activated_contexts": {k: sorted(v) for k, v in self._activated_contexts.items()},
                 "llm_noise_counts": dict(self._llm_noise_counts),
                 "llm_important_counts": dict(self._llm_important_counts),
-                "llm_context_noise": dict(self._llm_context_noise),
-                "llm_context_important": dict(self._llm_context_important),
+                "llm_context_noise": dict(self._prune_context_map(self._llm_context_noise)),
+                "llm_context_important": dict(self._prune_context_map(self._llm_context_important)),
                 "known_patterns": list(self.corpus_analyzer._known_patterns),
                 "candidate_agents": [{
                     "name": metrics.name,
