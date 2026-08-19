@@ -62,6 +62,21 @@ def _to_signal(domain: str, obj) -> dict:
                         if k not in ("id", "signal_type", "severity", "source", "region")},
             "labels": {"label": getattr(obj, "label", ""), "label_detail": getattr(obj, "label_detail", "")},
         }
+    elif domain == "knowledge":
+        return {
+            "signal_type": obj.signal_type,
+            "severity": obj.severity,
+            "source": obj.source,
+            "namespace": obj.team,
+            "content": {"message": obj.content, "topic": obj.topic},
+            "labels": {
+                "person": obj.person,
+                "team": obj.team,
+                "topic": obj.topic,
+                "label": obj.label,
+                "label_detail": obj.label_detail,
+            },
+        }
     else:
         d = vars(obj) if hasattr(obj, "__dict__") else {"raw": str(obj)}
         return {
@@ -97,6 +112,8 @@ def _generate(domain: str, count: int, seed: int = 42):
         from cascade_compression.benchmarks.synthetic_insurance import generate
     elif domain == "retail":
         from cascade_compression.benchmarks.synthetic_retail import generate
+    elif domain == "knowledge":
+        from cascade_compression.benchmarks.synthetic_knowledge import generate
     else:
         raise ValueError(f"Unknown domain: {domain}")
     return generate(count, seed=seed)
