@@ -23,7 +23,7 @@ spec:
     spec:
       containers:
       - name: cascade
-        image: quay.io/redhat-ai-incubation/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         ports:
         - containerPort: 8090
         env:

@@ -44,7 +44,7 @@
           "source_file": "feedback-architecture-diagram"
         },
         {
-          "text": "Before any deploy to infra01:\n1. Verify the deployment has an oauth-proxy sidecar container\n2. Verify the route targets the oauth-proxy port (8080/8443/4180), not the backend directly\n3. Test with `curl -sk https://<route>/` \u2014 must return 403, not 200\n4. Service-to-service API routes that bypass OAuth must have API key validation on the backend\n5. Health and webhook endpoints can bypass via `-skip-auth-regex`\n\nPattern: registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:latest as sidecar, with OAuthClient + ServiceAccount + cookie/client secrets. See [[security-network-policies]] for related requirements.",
+          "text": "Before any deploy to production:\n1. Verify the deployment has an oauth-proxy sidecar container\n2. Verify the route targets the oauth-proxy port (8080/8443/4180), not the backend directly\n3. Test with `curl -sk https://<route>/` \u2014 must return 403, not 200\n4. Service-to-service API routes that bypass OAuth must have API key validation on the backend\n5. Health and webhook endpoints can bypass via `-skip-auth-regex`\n\nPattern: registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:latest as sidecar, with OAuthClient + ServiceAccount + cookie/client secrets. See [[security-network-policies]] for related requirements.",
           "type": "rule",
           "source": "claude-code",
           "project": "deepfield",
@@ -60,21 +60,21 @@
       ],
       "facts": [
         {
-          "text": "granite-2b-cpu \u2192 `granite-2b-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`",
+          "text": "granite-2b-cpu \u2192 `granite-2b-cpu-external-llm-hosting.apps.model-service.example.com`",
           "type": "fact",
           "source": "claude-code",
           "project": "InferencePlan",
           "source_file": "reference-maas-access"
         },
         {
-          "text": "phi3-mini-cpu \u2192 `phi3-mini-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`",
+          "text": "phi3-mini-cpu \u2192 `phi3-mini-cpu-external-llm-hosting.apps.model-service.example.com`",
           "type": "fact",
           "source": "claude-code",
           "project": "InferencePlan",
           "source_file": "reference-maas-access"
         },
         {
-          "text": "qwen25-3b-cpu \u2192 `qwen25-3b-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`",
+          "text": "qwen25-3b-cpu \u2192 `qwen25-3b-cpu-external-llm-hosting.apps.model-service.example.com`",
           "type": "fact",
           "source": "claude-code",
           "project": "InferencePlan",
@@ -119,7 +119,7 @@
           "source_file": "feedback-phi4-gate2"
         },
         {
-          "text": "LiteLLM endpoint: `LITELLM_API_BASE=https://maas-rhdp.apps.maas.redhatworkshops.io`",
+          "text": "LiteLLM endpoint: `LITELLM_API_BASE=https://model-service.example.com`",
           "type": "rule",
           "source": "claude-code",
           "project": "crawler",
@@ -163,21 +163,21 @@
           "source_file": "reference-maas-access"
         },
         {
-          "text": "granite-2b-cpu \u2192 `granite-2b-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`",
+          "text": "granite-2b-cpu \u2192 `granite-2b-cpu-external-llm-hosting.apps.model-service.example.com`",
           "type": "fact",
           "source": "claude-code",
           "project": "InferencePlan",
           "source_file": "reference-maas-access"
         },
         {
-          "text": "phi3-mini-cpu \u2192 `phi3-mini-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`",
+          "text": "phi3-mini-cpu \u2192 `phi3-mini-cpu-external-llm-hosting.apps.model-service.example.com`",
           "type": "fact",
           "source": "claude-code",
           "project": "InferencePlan",
           "source_file": "reference-maas-access"
         },
         {
-          "text": "qwen25-3b-cpu \u2192 `qwen25-3b-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`",
+          "text": "qwen25-3b-cpu \u2192 `qwen25-3b-cpu-external-llm-hosting.apps.model-service.example.com`",
           "type": "fact",
           "source": "claude-code",
           "project": "InferencePlan",
@@ -281,7 +281,7 @@
           "source_file": "reference-maas-access"
         },
         {
-          "text": "granite-2b-cpu \u2192 `granite-2b-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`",
+          "text": "granite-2b-cpu \u2192 `granite-2b-cpu-external-llm-hosting.apps.model-service.example.com`",
           "type": "fact",
           "source": "claude-code",
           "project": "InferencePlan",
@@ -486,7 +486,7 @@
           "source_file": "feedback-phi4-gate2"
         },
         {
-          "text": "LiteLLM endpoint: `LITELLM_API_BASE=https://maas-rhdp.apps.maas.redhatworkshops.io`",
+          "text": "LiteLLM endpoint: `LITELLM_API_BASE=https://model-service.example.com`",
           "type": "rule",
           "source": "claude-code",
           "project": "crawler",
@@ -516,11 +516,11 @@
           "source_file": "deepfield-stargate-integration"
         },
         {
-          "text": "LLM: llama-scout-17b via LiteLLM at maas-rhdp.apps.maas.redhatworkshops.io",
+          "text": "LLM: llama-scout-17b via LiteLLM at model-service.example.com",
           "type": "fact",
           "source": "claude-code",
           "project": "StarGate",
-          "source_file": "infra01-deployment"
+          "source_file": "production-deployment"
         },
         {
           "text": "Works at Red Hat on the demo platform. Building a multi-agent orchestration system on OpenShift AI. Has access to Intel Xeon 6 and Gaudi accelerator servers for inference. May be able to provision OpenShift AI via the demo platform. Interested in leveraging Red Hat's AgentOps observability stack (OpenTelemetry, MLflow, Tempo).",
@@ -680,7 +680,7 @@
           "source_file": "user-workstreams"
         },
         {
-          "text": "Created the EVY platform (srex-dev/EVY) and the edge-ai-cpu-inference quickstart (jkershawrh/edge-ai-cpu-inference, published to quay.io/rh-ai-quickstart/).",
+          "text": "Created the EVY platform (srex-dev/EVY) and the edge-ai-cpu-inference quickstart (your-org/edge-ai-cpu-inference, published to quay.io/rh-ai-quickstart/).",
           "type": "fact",
           "source": "claude-code",
           "project": "edge-inference-at-scale",
@@ -776,7 +776,7 @@
           "source_file": "deepfield-stargate-integration"
         },
         {
-          "text": "GeoLux is the governance brain connecting Deepfield (detection) and StarGate (execution). Deployed on infra01 namespace `geolux`.",
+          "text": "GeoLux is the governance brain connecting Deepfield (detection) and StarGate (execution). Deployed on production namespace `geolux`.",
           "type": "fact",
           "source": "claude-code",
           "project": "StarGate",
@@ -793,41 +793,41 @@
       "decisions": [],
       "preferences": []
     },
-    "infra01_only": {
+    "production_only": {
       "reach": 14,
       "total_claims": 52,
       "unique_claims": 52,
       "rules": [
         {
-          "text": "Every application deployed to infra01 (ocpv-infra01) MUST have Red Hat OAuth proxy (ose-oauth-proxy-rhel9 sidecar) on all externally-routed frontend and API deployments.",
+          "text": "Every application deployed to production (ocpv-production) MUST have Red Hat OAuth proxy (ose-oauth-proxy-rhel9 sidecar) on all externally-routed frontend and API deployments.",
           "type": "rule",
           "source": "claude-code",
           "project": "deepfield",
           "source_file": "oauth-requirement"
         },
         {
-          "text": "Before any deploy to infra01:\n1. Verify the deployment has an oauth-proxy sidecar container\n2. Verify the route targets the oauth-proxy port (8080/8443/4180), not the backend directly\n3. Test with `curl -sk https://<route>/` \u2014 must return 403, not 200\n4. Service-to-service API routes that bypass OAuth must have API key validation on the backend\n5. Health and webhook endpoints can bypass via `-skip-auth-regex`\n\nPattern: registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:latest as sidecar, with OAuthClient + ServiceAccount + cookie/client secrets. See [[security-network-policies]] for related requirements.",
+          "text": "Before any deploy to production:\n1. Verify the deployment has an oauth-proxy sidecar container\n2. Verify the route targets the oauth-proxy port (8080/8443/4180), not the backend directly\n3. Test with `curl -sk https://<route>/` \u2014 must return 403, not 200\n4. Service-to-service API routes that bypass OAuth must have API key validation on the backend\n5. Health and webhook endpoints can bypass via `-skip-auth-regex`\n\nPattern: registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:latest as sidecar, with OAuthClient + ServiceAccount + cookie/client secrets. See [[security-network-policies]] for related requirements.",
           "type": "rule",
           "source": "claude-code",
           "project": "deepfield",
           "source_file": "oauth-requirement"
         },
         {
-          "text": "When rebasing agnosticv PR branches, the context keeps switching back to infra01. Always `oc config use-context` explicitly before running oc commands on integration or prod clusters.",
+          "text": "When rebasing agnosticv PR branches, the context keeps switching back to production. Always `oc config use-context` explicitly before running oc commands on integration or prod clusters.",
           "type": "rule",
           "source": "claude-code",
           "project": "intel-quickstarts-triforce",
           "source_file": "stuck-catalogitem-finalizers"
         },
         {
-          "text": "This project deploys to infra01 ONLY. Before any oc command, verify context:",
+          "text": "This project deploys to production ONLY. Before any oc command, verify context:",
           "type": "rule",
           "source": "claude-code",
           "project": "intel-tco-calculator",
           "source_file": "feedback-cluster-context"
         },
         {
-          "text": "Multiple sessions have accidentally run commands against Oberon (default/api-REDACTED-CLUSTER-example-com:6443/kube:admin) instead of infra01, causing \"namespace not found\" errors, stale data reads, and gateway confusion. The oc context drifts silently when other sessions or background tasks switch it.",
+          "text": "Multiple sessions have accidentally run commands against Oberon (default/api-REDACTED-CLUSTER-example-com:6443/kube:admin) instead of production, causing \"namespace not found\" errors, stale data reads, and gateway confusion. The oc context drifts silently when other sessions or background tasks switch it.",
           "type": "rule",
           "source": "claude-code",
           "project": "intel-tco-calculator",
@@ -836,21 +836,21 @@
       ],
       "facts": [
         {
-          "text": "Three systems deployed on infra01 (ocpv-infra01.dal12.infra.demo.redhat.com), all scoped to 5 sandbox clusters: ocpv05, ocpv06, ocpv07, ocpv08, ocpv09.",
+          "text": "Three systems deployed on production (YOUR_CLUSTER.example.com), all scoped to 5 sandbox clusters: ocpv05, ocpv06, ocpv07, ocpv08, ocpv09.",
           "type": "fact",
           "source": "claude-code",
           "project": "StarGate",
           "source_file": "deepfield-stargate-integration"
         },
         {
-          "text": "GeoLux is the governance brain connecting Deepfield (detection) and StarGate (execution). Deployed on infra01 namespace `geolux`.",
+          "text": "GeoLux is the governance brain connecting Deepfield (detection) and StarGate (execution). Deployed on production namespace `geolux`.",
           "type": "fact",
           "source": "claude-code",
           "project": "StarGate",
           "source_file": "geolux-governance"
         },
         {
-          "text": "Scanner clusters reduced to ocpv05-09 only (removed infra01, infra02, ocp-us-east-1)",
+          "text": "Scanner clusters reduced to ocpv05-09 only (removed production, infra02, ocp-us-east-1)",
           "type": "fact",
           "source": "claude-code",
           "project": "StarGate",
@@ -864,7 +864,7 @@
           "source_file": "reference-oberon-cluster"
         },
         {
-          "text": "## Live Metrics (infra01 demo platform, 48K+ signals)",
+          "text": "## Live Metrics (production demo platform, 48K+ signals)",
           "type": "fact",
           "source": "claude-code",
           "project": "crawler",
@@ -1042,7 +1042,7 @@
           "source_file": "project-edge-inference"
         },
         {
-          "text": "Created the EVY platform (srex-dev/EVY) and the edge-ai-cpu-inference quickstart (jkershawrh/edge-ai-cpu-inference, published to quay.io/rh-ai-quickstart/).",
+          "text": "Created the EVY platform (srex-dev/EVY) and the edge-ai-cpu-inference quickstart (your-org/edge-ai-cpu-inference, published to quay.io/rh-ai-quickstart/).",
           "type": "fact",
           "source": "claude-code",
           "project": "edge-inference-at-scale",
@@ -1139,14 +1139,14 @@
       ],
       "facts": [
         {
-          "text": "ARE Foundation's immutable ledger has been extracted into a standalone repo at jkershawrh/are-immutable-ledger (GitHub). Positioned as neutral infrastructure for cross-system agentic proof chains.",
+          "text": "ARE Foundation's immutable ledger has been extracted into a standalone repo at your-org/are-immutable-ledger (GitHub). Positioned as neutral infrastructure for cross-system agentic proof chains.",
           "type": "fact",
           "source": "claude-code",
           "project": "OpenShell",
           "source_file": "project-are-ledger-aaif"
         },
         {
-          "text": "`jkershawrh/are-immutable-ledger` \u2014 the standalone ledger + demo",
+          "text": "`your-org/are-immutable-ledger` \u2014 the standalone ledger + demo",
           "type": "fact",
           "source": "claude-code",
           "project": "OpenShell",
@@ -1304,7 +1304,7 @@
       "unique_claims": 15,
       "rules": [
         {
-          "text": "Every application deployed to infra01 (ocpv-infra01) MUST have Red Hat OAuth proxy (ose-oauth-proxy-rhel9 sidecar) on all externally-routed frontend and API deployments.",
+          "text": "Every application deployed to production (ocpv-production) MUST have Red Hat OAuth proxy (ose-oauth-proxy-rhel9 sidecar) on all externally-routed frontend and API deployments.",
           "type": "rule",
           "source": "claude-code",
           "project": "deepfield",
@@ -1318,7 +1318,7 @@
           "source_file": "oauth-requirement"
         },
         {
-          "text": "Before any deploy to infra01:\n1. Verify the deployment has an oauth-proxy sidecar container\n2. Verify the route targets the oauth-proxy port (8080/8443/4180), not the backend directly\n3. Test with `curl -sk https://<route>/` \u2014 must return 403, not 200\n4. Service-to-service API routes that bypass OAuth must have API key validation on the backend\n5. Health and webhook endpoints can bypass via `-skip-auth-regex`\n\nPattern: registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:latest as sidecar, with OAuthClient + ServiceAccount + cookie/client secrets. See [[security-network-policies]] for related requirements.",
+          "text": "Before any deploy to production:\n1. Verify the deployment has an oauth-proxy sidecar container\n2. Verify the route targets the oauth-proxy port (8080/8443/4180), not the backend directly\n3. Test with `curl -sk https://<route>/` \u2014 must return 403, not 200\n4. Service-to-service API routes that bypass OAuth must have API key validation on the backend\n5. Health and webhook endpoints can bypass via `-skip-auth-regex`\n\nPattern: registry.redhat.io/openshift4/ose-oauth-proxy-rhel9:latest as sidecar, with OAuthClient + ServiceAccount + cookie/client secrets. See [[security-network-policies]] for related requirements.",
           "type": "rule",
           "source": "claude-code",
           "project": "deepfield",
@@ -1345,28 +1345,28 @@
           "type": "fact",
           "source": "claude-code",
           "project": "StarGate",
-          "source_file": "infra01-deployment"
+          "source_file": "production-deployment"
         },
         {
           "text": "Frontend: nginx reverse proxy, oauth-proxy",
           "type": "fact",
           "source": "claude-code",
           "project": "StarGate",
-          "source_file": "infra01-deployment"
+          "source_file": "production-deployment"
         },
         {
           "text": "Backend: 1 replica + oauth-proxy, Postgres",
           "type": "fact",
           "source": "claude-code",
           "project": "StarGate",
-          "source_file": "infra01-deployment"
+          "source_file": "production-deployment"
         },
         {
           "text": "1 replica + oauth-proxy",
           "type": "fact",
           "source": "claude-code",
           "project": "StarGate",
-          "source_file": "infra01-deployment"
+          "source_file": "production-deployment"
         }
       ],
       "decisions": [],
@@ -1745,14 +1745,14 @@
           "source_file": "project-cascade-aap-validated"
         },
         {
-          "text": "1. **AAP signal source** \u2014 prove domain-agnostic on Ansible job signals (infra01 has AAP namespace)\n2. **Historical replay** \u2014 feed 140M Postgres signals through cascade offline\n3. **Action layer** \u2014 what happens to signals that pass through (tickets, alerts, routing)\n4. **Domain pack export** \u2014 export learned patterns as reusable YAML\n5. **GCL + immutable ledger** \u2014 governance layer for compliance\n6. **Whitepaper** \u2014 document the architecture, benchmarks, and findings",
+          "text": "1. **AAP signal source** \u2014 prove domain-agnostic on Ansible job signals (production has AAP namespace)\n2. **Historical replay** \u2014 feed 140M Postgres signals through cascade offline\n3. **Action layer** \u2014 what happens to signals that pass through (tickets, alerts, routing)\n4. **Domain pack export** \u2014 export learned patterns as reusable YAML\n5. **GCL + immutable ledger** \u2014 governance layer for compliance\n6. **Whitepaper** \u2014 document the architecture, benchmarks, and findings",
           "type": "fact",
           "source": "claude-code",
           "project": "crawler",
           "source_file": "project-cascade-final-state"
         },
         {
-          "text": "1. Historical replay \u2014 feed 140M Postgres signals through cascade offline\n2. Lower Gate 2 threshold or let replay boost compression\n3. Action layer \u2014 what happens to signals that pass through (tickets, alerts, routing)\n4. GCL + immutable ledger for governance\n5. Second signal source (AAP/Ansible on infra01) to prove domain-agnostic\n6. IoT application exploration",
+          "text": "1. Historical replay \u2014 feed 140M Postgres signals through cascade offline\n2. Lower Gate 2 threshold or let replay boost compression\n3. Action layer \u2014 what happens to signals that pass through (tickets, alerts, routing)\n4. GCL + immutable ledger for governance\n5. Second signal source (AAP/Ansible on production) to prove domain-agnostic\n6. IoT application exploration",
           "type": "fact",
           "source": "claude-code",
           "project": "crawler",

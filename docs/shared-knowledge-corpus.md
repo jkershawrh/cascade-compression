@@ -9,7 +9,7 @@ Institutional topics: 22 (appearing in 3+ projects).
 - The system is still being validated. User is building toward auto-remediation but is not there yet. Read-only diagnostics (oc get/describe/logs) are fine. Any mutation (oc rollout restart, oc delete, 
 - Requires namespace-specific claims naming the sandbox and failure cause
 - Show trust boundaries (TDX enclave, namespace isolation, policy gates)
-- Before any deploy to infra01:
+- Before any deploy to production:
 1. Verify the deployment has an oauth-proxy sidecar container
 2. Verify the route targets the oauth-proxy port (8080/8443/4180), not the backend directly
 3. Test with `cu
@@ -17,9 +17,9 @@ Institutional topics: 22 (appearing in 3+ projects).
 2. **Always verify nothing is running before starting** — check `oc get pods --all-nam
 
 **Key facts:**
-- granite-2b-cpu → `granite-2b-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`
-- phi3-mini-cpu → `phi3-mini-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`
-- qwen25-3b-cpu → `qwen25-3b-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`
+- granite-2b-cpu → `granite-2b-cpu-external-llm-hosting.apps.model-service.example.com`
+- phi3-mini-cpu → `phi3-mini-cpu-external-llm-hosting.apps.model-service.example.com`
+- qwen25-3b-cpu → `qwen25-3b-cpu-external-llm-hosting.apps.model-service.example.com`
 - deepseek-r1-distill-qwen-14b → `deepseek-...-direct-llm-hosting.apps.ocp-rac-maas...`
 - microsoft-phi-4 → `microsoft-phi-4-direct-llm-hosting.apps.ocp-rac-maas...`
 
@@ -29,7 +29,7 @@ Institutional topics: 22 (appearing in 3+ projects).
 
 **Rules:**
 - phi-4 via LiteLLM (maas-rhdp) is the right backend for Gate 2 classification. The zero-shot encoder (distilbert-mnli) guesses at 30-46% confidence. phi-4 classifies decisively at 270-314ms with the ri
-- LiteLLM endpoint: `LITELLM_API_BASE=https://maas-rhdp.apps.maas.redhatworkshops.io`
+- LiteLLM endpoint: `LITELLM_API_BASE=https://model-service.example.com`
 - Replace the encoder-service HTTP calls in `_run_gate2()` with LiteLLM calls to phi-4. The domain pack YAML provides the system prompt context. The encoder pod can be scaled down or repurposed.
 
 [[proj
@@ -41,9 +41,9 @@ Institutional topics: 22 (appearing in 3+ projects).
 - Hardware detection method: LiteLLM `/v1/model/info` shows backend `api_base` URLs.
 - `-external-` route + `-cpu` suffix = Xeon 6 (OpenVINO runtime)
 - `-direct-` route (no `-cpu`) = Gaudi 3 (vLLM runti
-- granite-2b-cpu → `granite-2b-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`
-- phi3-mini-cpu → `phi3-mini-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`
-- qwen25-3b-cpu → `qwen25-3b-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`
+- granite-2b-cpu → `granite-2b-cpu-external-llm-hosting.apps.model-service.example.com`
+- phi3-mini-cpu → `phi3-mini-cpu-external-llm-hosting.apps.model-service.example.com`
+- qwen25-3b-cpu → `qwen25-3b-cpu-external-llm-hosting.apps.model-service.example.com`
 
 **Decisions:**
 - The entire "one model, one silicon" narrative assumed granite-3-2-8b ran on Xeon 6. It doesn't. Need to either get it onto rac-maas Xeon CPU or pivot to existing CPU models (granite-2b-cpu is the clos
@@ -67,7 +67,7 @@ Related: [[reference-repos]]
 - Hardware detection method: LiteLLM `/v1/model/info` shows backend `api_base` URLs.
 - `-external-` route + `-cpu` suffix = Xeon 6 (OpenVINO runtime)
 - `-direct-` route (no `-cpu`) = Gaudi 3 (vLLM runti
-- granite-2b-cpu → `granite-2b-cpu-external-llm-hosting.apps.ocp-rac-maas.rs-dfw3.infra.demo.redhat.com`
+- granite-2b-cpu → `granite-2b-cpu-external-llm-hosting.apps.model-service.example.com`
 - **Deepfield** (namespace: deepfield) — real-time signal processing
 - 5 clusters configured via CLUSTER_N_* env vars (infra/AWS clusters removed 2026-08-04)
 - Signal funnel: ~200K raw/hr → reasoning ta
@@ -112,7 +112,7 @@ Related: [[reference-repos]]
 3. Review the generated agnosticv config
 4. Adjust if needed, then 
 - phi-4 via LiteLLM (maas-rhdp) is the right backend for Gate 2 classification. The zero-shot encoder (distilbert-mnli) guesses at 30-46% confidence. phi-4 classifies decisively at 270-314ms with the ri
-- LiteLLM endpoint: `LITELLM_API_BASE=https://maas-rhdp.apps.maas.redhatworkshops.io`
+- LiteLLM endpoint: `LITELLM_API_BASE=https://model-service.example.com`
 
 **Key facts:**
 - llm-d-planner (cloned to InferencePlan/llm-d-planner/) is being adapted as a CPU inference capacity planner for the Intel Red Hat partner demo platform.
@@ -120,7 +120,7 @@ Related: [[reference-repos]]
 - **StarGate** (namespace: stargate) — batch readiness scanner + remediation pipeline
 - API: 2 replicas + oauth-proxy, Frontend: nginx + oauth-proxy, Scanner: scheduler + babylon-worker, Postgres
 - Scan
-- LLM: llama-scout-17b via LiteLLM at maas-rhdp.apps.maas.redhatworkshops.io
+- LLM: llama-scout-17b via LiteLLM at model-service.example.com
 - Works at Red Hat on the demo platform. Building a multi-agent orchestration system on OpenShift AI. Has access to Intel Xeon 6 and Gaudi accelerator servers for inference. May be able to provision Ope
 
 ---
@@ -159,7 +159,7 @@ Related: [[reference-repos]]
 - Four major workstreams (equal priority):
 1. **AI Quickstarts** — Intel quickstart factory, showroom ports, RHDP pipeline, XDD test suites
 2. **Triforce** — episodic labs (6 episodes, 59 pages), Intel 
-- Created the EVY platform (srex-dev/EVY) and the edge-ai-cpu-inference quickstart (jkershawrh/edge-ai-cpu-inference, published to quay.io/rh-ai-quickstart/).
+- Created the EVY platform (srex-dev/EVY) and the edge-ai-cpu-inference quickstart (your-org/edge-ai-cpu-inference, published to quay.io/rh-ai-quickstart/).
 - Works with Red Hat + Intel partnerships. Familiar with OpenShift, UBI9, Helm charts, BitNet models, llama.cpp, and the rh-ai-quickstart GitHub org. Uses a CDD→TDD→EDD→BDD validation framework with cla
 
 ---
@@ -181,29 +181,29 @@ Related: [[reference-repos]]
 - **GeoLux** (namespace: geolux) — governance brain
 - Receives evidence from StarGate (HTTP + Kafka), generates hypotheses, classifies, runs MPC
 - Hypothesis dedup: in-memory cache (1h TTL) + DB check p
-- GeoLux is the governance brain connecting Deepfield (detection) and StarGate (execution). Deployed on infra01 namespace `geolux`.
+- GeoLux is the governance brain connecting Deepfield (detection) and StarGate (execution). Deployed on production namespace `geolux`.
 - Multi-agent orchestration system to be deployed on OpenShift AI (Red Hat AI 3.4+). Inference on Intel Xeon 6 and Gaudi accelerators. Will use Red Hat's AgentOps stack: OpenTelemetry distributed tracin
 
 ---
 
-## Infra01 Only (14 projects, 52 unique claims)
+## Cluster Context (14 projects, 52 unique claims)
 
 **Rules:**
-- Every application deployed to infra01 (ocpv-infra01) MUST have Red Hat OAuth proxy (ose-oauth-proxy-rhel9 sidecar) on all externally-routed frontend and API deployments.
-- Before any deploy to infra01:
+- Every application deployed to production (ocpv-production) MUST have Red Hat OAuth proxy (ose-oauth-proxy-rhel9 sidecar) on all externally-routed frontend and API deployments.
+- Before any deploy to production:
 1. Verify the deployment has an oauth-proxy sidecar container
 2. Verify the route targets the oauth-proxy port (8080/8443/4180), not the backend directly
 3. Test with `cu
-- When rebasing agnosticv PR branches, the context keeps switching back to infra01. Always `oc config use-context` explicitly before running oc commands on integration or prod clusters.
-- This project deploys to infra01 ONLY. Before any oc command, verify context:
-- Multiple sessions have accidentally run commands against Oberon (default/api-REDACTED-CLUSTER-example-com:6443/kube:admin) instead of infra01, causing "namespace not found" errors, stale data reads, and gat
+- When rebasing agnosticv PR branches, the context keeps switching back to production. Always `oc config use-context` explicitly before running oc commands on integration or prod clusters.
+- This project deploys to production ONLY. Before any oc command, verify context:
+- Multiple sessions have accidentally run commands against Staging (default/api-REDACTED-CLUSTER-example-com:6443/kube:admin) instead of production, causing "namespace not found" errors, stale data reads, and gat
 
 **Key facts:**
-- Three systems deployed on infra01 (ocpv-infra01.dal12.infra.demo.redhat.com), all scoped to 5 sandbox clusters: ocpv05, ocpv06, ocpv07, ocpv08, ocpv09.
-- GeoLux is the governance brain connecting Deepfield (detection) and StarGate (execution). Deployed on infra01 namespace `geolux`.
-- Scanner clusters reduced to ocpv05-09 only (removed infra01, infra02, ocp-us-east-1)
-- Intel Lab OpenShift cluster. This IS Folsome Lab (same cluster). DEV environment in the pipeline: Oberon → Infra01 → Integration → Demo. Related to .
-- ## Live Metrics (infra01 demo platform, 48K+ signals)
+- Three systems deployed on production (YOUR_CLUSTER.example.com), all scoped to 5 sandbox clusters: ocpv05, ocpv06, ocpv07, ocpv08, ocpv09.
+- GeoLux is the governance brain connecting Deepfield (detection) and StarGate (execution). Deployed on production namespace `geolux`.
+- Scanner clusters reduced to ocpv05-09 only (removed production, infra02, ocp-us-east-1)
+- Intel Lab OpenShift cluster. This IS Folsome Lab (same cluster). DEV environment in the pipeline: Staging → Production → Integration → Demo. Related to .
+- ## Live Metrics (production demo platform, 48K+ signals)
 
 ---
 
@@ -249,7 +249,7 @@ Related: [[pro
 1. **AI Quickstarts** — Intel quickstart factory, showroom ports, RHDP pipeline, XDD test suites
 2. **Triforce** — episodic labs (6 episodes, 59 pages), Intel 
 - Demonstrate that even with 2G connectivity and minimal hardware (no GPU), you can deploy useful AI inference at edge sites — disaster zones, warzones, underserved communities. Summit Connect conferenc
-- Created the EVY platform (srex-dev/EVY) and the edge-ai-cpu-inference quickstart (jkershawrh/edge-ai-cpu-inference, published to quay.io/rh-ai-quickstart/).
+- Created the EVY platform (srex-dev/EVY) and the edge-ai-cpu-inference quickstart (your-org/edge-ai-cpu-inference, published to quay.io/rh-ai-quickstart/).
 - Works with Red Hat + Intel partnerships. Familiar with OpenShift, UBI9, Helm charts, BitNet models, llama.cpp, and the rh-ai-quickstart GitHub org. Uses a CDD→TDD→EDD→BDD validation framework with cla
 
 **Decisions:**
@@ -268,8 +268,8 @@ Related: [[pro
 - **are-immutable-ledger**: independent evidence infrastructure with its own database and compute. The ledger-owned gRPC service is canonical. `pkg/ledger/` currently supports memory/disabled modes and 
 
 **Key facts:**
-- ARE Foundation's immutable ledger has been extracted into a standalone repo at jkershawrh/are-immutable-ledger (GitHub). Positioned as neutral infrastructure for cross-system agentic proof chains.
-- `jkershawrh/are-immutable-ledger` — the standalone ledger + demo
+- ARE Foundation's immutable ledger has been extracted into a standalone repo at your-org/are-immutable-ledger (GitHub). Positioned as neutral infrastructure for cross-system agentic proof chains.
+- `your-org/are-immutable-ledger` — the standalone ledger + demo
 - Key changes deployed:
 - GCL prompt governance adapter replaced regex semantic router (evidence→classify→falsify→sign→commit)
 - OPA decisions now bridge to the immutable ledger via demo-api
@@ -316,9 +316,9 @@ GCL sampler polls (from_ts watermark) → audits 5% sample → deterministic che
 ## Oauth Security (9 projects, 15 unique claims)
 
 **Rules:**
-- Every application deployed to infra01 (ocpv-infra01) MUST have Red Hat OAuth proxy (ose-oauth-proxy-rhel9 sidecar) on all externally-routed frontend and API deployments.
+- Every application deployed to production (ocpv-production) MUST have Red Hat OAuth proxy (ose-oauth-proxy-rhel9 sidecar) on all externally-routed frontend and API deployments.
 - The user has flagged this repeatedly — OAuth keeps getting dropped during redeploys. This is a security compliance requirement, not optional.
-- Before any deploy to infra01:
+- Before any deploy to production:
 1. Verify the deployment has an oauth-proxy sidecar container
 2. Verify the route targets the oauth-proxy port (8080/8443/4180), not the backend directly
 3. Test with `cu
@@ -453,7 +453,7 @@ Compares running AI inference workloads on Intel Xeon 6 CPUs vs NVIDIA H100 GPUs
 
 **Key facts:**
 - AAP cascade validated 2026-08-06. Domain-agnostic proven with zero code changes to cascade framework.
-- 1. **AAP signal source** — prove domain-agnostic on Ansible job signals (infra01 has AAP namespace)
+- 1. **AAP signal source** — prove domain-agnostic on Ansible job signals (production has AAP namespace)
 2. **Historical replay** — feed 140M Postgres signals through cascade offline
 3. **Action layer** — 
 - 1. Historical replay — feed 140M Postgres signals through cascade offline

@@ -24,7 +24,7 @@ Your system has perfect recall and zero comprehension.
 
 ## What if your signal pipeline could remember?
 
-We built [cascade compression](https://github.com/jkershawrh/cascade-compression) to prove that most AI signals don't need AI — a self-tuning pipeline that achieves 99.1% compression on 142.4 million production Kubernetes signals with zero false negatives. The framework discovers what is noise, validates it continuously, and handles it in microseconds. Only the 1% that actually needs inference ever touches an LLM.
+We built [cascade compression](https://github.com/your-org/cascade-compression) to prove that most AI signals don't need AI — a self-tuning pipeline that achieves 99.1% compression on 142.4 million production Kubernetes signals with zero false negatives. The framework discovers what is noise, validates it continuously, and handles it in microseconds. Only the 1% that actually needs inference ever touches an LLM.
 
 But here's what we noticed: the signals that survive the cascade — the 1% that matter — are exactly the signals worth remembering. They are the production outages, the security breaches, the novel failure modes. If you store them, you get institutional memory for free.
 
@@ -150,5 +150,5 @@ There is a compression ratio that applies to human knowledge too. Of the thousan
 
 **Try it.** The cascade compression framework is open source. Deploy it on OpenShift, point it at any structured signal stream, and within an hour it tells you what percentage of your signals need AI. Within a day, it starts forming institutional memory.
 
-- [GitHub: cascade-compression](https://github.com/jkershawrh/cascade-compression)
+- [GitHub: cascade-compression](https://github.com/your-org/cascade-compression)
 - [Red Hat OpenShift trial](https://www.redhat.com/en/technologies/cloud-computing/openshift/try-it)

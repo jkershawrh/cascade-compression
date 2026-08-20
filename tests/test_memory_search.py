@@ -141,7 +141,7 @@ class TestSearchResult:
             severity="high",
             message="CrashLoopBackOff in api-server",
             namespace="production",
-            source_instance="infra01",
+            source_instance="production",
             strength=0.85,
         )
         d = r.to_dict()
@@ -274,7 +274,7 @@ class TestEngineWithMockedPg:
             "content": {"message": "disk at 95%"},
             "namespace": "monitoring",
             "strength": 0.7,
-            "source_instance": "infra01",
+            "source_instance": "production",
         }
         mid = engine.index_memory(d)
         assert mid == "test-id-123"

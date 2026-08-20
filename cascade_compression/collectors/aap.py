@@ -26,7 +26,7 @@ class AAPSignal:
     """Maps any AAP record to the cascade Signal interface."""
     def __init__(self, record: dict, source: str = "job"):
         self.signal_id = record["id"]
-        self.cluster_id = "aap-infra01"
+        self.cluster_id = "aap-default"
         self.resource_kind = source
         self.labels = {"domain": "aap", "source": source}
 

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Deploy federated cascade to infra01 (Oberon cluster)
+# Deploy federated cascade to your OpenShift cluster
 #
-# Run this ON infra01:
-#   chmod +x deploy/deploy-infra01.sh
-#   ./deploy/deploy-infra01.sh
+# Run this on your cluster:
+#   chmod +x deploy/deploy.sh
+#   ./deploy/deploy.sh
 #
 # Prerequisites:
 #   - oc logged in as cluster-admin
@@ -12,7 +12,7 @@
 
 set -euo pipefail
 
-REPO_URL="https://github.com/jkershawrh/cascade-compression.git"
+REPO_URL="https://github.com/your-org/cascade-compression.git"
 WORK_DIR="/tmp/cascade-compression-deploy"
 REGISTRY=$(oc registry info 2>/dev/null | head -1)
 NAMESPACE="cascade-compression"
@@ -83,7 +83,7 @@ echo ""
 # ── Step 7: Update image reference in manifest ─────────────────────
 echo "Updating image reference in manifest..."
 INTERNAL_IMAGE="image-registry.openshift-image-registry.svc:5000/${NAMESPACE}/cascade-compression:latest"
-sed "s|quay.io/redhat-ai-incubation/cascade-compression:latest|${INTERNAL_IMAGE}|g" \
+sed "s|YOUR_REGISTRY/cascade-compression:latest|${INTERNAL_IMAGE}|g" \
     deploy/openshift-federated.yaml > /tmp/cascade-federated-resolved.yaml
 echo ""
 

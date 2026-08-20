@@ -35,7 +35,7 @@ spec:
     spec:
       containers:
       - name: cascade
-        image: image-registry.openshift-image-registry.svc:5000/cascade-validation/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         ports:
         - containerPort: 8090
         env:
@@ -115,7 +115,7 @@ spec:
     spec:
       containers:
       - name: cascade
-        image: image-registry.openshift-image-registry.svc:5000/cascade-validation/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         ports:
         - containerPort: 8090
         env:
@@ -195,7 +195,7 @@ spec:
     spec:
       containers:
       - name: cascade
-        image: image-registry.openshift-image-registry.svc:5000/cascade-validation/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         ports:
         - containerPort: 8090
         env:

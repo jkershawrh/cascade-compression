@@ -71,7 +71,7 @@ _TOPIC_PATTERNS = {
     "deterministic": re.compile(r"\b(temperature.0|temp.0|deterministic|reproducib|same.input.same.output)\b", re.IGNORECASE),
     "cascade_framework": re.compile(r"\b(domain.pack|framework.unchanged|zero.framework|no.engine.change|domain.agnostic)\b", re.IGNORECASE),
     "production_gates": re.compile(r"\b(earn.the.right|measurable.gate|production.gate|red.to.gold|green.light)\b", re.IGNORECASE),
-    "infra01_only": re.compile(r"\b(infra01|never.oberon|context.drift|use.context)\b", re.IGNORECASE),
+    "cluster_context": re.compile(r"\b(production.cluster|context.drift|use.context|target.cluster)\b", re.IGNORECASE),
     "openshift_deploy": re.compile(r"\b(openshift|ocp|deploy.to|deployed.on|namespace|oc\s+(?:get|exec|apply|login))\b", re.IGNORECASE),
     "immutable_ledger": re.compile(r"\b(immutable.ledger|hash.chain|append.only|decision.record|audit.verdict)\b", re.IGNORECASE),
     "demo_platform": re.compile(r"\b(demo.platform|rhdp|showroom|catalog.item|sandbox.api|agnosticv)\b", re.IGNORECASE),

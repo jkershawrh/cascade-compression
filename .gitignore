@@ -34,3 +34,10 @@ cascade-state-*.json
 docs/memory-visualization.md
 docs/rhdp-biography.md
 docs/rhdp-platform-memory.md
+
+# Benchmark results (keep manifest only)
+benchmarks/results/*.json
+!benchmarks/results/manifest.json
+
+# Session summaries
+docs/session-summary-*.md

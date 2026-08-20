@@ -122,7 +122,7 @@ class TestPrometheusSignal:
         from cascade_compression.collectors.prometheus import PrometheusSignal
         sig = PrometheusSignal({
             "signal_type": "alert_kubenodenotready", "severity": "critical",
-            "source": "alertmanager", "cluster": "infra01", "namespace": "",
+            "source": "alertmanager", "cluster": "production", "namespace": "",
             "name": "worker-02", "message": "Alert KubeNodeNotReady: Node not ready",
         })
         assert sig.signal_type == "alert_kubenodenotready"

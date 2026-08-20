@@ -20,7 +20,7 @@ spec:
         runAsNonRoot: true
       containers:
         - name: harness
-          image: image-registry.openshift-image-registry.svc:5000/triforce/tco-benchmark-harness:latest
+          image: YOUR_REGISTRY/tco-benchmark-harness:latest
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:

@@ -3,7 +3,7 @@
 One container. Point it at a signal stream and an LLM. It discovers
 what is noise, validates it, and compresses your signal volume.
 
-    oc new-app https://github.com/jkershawrh/cascade-compression \
+    oc new-app https://github.com/your-org/cascade-compression \
       -e CASCADE_LLM_URL=https://your-llm/v1 \
       -e CASCADE_LLM_KEY=sk-...
 

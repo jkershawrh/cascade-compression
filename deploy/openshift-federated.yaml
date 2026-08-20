@@ -1,5 +1,5 @@
 ---
-# Federated Cascade Deployment — infra01
+# Federated Cascade Deployment
 #
 # Three cascade instances:
 #   1. cascade-k8s      — monitors Kubernetes clusters, forms K8s memories
@@ -84,7 +84,7 @@ spec:
     spec:
       containers:
       - name: cascade
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         ports:
         - containerPort: 8090
         env:
@@ -209,7 +209,7 @@ spec:
     spec:
       containers:
       - name: cascade
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         ports:
         - containerPort: 8090
         env:
@@ -322,7 +322,7 @@ spec:
     spec:
       containers:
       - name: cascade
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         ports:
         - containerPort: 8090
         env:
@@ -423,7 +423,7 @@ spec:
     spec:
       containers:
       - name: cascade
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         ports:
         - containerPort: 8090
         env:
@@ -532,7 +532,7 @@ spec:
           restartPolicy: OnFailure
           containers:
           - name: federate
-            image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+            image: YOUR_REGISTRY/cascade-compression:latest
             command:
             - python3
             - -c

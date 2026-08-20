@@ -1,6 +1,6 @@
 # GCL + Immutable Ledger Integration (Implemented)
 
-**Status: LIVE on infra01.** All three systems deployed and running autonomously. 500K+ entries, 10% LLM-validated disagreement rate.
+**Status: LIVE on production.** All three systems deployed and running autonomously. 500K+ entries, 10% LLM-validated disagreement rate.
 
 ## Methodology: CDD → TDD → EDD → BDD
 
@@ -125,7 +125,7 @@ Does NOT change:
 
 Changes:
 - None. The ledger is a generic append-only store. It doesn't know about cascade or GCL entry types. It just stores and retrieves entries.
-- Deploy to infra01 (operational, not code)
+- Deploy to production (operational, not code)
 
 ### governed-cognitive-loop (823 tests currently)
 
@@ -219,7 +219,7 @@ Does NOT change:
 3. **TDD GCL**: Write test_cascade_audit_*.py, run red, implement to green
 4. **EDD**: Integration tests with mock ledger server
 5. **BDD**: Full behavior tests
-6. **Deploy ledger to infra01**: Operational, no code changes to ledger
-7. **Deploy GCL to infra01**: With cascade audit config enabled
+6. **Deploy ledger to production**: Operational, no code changes to ledger
+7. **Deploy GCL to production**: With cascade audit config enabled
 8. **Verify end-to-end**: Live cascade → live ledger → live GCL audit
 9. **Rubric check**: All green across all three repos

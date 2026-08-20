@@ -1,5 +1,5 @@
 ---
-# Signal collector sidecars for infra01
+# Signal collector sidecars
 #
 # K8s collector: polls 5 OCP clusters, pushes to cascade-k8s
 # AAP collector: polls AAP database, pushes to cascade-aap
@@ -36,7 +36,7 @@ spec:
     spec:
       containers:
       - name: collector
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         command:
         - python3
         - -m
@@ -78,7 +78,7 @@ spec:
     spec:
       containers:
       - name: collector
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         command:
         - python3
         - -m
@@ -120,7 +120,7 @@ spec:
     spec:
       containers:
       - name: collector
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         command:
         - python3
         - -m
@@ -162,7 +162,7 @@ spec:
     spec:
       containers:
       - name: collector
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         command:
         - python3
         - -m
@@ -204,7 +204,7 @@ spec:
     spec:
       containers:
       - name: collector
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         command:
         - python3
         - -m
@@ -246,7 +246,7 @@ spec:
     spec:
       containers:
       - name: collector
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         command:
         - python3
         - -m
@@ -288,7 +288,7 @@ spec:
     spec:
       containers:
       - name: collector
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         command:
         - python3
         - -m
@@ -330,7 +330,7 @@ spec:
     spec:
       containers:
       - name: collector
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         command:
         - python3
         - -m
@@ -375,7 +375,7 @@ spec:
     spec:
       containers:
       - name: collector
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         command:
         - python3
         - -m
@@ -420,7 +420,7 @@ spec:
     spec:
       containers:
       - name: collector
-        image: image-registry.openshift-image-registry.svc:5000/cascade-compression/cascade-compression:latest
+        image: YOUR_REGISTRY/cascade-compression:latest
         command:
         - python3
         - -m

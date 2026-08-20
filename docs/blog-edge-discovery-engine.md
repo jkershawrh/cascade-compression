@@ -10,7 +10,7 @@ What if the line drew itself, validated its own accuracy, and adapted when condi
 
 ```bash
 # Deploy on OpenShift in one command
-oc new-app https://github.com/jkershawrh/cascade-compression \
+oc new-app https://github.com/your-org/cascade-compression \
   -e CASCADE_LLM_URL=https://your-model-service/v1 \
   -e CASCADE_LLM_KEY=sk-...
 ```
@@ -95,7 +95,7 @@ Cascade compression is a single container. Deploy it, point it at a signal strea
 
 ```bash
 # Option 1: Deploy directly from the repo on OpenShift
-oc new-app https://github.com/jkershawrh/cascade-compression \
+oc new-app https://github.com/your-org/cascade-compression \
   -e CASCADE_LLM_URL=https://your-model-service/v1 \
   -e CASCADE_LLM_KEY=sk-...
 
