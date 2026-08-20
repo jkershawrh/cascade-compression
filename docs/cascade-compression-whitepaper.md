@@ -193,20 +193,20 @@ The system runs on Red Hat OpenShift on Intel Xeon 6 hardware. No GPU in the inf
 
 ```
                     ┌─────────────────────────────────────────┐
-                    │           infra01 (Xeon 6)              │
+                    │         Production (Xeon 6)              │
                     │                                         │
  9 OCP clusters ──→ │  collector-k8s ──→ cascade-k8s (10K)   │
                     │  collector-prometheus                    │
                     │  collector-argocd      ┌──────────────┐ │
                     │  collector-ovn    ───→ │  cascade-     │ │
-                    │  collector-poolboy     │  memory (50K) │ │
+                    │  collector-platform    │  memory (50K) │ │
  AAP prod0 ───────→ │  collector-aap ──→    │  aggregator   │ │
                     │  collector-ceph   ──→  └──────────────┘ │
-                    │  collector-stargate        ↑             │
-                    │  collector-babylon         │             │
-                    │  collector-labagator       │             │
-                    │  collector-agnosticv       │             │
-                    │  collector-sandbox-conan   │             │
+                    │  collector-custom-1        ↑             │
+                    │  collector-custom-2        │             │
+                    │  collector-custom-3        │             │
+                    │  collector-custom-4        │             │
+                    │  collector-custom-5        │             │
                     │                            │             │
                     │  cascade-aap (10K)     ────┘             │
                     │  cascade-knowledge (10K) ──┘             │
@@ -234,7 +234,7 @@ The system runs on Red Hat OpenShift on Intel Xeon 6 hardware. No GPU in the inf
 | **Evictions** | **700K+** (consolidation aggressively cleaning noise) |
 | **Shadow checks** | **25,700+** |
 | **Shadow demotions** | **296** (self-correcting) |
-| **Clusters monitored** | **10** (incl. racmaas AI infrastructure) |
+| **Clusters monitored** | **10** (including AI/ML infrastructure cluster) |
 | **Signal sources** | **3 domains**: operational (K8s/AAP), organizational (Jira/Git/Confluence) |
 | **Collectors running** | **15** (12 operational + 3 knowledge) |
 | **Pods deployed** | **20** |
@@ -293,7 +293,7 @@ A measurement artifact inflated the false-negative counter to 24,400 — built-i
 
 1. **PVC misbound is the #1 infrastructure issue.** 230 memories at strength 0.99, driving 462 causal links to volume delete and attach failures across all clusters. The cascade discovered this through memory federation — no single collector could see the full picture.
 
-2. **vCenter is unreachable.** Discovered from AAP memory analysis without ever connecting to vCenter. 32 memories of "Get vSphere login session" failures. Root cause: network partition (169.60.34.117:443 times out), not credential issue.
+2. **vCenter is unreachable.** Discovered from AAP memory analysis without ever connecting to vCenter. 32 memories of login session failures. Root cause: network partition, not credential issue — diagnosed purely from cascade memory patterns.
 
 3. **The platform has normalized storage failures as baseline.** The inverse cascade revealed that Ceph/ODF storage provisioning failures appear in the suppression archive as "expected" — the platform treats them as background noise. This is the most dangerous kind of technical debt: failures that are invisible because they happen constantly.
 
@@ -301,15 +301,15 @@ A measurement artifact inflated the false-negative counter to 24,400 — built-i
 
 ### Organizational Knowledge Findings
 
-The knowledge domain collectors (Jira, GitHub, Confluence) apply the same cascade framework to non-operational signals. In the first 24 hours of soak on the RHDP platform (819 GitHub repos, 3 Jira projects, all Confluence spaces):
+The knowledge domain collectors (Jira, GitHub, Confluence) apply the same cascade framework to non-operational signals. In the first 24 hours of soak on a production platform (819 GitHub repos, 3 Jira projects, all Confluence spaces):
 
-**Instability hotspots.** 165 hotfix/revert commits across the `rhpds` GitHub org. The ZeroTouch labs (`zt-webconsole-software`, `zt-sql-server-ansible`, `zt-buildah`) are the most unstable — constant reverts of image versions, SELinux fixes, and configuration changes. The `ansible-dev-tools-workspace` reverted after a regression test failure.
+**Instability hotspots.** 165 hotfix/revert commits across the GitHub org. Lab and demo environments are the most unstable — constant reverts of image versions, configuration changes, and regression rollbacks. The cascade surfaces these as `hotfix_pattern` signals that would otherwise be invisible in Git history.
 
-**Decision churn.** 7 GPTEINFRA tickets with 16-22 comments each. CI onboarding is where process friction accumulates: VMware Migration (22 comments), Container Management Standard Demo (21 comments), GitOps Workshop (19 comments). These aren't bugs — they're process bottlenecks the cascade surfaced as `decision_revisited` signals.
+**Decision churn.** 7 Jira tickets with 16-22 comments each. Onboarding workflows are where process friction accumulates — design discussions, migration planning, and workshop coordination. These aren't bugs — they're process bottlenecks the cascade surfaced as `decision_revisited` signals.
 
-**Documentation debt.** 11 runbooks in Confluence created but never updated (v1) — execution models, troubleshooting guides, disconnected pipeline procedures. Written once, never validated against production reality. Meanwhile, "Developer Onboarding" has been revised 40 times and "ISV QE" has 931 versions — both indicators of unstable processes.
+**Documentation debt.** 11 runbooks in Confluence created but never updated (v1) — execution models, troubleshooting guides, disconnected pipeline procedures. Written once, never validated against production reality. Meanwhile, an onboarding guide has been revised 40 times and a QE tracking page has 931 versions — both indicators of unstable processes.
 
-**Cross-domain correlation.** Knowledge survivors federate into the same aggregator as K8s and AAP memories. When a Git hotfix revert correlates with an AAP provisioning failure and a GPTEINFRA ticket, the aggregator holds all three memories — enabling root cause analysis that spans organizational and operational boundaries.
+**Cross-domain correlation.** Knowledge survivors federate into the same aggregator as K8s and AAP memories. When a Git hotfix revert correlates with an AAP provisioning failure and a Jira ticket, the aggregator holds all three memories — enabling root cause analysis that spans organizational and operational boundaries.
 
 The 83% compression ratio on knowledge signals confirms the cascade premise extends beyond infrastructure: most organizational activity (routine commits, status updates, regular ticket flow) is noise. The 17% that survives represents institutional knowledge that would otherwise be lost in ticket backlogs and Git history.
 
@@ -422,12 +422,10 @@ Ten domain packs ship ready to use:
 | ceph | Ceph health/ODF | Ceph health detail API |
 | gitops | ArgoCD | Application sync/health |
 | ovn | OVN-Kubernetes | Network state, EgressFirewall CRDs |
-| poolboy | Poolboy (RHDP) | ResourcePool/Claim CRDs |
-| babylon | Babylon/Anarchy | AnarchySubject/Action CRDs |
-| stargate | Stargate dashboard | Dashboard API |
-| labagator | Labagator | REST API |
-| agnosticv | AgnosticV | GitHub API |
-| sandbox_conan | Sandbox-Conan | Prometheus metrics endpoint |
+| platform | Resource pool manager | Custom Resource CRDs |
+| provisioner | Provisioning engine | Custom Resource CRDs |
+| dashboard | Operational dashboard | REST API |
+| catalog | Catalog/config management | GitHub API |
 | **Organizational Knowledge** | | |
 | jira | Jira Cloud (issues, comments) | Atlassian REST API v3 |
 | git | GitHub (commits, PRs, reviews) | GitHub REST API (org-level discovery) |
@@ -526,7 +524,7 @@ In production, the inverse cascade revealed that 48 signal types had been normal
 
 ## Edge Testing & Adversarial Validation
 
-The framework was validated against 61 adversarial scenarios across four categories, run on Oberon (Xeon 6767P) with phi4-mini (3.8B) providing LLM classification. All scenarios use the same framework with no domain-specific modifications.
+The framework was validated against 61 adversarial scenarios across four categories, run on Intel Xeon 6767P (128 cores) with phi4-mini (3.8B) providing LLM classification. All scenarios use the same framework with no domain-specific modifications.
 
 ### Functional Edge Cases (27 scenarios)
 
