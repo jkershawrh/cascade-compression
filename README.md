@@ -42,7 +42,7 @@ python3 -m uvicorn cascade_compression.service:app --port 8090
 
 | Domain | Source | Signals | Compression | Agents | Shadow demotions | GCL |
 |--------|--------|---------|:-----------:|:------:|:----------------:|:---:|
-| **Kubernetes** | Replay (infra01) | **142.4M** | **99.1%** | 3 | 0 | 1 FAILS |
+| **Kubernetes** | Replay (production) | **142.4M** | **99.1%** | 3 | 0 | 1 FAILS |
 | **AAP (Ansible)** | Live + replay | **553K** | **98.1%** | — | 63 | clean |
 
 Hardened engine: zero-FN gate, shadow validation (5%), 72h TTL, GCL audit loop. LLM classified 9,685 signals out of 142M (0.007%).
@@ -132,7 +132,7 @@ cascade_compression/
   bridge.py                Orchestrator — collector → pipeline → LLM → shadow → feedback
   cli.py                   cascade-run, cascade-replay entrypoints
   cascade/                 Pipeline, agents, promotion (hardened), corpus analyzer
-  collectors/              20 collectors (k8s, aap, jira, git, confluence, prometheus, ceph, gitops, ovn, poolboy, babylon, stargate, labagator, agnosticv, sandbox_conan, finance, healthcare, insurance, retail, telecom)
+  collectors/              20 collectors (k8s, aap, jira, git, confluence, prometheus, ceph, gitops, ovn, platform, provisioner, dashboard, catalog, finance, healthcare, insurance, retail, telecom, + custom)
   domains/                 10 domain packs (kubernetes, aap, knowledge, finance, healthcare, insurance, retail, telecom, memory, + synthetic)
   routing/                 Benchmark-graded model selection (19 models, 5 lanes)
   infra/                   Pressure-aware scaler, fleet manager
