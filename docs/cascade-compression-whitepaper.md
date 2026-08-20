@@ -14,7 +14,7 @@ The framework is domain-agnostic. Ten domain packs and 20 collectors ship ready 
 
 Five layers of defense — zero-FN gate, shadow validation, independent GCL audit, 72-hour TTL, and optional human gate — ensure that no activated agent can silently drop a real signal. An immutable ledger records the full evidence chain for every promotion and demotion. A GPU reasoning tier produces structured root-cause analyses for the signals that matter most. Sixty-one adversarial edge scenarios — across functional, safety, capacity, and causality categories — validate the framework against structuring attacks, label injection, service flapping, cross-domain breaches, and burst traffic. All pass.
 
-760 tests. 61 edge scenarios. Zero false negatives across every run.
+776 tests. 61 edge scenarios. Zero false negatives across every run.
 
 ---
 
@@ -222,20 +222,22 @@ The system runs on Red Hat OpenShift on Intel Xeon 6 hardware. No GPU in the inf
 
 | Metric | Value |
 |--------|-------|
-| **Signals processed** | **5.38M+** operational + **34K+** knowledge (current run) |
+| **Signals processed** | **5.5M+** operational + **34K+** knowledge (multi-day soak) |
 | **Nano compression** | **81% K8s / 97% AAP / 83% knowledge** (live, contextual) |
-| **CPU classifications (micro tier)** | **290K+** |
+| **LLM classifications (micro tier)** | **135K+** (current run) |
 | **GPU analyses (macro tier)** | **19K+** |
-| **Agents activated** | **42** (35 K8s + 6 AAP + 1 knowledge) |
-| **Suppression patterns** | **58** (discovered organically) |
-| **Baseline types** | **48** |
-| **Aggregator memories** | **6,100+** (from 3 federated sources) |
+| **Agents activated** | **44** (37 K8s + 7 AAP) |
+| **Promotions** | **32** (discovered organically) |
+| **Suppression patterns** | **55** |
+| **Baseline types** | **46** |
+| **Aggregator memories** | **20,900+** (from 3 federated sources: K8s + AAP + Knowledge) |
+| **Evictions** | **700K+** (consolidation aggressively cleaning noise) |
 | **Shadow checks** | **25,700+** |
 | **Shadow demotions** | **296** (self-correcting) |
 | **Clusters monitored** | **10** (incl. racmaas AI infrastructure) |
 | **Signal sources** | **3 domains**: operational (K8s/AAP), organizational (Jira/Git/Confluence) |
 | **Collectors running** | **15** (12 operational + 3 knowledge) |
-| **Pods deployed** | **19** |
+| **Pods deployed** | **20** |
 
 ### Replay Validation (142.4M signals)
 
@@ -296,6 +298,20 @@ A measurement artifact inflated the false-negative counter to 24,400 — built-i
 3. **The platform has normalized storage failures as baseline.** The inverse cascade revealed that Ceph/ODF storage provisioning failures appear in the suppression archive as "expected" — the platform treats them as background noise. This is the most dangerous kind of technical debt: failures that are invisible because they happen constantly.
 
 4. **Causal gaps reveal missing signal sources.** The system knows it should be seeing `node_notready` and `node_disk_pressure` upstream of the volume failures, but isn't. The causal graph identified 5 gaps — each one pointing to a monitoring blind spot.
+
+### Organizational Knowledge Findings
+
+The knowledge domain collectors (Jira, GitHub, Confluence) apply the same cascade framework to non-operational signals. In the first 24 hours of soak on the RHDP platform (819 GitHub repos, 3 Jira projects, all Confluence spaces):
+
+**Instability hotspots.** 165 hotfix/revert commits across the `rhpds` GitHub org. The ZeroTouch labs (`zt-webconsole-software`, `zt-sql-server-ansible`, `zt-buildah`) are the most unstable — constant reverts of image versions, SELinux fixes, and configuration changes. The `ansible-dev-tools-workspace` reverted after a regression test failure.
+
+**Decision churn.** 7 GPTEINFRA tickets with 16-22 comments each. CI onboarding is where process friction accumulates: VMware Migration (22 comments), Container Management Standard Demo (21 comments), GitOps Workshop (19 comments). These aren't bugs — they're process bottlenecks the cascade surfaced as `decision_revisited` signals.
+
+**Documentation debt.** 11 runbooks in Confluence created but never updated (v1) — execution models, troubleshooting guides, disconnected pipeline procedures. Written once, never validated against production reality. Meanwhile, "Developer Onboarding" has been revised 40 times and "ISV QE" has 931 versions — both indicators of unstable processes.
+
+**Cross-domain correlation.** Knowledge survivors federate into the same aggregator as K8s and AAP memories. When a Git hotfix revert correlates with an AAP provisioning failure and a GPTEINFRA ticket, the aggregator holds all three memories — enabling root cause analysis that spans organizational and operational boundaries.
+
+The 83% compression ratio on knowledge signals confirms the cascade premise extends beyond infrastructure: most organizational activity (routine commits, status updates, regular ticket flow) is noise. The 17% that survives represents institutional knowledge that would otherwise be lost in ticket backlogs and Git history.
 
 ---
 
@@ -378,12 +394,13 @@ The cascade framework processes `Signal` objects — a generic protocol with fie
 
 ### Domain Packs
 
-Nine domain packs ship ready to use:
+Ten domain packs ship ready to use:
 
 | Domain | Collector | Signal Sources |
 |--------|-----------|---------------|
 | Kubernetes | K8s API | Pod status, Warning events, node health |
 | AAP (Ansible) | AAP database | Job outcomes, task events, activity stream |
+| Knowledge | Jira, GitHub, Confluence | Issues, commits, PRs, pages, runbooks |
 | Prometheus | Thanos/Prometheus API | Alerts, metrics, recording rules |
 | Ceph/ODF | Ceph health API | Storage health, PG status, OSD state |
 | Financial Services | Transaction log | ISO 20022, fraud detection, compliance |
@@ -472,20 +489,21 @@ Ceph Health ──→ [ cascade-k8s  ]                      │
 ```
 
 The federation CronJob runs every 5 minutes:
-1. Exports survivors (strength > 0.3) from K8s and AAP cascades
+1. Exports survivors (strength > 0.3) from K8s, AAP, and Knowledge cascades
 2. Imports them into the memory aggregator with content-hash deduplication
 3. Runs consolidation on the aggregator
-4. Rejection set prevents re-import of evicted memories
+4. Rejection set prevents re-import of evicted memories (11K+ blocked)
 
 ### Production Federation Results
 
 | Instance | Domain | Memories Retained | Avg Strength | Evicted |
 |----------|--------|------------------|-------------|---------|
-| cascade-k8s | Kubernetes | 9,700 | 1.00 | 563K+ |
-| cascade-aap | AAP | 9,900 | 0.40 | 563K+ |
-| cascade-memory | Aggregator | 12,900 | 0.79 | 8,950 |
+| cascade-k8s | Kubernetes | 9,900 | 0.99 | 289K+ |
+| cascade-aap | AAP | 9,100 | 0.54 | 402K+ |
+| cascade-knowledge | Knowledge | 3,900 | 0.36 | 0 (young) |
+| cascade-memory | Aggregator | 20,900 | 0.79 | 11K+ |
 
-The aggregator is selective. It receives exports from both K8s and AAP but retains only the memories that maintain sufficient strength through consolidation cycles. Cross-source correlation boosts signals seen by multiple independent cascades — storage failures visible in both K8s events and AAP job failures receive a strength boost, confirming a real infrastructure issue.
+The aggregator is selective. It receives exports from K8s, AAP, and Knowledge cascades but retains only the memories that maintain sufficient strength through consolidation cycles. Cross-source correlation boosts signals seen by multiple independent cascades — storage failures visible in both K8s events and AAP job failures receive a strength boost, confirming a real infrastructure issue. Knowledge survivors (Jira tickets, Git hotfixes, Confluence runbook decay) federate alongside operational memories, enabling the causal graph to link organizational decisions to infrastructure outcomes.
 
 ---
 
@@ -685,7 +703,7 @@ Replay bootstraps the cascade from historical data so it is smart on day one. A 
 - **Stage 3 (BDD)**: GIVEN/WHEN/THEN scenarios for all behaviors
 - **Stage 4 (AET)**: 61 adversarial edge scenarios across functional, safety, capacity, and causality categories. Tests run against live cascade instances with real LLM inference.
 
-760 unit/integration tests. 61 edge scenarios. Zero failures. Zero regressions.
+776 unit/integration tests. 61 edge scenarios. Zero failures. Zero regressions.
 
 ---
 
@@ -693,10 +711,10 @@ Replay bootstraps the cascade from historical data so it is smart on day one. A 
 
 Cascade compression transforms the economics and intelligence of enterprise signal processing. By eliminating 82-99% of inference volume through self-tuning deterministic agents, the system enables CPU-only deployments that match GPU accuracy at 8x lower cost. By treating compression as memory formation, the system builds durable institutional knowledge that survives personnel changes, spans domains, and improves with every signal processed.
 
-The framework has been validated on 5.38M+ live production signals across 10 OpenShift clusters with zero false negatives, and adversarially tested with 61 edge scenarios across functional, safety, capacity, and causality categories — all passing. Six framework gaps were discovered through adversarial testing and fixed, making the pipeline robust against compliance signal deduplication, service flapping, cross-domain breach correlation, and label injection attacks. Synthetic generators are calibrated to published industry ratios from FinCEN, AHRQ, 3GPP, NAIC, and NRF.
+The framework has been validated on 5.5M+ live production signals across 10 OpenShift clusters and 3 organizational knowledge sources (Jira, GitHub, Confluence) with zero false negatives, and adversarially tested with 61 edge scenarios — all passing. The aggregator holds 20,900+ memories across 3 federated domains, with 700K+ evictions proving that consolidation aggressively separates signal from noise. Six framework gaps discovered through adversarial testing were fixed, making the pipeline robust against compliance signal deduplication, service flapping, cross-domain breach correlation, and label injection attacks.
 
-For organizations evaluating AI inference infrastructure: the question is not whether GPU or CPU is faster at inference. The question is whether 81% of your signals need inference at all. And whether the 19% that do should be forgotten after classification, or remembered as the foundation of institutional knowledge.
+For organizations evaluating AI inference infrastructure: the question is not whether GPU or CPU is faster at inference. The question is whether 81% of your signals need inference at all. And whether the 19% that do — along with the organizational knowledge in your Jira tickets, Git history, and Confluence pages — should be forgotten after classification, or remembered as the foundation of institutional knowledge.
 
 ---
 
-*Cascade Compression is developed for Intel Financial Services Industry engagements. Benchmarks conducted on Intel Xeon 6767P (128 cores) with IBM Granite 8B Instruct, IBM Granite 2B, and Microsoft Phi-4 models. Validated on 5.38M+ live signals (10 clusters, multi-day soak) and 142.4M replayed signals. Adversarially tested with 61 edge scenarios across 3 industry verticals. 760 tests, 100 source files, 9 domain packs, 17 collectors. Synthetic generators calibrated to FinCEN, AHRQ, 3GPP, NAIC, and NRF published ratios. All results reproducible from the open-source framework.*
+*Cascade Compression is developed for Intel Financial Services Industry engagements. Benchmarks conducted on Intel Xeon 6767P (128 cores) with IBM Granite 8B Instruct, IBM Granite 2B, and Microsoft Phi-4 models. Validated on 5.5M+ live signals (10 clusters + Jira/GitHub/Confluence, multi-day soak) and 142.4M replayed signals. Adversarially tested with 61 edge scenarios across 3 industry verticals. 776 tests, 10 domain packs, 20 collectors, 3 federated cascades, 20,900+ aggregated memories. Synthetic generators calibrated to FinCEN, AHRQ, 3GPP, NAIC, and NRF published ratios. All results reproducible from the open-source framework.*

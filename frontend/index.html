@@ -370,28 +370,28 @@ h1, h2, h3, h4 {
     </div>
   </div>
 
-  <!-- Federated domains -->
-  <div class="section-title">Federated domains</div>
-  <div class="defense-grid" id="domain-grid">
+  <!-- Memory archive -->
+  <div class="section-title">Memory archive</div>
+  <div class="defense-grid">
     <div class="defense-tile">
-      <div class="defense-label">Kubernetes</div>
-      <div class="defense-value green" id="domain-k8s">—</div>
+      <div class="defense-label">Memories</div>
+      <div class="defense-value teal" id="mem-size">—</div>
     </div>
     <div class="defense-tile">
-      <div class="defense-label">AAP</div>
-      <div class="defense-value green" id="domain-aap">—</div>
+      <div class="defense-label">Formed total</div>
+      <div class="defense-value blue" id="mem-formed">—</div>
     </div>
     <div class="defense-tile">
-      <div class="defense-label">Knowledge</div>
-      <div class="defense-value blue" id="domain-knowledge">—</div>
+      <div class="defense-label">Evictions</div>
+      <div class="defense-value" id="mem-evictions">—</div>
     </div>
     <div class="defense-tile">
-      <div class="defense-label">Aggregator</div>
-      <div class="defense-value teal" id="domain-aggregator">—</div>
+      <div class="defense-label">Avg strength</div>
+      <div class="defense-value green" id="mem-strength">—</div>
     </div>
     <div class="defense-tile">
-      <div class="defense-label">Sources</div>
-      <div class="defense-value" id="domain-sources">—</div>
+      <div class="defense-label">Fed. sources</div>
+      <div class="defense-value" id="mem-sources">—</div>
     </div>
   </div>
 
@@ -527,29 +527,16 @@ async function fetchStats() {
   }
 }
 
-async function fetchDomains() {
-  const endpoints = [
-    {id: 'domain-k8s', path: '/federated/k8s'},
-    {id: 'domain-aap', path: '/federated/aap'},
-    {id: 'domain-knowledge', path: '/federated/knowledge'},
-  ];
-  for (const ep of endpoints) {
-    try {
-      const r = await fetch(API_BASE + ep.path);
-      if (r.ok) {
-        const d = await r.json();
-        const size = d.size || d.memories || 0;
-        document.getElementById(ep.id).textContent = fmt(size);
-      }
-    } catch (e) {}
-  }
+async function fetchMemories() {
   try {
     const r = await fetch(API_BASE + '/memories/stats');
-    if (r.ok) {
-      const d = await r.json();
-      document.getElementById('domain-aggregator').textContent = fmt(d.size || 0);
-      document.getElementById('domain-sources').textContent = (d.federated_sources || 0) + ' fed';
-    }
+    if (!r.ok) return;
+    const d = await r.json();
+    document.getElementById('mem-size').textContent = fmt(d.size || 0);
+    document.getElementById('mem-formed').textContent = fmt(d.formed_total || 0);
+    document.getElementById('mem-evictions').textContent = fmt(d.evictions_total || 0);
+    document.getElementById('mem-strength').textContent = (d.avg_strength || 0).toFixed(2);
+    document.getElementById('mem-sources').textContent = d.federated_sources || '—';
   } catch (e) {}
 }
 
@@ -572,7 +559,7 @@ async function fetchReplay() {
 
 async function poll() {
   await fetchStats();
-  await fetchDomains();
+  await fetchMemories();
   await fetchReplay();
 }
 
