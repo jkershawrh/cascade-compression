@@ -10,7 +10,7 @@ Every organization has institutional memory. Today it lives in wikis nobody read
 
 Cascade compression offers a different model: institutional memory that forms automatically from the organization's own signal streams. The same three-tier pipeline that achieves 82% compression on live production signals — validated with zero shadow-detected false negatives across five independent safety layers — now encodes what matters, forgets what doesn't, recalls precedent when new events arrive, and forms associations across domains that no single human could hold in their head.
 
-This paper describes the memory architecture built on top of the validated cascade compression engine. Five capabilities — survivor archive, recall, consolidation, priming, and federation — transform the cascade from a cost optimization into a knowledge formation system. A GPU reasoning tier (Microsoft Phi-4) produces structured root-cause analyses with memory-informed evidence bundles. All capabilities are implemented, tested (776 tests, zero failures), and running in production on Intel Xeon 6 hardware across the OpenShift fleet (exact cluster count: see [CLAIMS.md](CLAIMS.md)).
+This paper describes the memory architecture built on top of the validated cascade compression engine. Five capabilities — survivor archive, recall, consolidation, priming, and federation — transform the cascade from a cost optimization into a knowledge formation system. A GPU reasoning tier (Microsoft Phi-4) produces structured root-cause analyses with memory-informed evidence bundles. All capabilities are implemented, tested (787 tests, zero failures), and running in production on Intel Xeon 6 hardware across the OpenShift fleet (exact cluster count: see [CLAIMS.md](CLAIMS.md)).
 
 After 72 hours of live operation, the system formed 10,964 memories, forgot 272,525, discovered 462 causal links between storage failures, identified 5 monitoring blind spots through causal gap analysis, and learned 101 contextual suppression rules. It wrote its own biography.
 
@@ -258,7 +258,7 @@ Both classification models run on CPU. No GPU required for the inference path. T
 
 ### Test Coverage
 
-776 tests across all components. Zero failures. Zero regressions.
+787 tests across all components. Zero failures. Zero regressions.
 
 | Phase | Tests | What's Validated |
 |-------|-------|-----------------|
@@ -291,4 +291,4 @@ After 48 hours, the cascade wrote the biography of a platform that has never bee
 
 ---
 
-*Cascade as Memory is built on the validated cascade compression framework (82% compression on live production signals, zero shadow-detected false negatives, 776 tests). Exact signal and cluster counts are tracked in [CLAIMS.md](CLAIMS.md). All capabilities described in this paper are implemented, tested, and running in production on Intel Xeon 6 hardware. The framework is domain-agnostic — ten domain packs and 23 collector modules ship ready to use.*
+*Cascade as Memory is built on the validated cascade compression framework (82% compression on live production signals, zero shadow-detected false negatives, 787 tests). Exact signal and cluster counts are tracked in [CLAIMS.md](CLAIMS.md). All capabilities described in this paper are implemented, tested, and running in production on Intel Xeon 6 hardware. The framework is domain-agnostic — ten domain packs and 23 collector modules ship ready to use.*

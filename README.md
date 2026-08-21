@@ -31,7 +31,7 @@ cascade-run --domain kubernetes --llm-url https://your-llm/v1 --llm-key sk-...
 # Replay historical data
 cascade-replay --domain finance --data transactions.csv --llm-url https://your-llm/v1
 
-# Run tests (785 tests)
+# Run tests (787 tests)
 make test-all
 
 # Start the service with real-time dashboard
@@ -154,9 +154,6 @@ The calculator produces workload-specific estimates only when measured throughpu
 
 ```
 Containerfile              Single-container deployment (UBI9 Python 3.11)
-deploy/openshift.yaml      OpenShift single-instance deployment
-deploy/openshift-federated.yaml  Federated: K8s + AAP + Knowledge + aggregator (19 pods)
-deploy/collectors.yaml     15 collector deployments (operational + knowledge)
 frontend/index.html        Real-time dashboard (polls /stats every 5s)
 cascade_compression/
   service.py               Standalone FastAPI service (serves dashboard + API)

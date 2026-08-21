@@ -15,7 +15,7 @@ Status values:
 
 | Claim | Value | How to check |
 |---|---|---|
-| Test count | **776** | `python -m pytest tests/ -q` |
+| Test count | **787** | `python -m pytest tests/ -q` |
 | Domain packs | **10** | `ls cascade_compression/domains/*.py` (excl. `__init__`) |
 | Collector modules | **23** | `ls cascade_compression/collectors/*.py` (excl. `__init__`, `base`, `memory_parsers*`) |
 | Collector sidecar modes | **17** | `_builtin_modes` (3) + `_COLLECTOR_REGISTRY` (14) in `collector_sidecar.py` |

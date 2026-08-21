@@ -108,8 +108,7 @@ CDD → TDD → EDD → BDD (Contract → Test → Event → Behavior Driven)
 - Single-container deployment via Containerfile
 - FastAPI with /health, /stats, /cascade, /agents, /memories/*, /recall, /consolidate endpoints
 - Real-time dashboard at / (frontend/index.html)
-- OpenShift manifests: deploy/openshift.yaml (single), deploy/openshift-federated.yaml (K8s + AAP + Knowledge + aggregator)
-- Collector manifests: deploy/collectors.yaml (15 collectors including Jira/Git/Confluence)
+- OpenShift manifests: deploy/ (local-only, gitignored — single, federated, and collector YAMLs)
 - Per-tier model routing: CASCADE_MICRO_MODEL (medium/low), CASCADE_MACRO_MODEL (critical/high)
 
 ## Running the Service
@@ -122,11 +121,9 @@ python3 -m uvicorn cascade_compression.service:app --port 8090
 CASCADE_MICRO_MODEL=granite-2b-cpu CASCADE_MACRO_MODEL=granite-3-2-8b-instruct \
   python3 -m uvicorn cascade_compression.service:app --port 8090
 
-# Federated deployment on OpenShift (K8s + AAP + memory aggregator)
-oc apply -f deploy/openshift-federated.yaml
-oc create secret generic cascade-llm \
-  --from-literal=url=https://your-llm/v1 --from-literal=key=sk-... \
-  -n cascade-compression
+# Federated deployment on OpenShift (deploy/ manifests are local-only)
+# oc apply -f deploy/openshift-federated.yaml
+# oc create secret generic cascade-llm --from-literal=url=... --from-literal=key=...
 ```
 
 ## Collectors

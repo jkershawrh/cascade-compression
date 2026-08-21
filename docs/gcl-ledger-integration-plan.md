@@ -107,7 +107,7 @@ No changes to the ledger API — uses existing endpoints.
 
 ## Repo Boundaries — What Changes Where
 
-### cascade-compression (382 tests currently)
+### cascade-compression (787 tests currently)
 
 Changes:
 - `contracts/schemas/cascade-decision.json` — JSON Schema for decision content (NEW)

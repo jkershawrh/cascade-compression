@@ -108,12 +108,10 @@ AAP Signals ──→ [ cascade-aap  ] ──→ AAP Memories  ──┤──�
 ```
 
 ```bash
-# Deploy the entire federated stack
-oc apply -f deploy/openshift-federated.yaml
-oc create secret generic cascade-llm \
-  --from-literal=url=https://your-llm/v1 \
-  --from-literal=key=sk-... \
-  -n cascade-compression
+# Deploy the cascade on OpenShift
+oc new-app https://github.com/jkershawrh/cascade-compression \
+  -e CASCADE_LLM_URL=https://your-llm/v1 \
+  -e CASCADE_LLM_KEY=sk-...
 ```
 
 Each cascade instance persists state to a PVC. The federation CronJob runs every 5 minutes, exporting memories above a minimum strength threshold and importing them into the aggregator. The aggregator runs consolidation, priming, and recall across both domains.
@@ -122,7 +120,7 @@ The memory aggregator's `/recall` endpoint is the organization's institutional m
 
 ## The numbers
 
-592 tests. Zero failures. Zero regressions against the validated base pipeline.
+787 tests. Zero failures. Zero regressions against the validated base pipeline.
 
 The memory architecture preserves every safety invariant of the original cascade:
 

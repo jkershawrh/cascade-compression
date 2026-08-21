@@ -14,7 +14,7 @@ The framework is domain-agnostic. Ten domain packs and 23 collector modules (17 
 
 Five layers of defense — zero-FN gate, shadow validation, independent GCL audit, 72-hour TTL, and optional human gate — ensure that no activated agent can silently drop a real signal. An immutable ledger records the full evidence chain for every promotion and demotion. A GPU reasoning tier produces structured root-cause analyses for the signals that matter most. Sixty-one adversarial edge scenarios — across functional, safety, capacity, and causality categories — validate the framework against structuring attacks, label injection, service flapping, cross-domain breaches, and burst traffic. All pass. Nineteen of the sixty-one ship in `cascade_compression/edge_scenarios.py` and can be run from this repository; the rest were exercised against live instances and are not published.
 
-776 tests. 19 adversarial edge scenarios ship in `cascade_compression/edge_scenarios.py`; the full 61-scenario suite was run against live instances and is not published. Zero shadow-detected false negatives across every run.
+787 tests. 19 adversarial edge scenarios ship in `cascade_compression/edge_scenarios.py`; the full 61-scenario suite was run against live instances and is not published. Zero shadow-detected false negatives across every run.
 
 ---
 
@@ -666,11 +666,8 @@ CASCADE_MICRO_MODEL=granite-2b-cpu CASCADE_MACRO_MODEL=granite-3-2-8b-instruct \
 ### OpenShift
 
 ```bash
-# Single instance
-oc apply -f deploy/openshift.yaml
-
-# Federated deployment (K8s + AAP + memory aggregator + governance)
-oc apply -f deploy/openshift-federated.yaml
+# Single instance (deploy manifests are not published — generate from Containerfile)
+oc new-app --docker-image=<registry>/cascade-compression:latest
 
 # LLM credentials
 oc create secret generic cascade-llm \
@@ -732,7 +729,7 @@ For organizations evaluating AI inference infrastructure: the question is not wh
 
 ---
 
-*Cascade Compression is developed for Intel Financial Services Industry engagements. Benchmarks conducted on Intel Xeon 6767P (128 cores) with IBM Granite 8B Instruct, IBM Granite 2B, and Microsoft Phi-4 models. Validated on 5.5M+ live signals (10 clusters + Jira/GitHub/Confluence, multi-day soak) and 142.4M replayed signals. Adversarially tested with 61 edge scenarios across 3 industry verticals. 776 tests, 10 domain packs, 23 collector modules, 3 federated cascades, 20,900+ aggregated memories. Synthetic generators calibrated to FinCEN, AHRQ, 3GPP, NAIC, and NRF published ratios. The framework is open source and the replay path is runnable; the production signal corpora and the 142.4M replay artifact are not published. See [REPLAY-METHODOLOGY.md](REPLAY-METHODOLOGY.md) and [CLAIMS.md](CLAIMS.md).*
+*Cascade Compression is developed for Intel Financial Services Industry engagements. Benchmarks conducted on Intel Xeon 6767P (128 cores) with IBM Granite 8B Instruct, IBM Granite 2B, and Microsoft Phi-4 models. Validated on 5.5M+ live signals (10 clusters + Jira/GitHub/Confluence, multi-day soak) and 142.4M replayed signals. Adversarially tested with 61 edge scenarios across 3 industry verticals. 787 tests, 10 domain packs, 23 collector modules, 3 federated cascades, 20,900+ aggregated memories. Synthetic generators calibrated to FinCEN, AHRQ, 3GPP, NAIC, and NRF published ratios. The framework is open source and the replay path is runnable; the production signal corpora and the 142.4M replay artifact are not published. See [REPLAY-METHODOLOGY.md](REPLAY-METHODOLOGY.md) and [CLAIMS.md](CLAIMS.md).*
 
 
 [^replay]: The 142.4M replay artifact is not published in this repository. See [REPLAY-METHODOLOGY.md](REPLAY-METHODOLOGY.md). Live signal and cluster counts are being reconciled — see [CLAIMS.md](CLAIMS.md).

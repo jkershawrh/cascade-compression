@@ -115,11 +115,10 @@ pip install cascade-compression
 cascade-replay --domain finance --data transactions.csv \
   --llm-url https://your-model-service/v1 --llm-key sk-...
 
-# Option 3: Full deployment with OpenShift manifests
-oc apply -f deploy/openshift.yaml
-oc create secret generic cascade-llm -n cascade-compression \
-  --from-literal=url=https://your-model-service/v1 \
-  --from-literal=key=sk-...
+# Option 3: Full deployment on OpenShift
+oc new-app https://github.com/jkershawrh/cascade-compression \
+  -e CASCADE_LLM_URL=https://your-model-service/v1 \
+  -e CASCADE_LLM_KEY=sk-...
 [END CODE BLOCK]
 
 The framework ships with 8 domain packs ready to use: Kubernetes, Ansible Automation Platform, financial services, healthcare, insurance, retail, telecom, and memory management. Each pack includes a collector, a tuned LLM prompt, and synthetic data for benchmarking. Pick your domain and deploy — no custom code required.

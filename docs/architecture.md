@@ -338,18 +338,24 @@ For regulated industries, the cascade optionally integrates with an immutable le
 
 ```
 cascade_compression/
-├── bridge.py             Orchestrator — collector → pipeline → LLM → feedback
+├── bridge.py             Orchestrator — collector → pipeline → LLM → shadow → feedback
+├── biography.py          Platform autobiography from cascade state
+├── grades.py             Shared Grade type and helpers (green/yellow/red)
+├── service.py            Standalone FastAPI service (serves dashboard + API)
 ├── cli.py                cascade-run (live), cascade-replay (historical)
 ├── cascade/              NANO TIER
-│   ├── protocol.py       Signal, CascadeDecision, Outcome, CascadeAgent
+│   ├── protocol.py       Signal, CascadeDecision, Outcome, CascadeAgent, llm_complete
 │   ├── pipeline.py       CascadePipeline — runs agents in stage order
 │   ├── agents.py         5 built-in agents (dedup, transient, severity, pattern, threshold)
-│   ├── dynamic_agents.py RepeatFloodSuppressor, DominantNoiseSuppressor
+│   ├── dynamic_agents.py RepeatFloodSuppressor, DominantNoiseSuppressor, ContextualNoiseSuppressor
 │   ├── promotion.py      5-tier promotion engine with rubric matrix
 │   ├── corpus_analyzer.py Pattern discovery (floods, dominant types, mono-severity)
-│   ├── router.py         Routes survivors by tier and lane
+│   ├── memory.py         MemoryArchive — survivor memory with decay/reinforcement
+│   ├── recall.py         RecallEngine — composite similarity search
+│   ├── inverse.py        SuppressionArchive, baseline generation, causal gaps
 │   └── service.py        FastAPI cascade service
-├── collectors/           7 domain collectors (k8s, aap, finance, healthcare, insurance, retail, telecom)
+├── collectors/           25 collectors (k8s, aap, jira, git, confluence, babylon, poolboy, ceph, ovn, etc.)
+│   └── base.py           BaseCollector, DomainCollector, http_json_get, k8s_api_get
 ├── domains/              Domain configs (prompt, model, collector class per domain)
 ├── routing/              Benchmark-graded model selection (6 lanes, 6 industries; 24 models with measured throughput)
 ├── infra/                Pressure-aware scaler, fleet manager
