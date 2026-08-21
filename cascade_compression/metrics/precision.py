@@ -13,6 +13,8 @@ import random
 from dataclasses import dataclass
 from typing import List
 
+from ..cascade.protocol import chat_completions_url
+
 log = logging.getLogger(__name__)
 
 
@@ -101,7 +103,7 @@ Respond with exactly one word: correct (the signal truly needed attention) or fa
             prompt = f"Signal classified as '{sample.classification}':\n{sample.signal_type}: {sample.content}"
             try:
                 r = client.post(
-                    f"{llm_url}/v1/chat/completions",
+                    chat_completions_url(llm_url),
                     json={
                         "model": llm_model,
                         "messages": [

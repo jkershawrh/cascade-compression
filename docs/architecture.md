@@ -351,7 +351,7 @@ cascade_compression/
 │   └── service.py        FastAPI cascade service
 ├── collectors/           7 domain collectors (k8s, aap, finance, healthcare, insurance, retail, telecom)
 ├── domains/              Domain configs (prompt, model, collector class per domain)
-├── routing/              Benchmark-graded model selection (19 models, 5 lanes, 6 industries)
+├── routing/              Benchmark-graded model selection (6 lanes, 6 industries; 24 models with measured throughput)
 ├── infra/                Pressure-aware scaler, fleet manager
 ├── tco/                  TCO calculator, FastAPI API, FSI scenarios
 ├── integrations/         Immutable ledger client
