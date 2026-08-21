@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Deploy federated cascade to infra01 (Oberon cluster)
+# Deploy the federated cascade (K8s + AAP + knowledge + aggregator)
 #
-# Run this ON infra01:
-#   chmod +x deploy/deploy-infra01.sh
-#   ./deploy/deploy-infra01.sh
+# Run this on the target cluster:
+#   chmod +x deploy/deploy-federated.sh
+#   ./deploy/deploy-federated.sh
 #
 # Prerequisites:
 #   - oc logged in as cluster-admin

@@ -6,6 +6,7 @@ models to load at what replica count and grades the resulting fleet plan.
 
 from __future__ import annotations
 
+import os
 import subprocess
 from typing import List, Literal, Optional
 
@@ -108,11 +109,14 @@ class FleetManager:
         corpora: Optional[RoutingCorpora] = None,
         memory_budget_gb: float = 64.0,
         cpu_cores: int = 32,
+        namespace: Optional[str] = None,
     ) -> None:
         self._corpora = corpora or load_corpora()
         self._memory_budget_gb = memory_budget_gb
         self._cpu_cores = cpu_cores
         self._strategy_router = StrategyRouter()
+        self.namespace = namespace or os.getenv(
+            "CASCADE_NAMESPACE", "cascade-compression")
 
     def plan(self, workload_type: str) -> FleetPlan:
         """Generate a deployment plan for a workload type.
@@ -228,7 +232,7 @@ class FleetManager:
                 cmd = [
                     "oc", "scale", "deployment", deployment,
                     f"--replicas={alloc.replicas}",
-                    "-n", "triforce",
+                    "-n", self.namespace,
                 ]
                 subprocess.run(cmd, check=True, capture_output=True, text=True)
 
@@ -238,7 +242,7 @@ class FleetManager:
         """Read current state from cluster (oc get deploy)."""
         try:
             result = subprocess.run(
-                ["oc", "get", "deploy", "-n", "triforce", "-o", "json"],
+                ["oc", "get", "deploy", "-n", self.namespace, "-o", "json"],
                 capture_output=True, text=True, check=True,
             )
             import json

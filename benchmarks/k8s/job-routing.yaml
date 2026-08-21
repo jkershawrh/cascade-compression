@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: bench-routing-single
-  namespace: triforce
+  namespace: cascade-benchmarks
   labels:
     app: benchmark-harness
     bench-lever: routing
@@ -19,16 +19,16 @@ spec:
         runAsNonRoot: true
       containers:
         - name: harness
-          image: image-registry.openshift-image-registry.svc:5000/triforce/tco-benchmark-harness:latest
+          image: image-registry.openshift-image-registry.svc:5000/cascade-benchmarks/tco-benchmark-harness:latest
           securityContext:
             allowPrivilegeEscalation: false
             capabilities:
               drop: ["ALL"]
           env:
             - name: LITELLM_API_BASE
-              value: "http://litellm.triforce.svc:4000"
+              value: "http://litellm.cascade-benchmarks.svc:4000"
             - name: LITELLM_API_KEY
-              value: "local-oberon-key"
+              valueFrom: {secretKeyRef: {name: litellm-api, key: key, optional: true}}
             - name: BENCHMARK_RESULTS_DIR
               value: "/results"
           args:

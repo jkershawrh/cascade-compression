@@ -2,7 +2,7 @@ apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
   name: benchmark-results
-  namespace: triforce
+  namespace: cascade-benchmarks
   labels:
     app: benchmark-harness
 spec:
