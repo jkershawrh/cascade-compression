@@ -150,7 +150,7 @@ Env vars: `ATLASSIAN_BASE_URL`, `ATLASSIAN_EMAIL`, `ATLASSIAN_API_TOKEN` (shared
 
 ## Next Steps
 
-- Customer pilot (Amex via Ron) with hardened engine
+- Customer pilot with hardened engine
 - OCP Operator packaging (single Helm chart for cascade + governance)
 - Edge deployment validation (robotics/IoT domain pack)
 - Knowledge domain soak: causal graph linking Git hotfixes → Jira tickets → Confluence runbook gaps

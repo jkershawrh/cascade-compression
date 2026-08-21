@@ -11,7 +11,7 @@ def get_scenarios() -> list[Scenario]:
     """Return pre-built FSI scenarios."""
     return [
         Scenario(
-            id="amex-dispute-resolution",
+            id="large-card-issuer-dispute-resolution",
             name="Large Card Issuer Dispute Resolution",
             description=(
                 "500K disputes/day at a major card issuer. 85% of disputes "

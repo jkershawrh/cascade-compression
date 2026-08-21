@@ -34,3 +34,8 @@ cascade-state-*.json
 docs/memory-visualization.md
 docs/rhdp-biography.md
 docs/rhdp-platform-memory.md
+
+# Local-only knowledge corpus — harvested from local project sessions,
+# may contain third-party names and internal hostnames. Never publish.
+docs/shared-knowledge-corpus.json
+docs/shared-knowledge-corpus.md

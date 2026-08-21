@@ -351,7 +351,7 @@ cascade_compression/
 │   └── service.py        FastAPI cascade service
 ├── collectors/           7 domain collectors (k8s, aap, finance, healthcare, insurance, retail, telecom)
 ├── domains/              Domain configs (prompt, model, collector class per domain)
-├── routing/              Benchmark-graded model selection (19 models, 5 lanes, 6 industries)
+├── routing/              Benchmark-graded model selection (6 lanes, 6 industries; 24 models with measured throughput)
 ├── infra/                Pressure-aware scaler, fleet manager
 ├── tco/                  TCO calculator, FastAPI API, FSI scenarios
 ├── integrations/         Immutable ledger client
@@ -533,10 +533,14 @@ Source files (201 memories + CLAUDE.md + sessions + Cursor + ledger)
    LLM classification [optional — micro tier]
        │ "shared or specific?" for untagged claims
        ▼
-   Corpus output
+   Corpus output (local only — gitignored, never published)
        ├── shared-knowledge-corpus.json (structured, for agents)
        └── shared-knowledge-corpus.md (readable, for humans)
 ```
+
+> **Note:** the corpus is generated from local project sessions and can contain
+> third-party names, customer references, and internal hostnames. It is
+> gitignored and must not be committed. Review before sharing it anywhere.
 
 ### Adding a New Agent Framework
 

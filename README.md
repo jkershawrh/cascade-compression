@@ -31,7 +31,7 @@ cascade-run --domain kubernetes --llm-url https://your-llm/v1 --llm-key sk-...
 # Replay historical data
 cascade-replay --domain finance --data transactions.csv --llm-url https://your-llm/v1
 
-# Run tests (776 tests)
+# Run tests (785 tests)
 make test-all
 
 # Start the service with real-time dashboard
@@ -47,15 +47,40 @@ python3 -m uvicorn cascade_compression.service:app --port 8090
 
 Hardened engine: zero-FN gate, shadow validation (5%), 72h TTL, GCL audit loop. LLM classified 9,685 signals out of 142M (0.007%).
 
+**Read this before quoting the numbers above.** These are replay runs, and the raw
+artifacts are not published in this repository — see
+[REPLAY-METHODOLOGY.md](docs/REPLAY-METHODOLOGY.md) for how the runs were performed
+and what you can check from the repo. Two smaller cascade runs *are* committed under
+[`benchmarks/results/`](benchmarks/results/), with a
+[README](benchmarks/results/README.md) explaining what their fields mean — several
+were renamed when the hardened engine landed. Every figure in this repository is
+tracked in [CLAIMS.md](docs/CLAIMS.md) with its source.
+
+Two caveats that materially affect the compression figure:
+
+- **"Zero false negatives" means zero shadow-detected disagreements with the oracle
+  model**, not zero signals wrongly suppressed in absolute terms. The oracle is a
+  small CPU model scoring 14/20 on the 20-signal grading set below.
+- **Compression depends on how the oracle is prompted.** Retuning the classification
+  prompt for the same model on the same signals moved the measured noise rate from
+  0.9% to 37.3% ([model-benchmarks.md](docs/model-benchmarks.md)). Compression is a
+  property of a *(signal stream, model, prompt)* triple, not of the framework alone.
+
 ## Synthetic domain benchmarks
 
 Cold-start numbers from synthetic data — no learned agents, no LLM feedback loop.
+
+| Domain | Source | Compression | Safety |
+|--------|--------|:-----------:|--------|
 | Financial Services | Synthetic | 61.1% | 92.7% fraud, 100% compliance |
 | Healthcare | Synthetic | 91.0% | 96.6% critical, 99.0% compliance |
 | Insurance | Synthetic | 81.2% | 100% fraud, 99.8% compliance |
 | Retail | Synthetic | 88.3% | 100% shrinkage, 100% compliance |
 | Telecom | Synthetic | 94.3% | 92.1% incidents |
-| **Org Knowledge** | Live (Jira/Git/Confluence) | 83% | Runbook decay, decision churn, hotfix patterns |
+
+Org Knowledge is **not** synthetic — it runs live against Jira, GitHub, and
+Confluence at 83% compression, surfacing runbook decay, decision churn, and
+hotfix/revert patterns. It is described in the next section.
 
 Each domain is a "domain pack" — a collector, a one-paragraph prompt, and historical data. The cascade framework stays untouched.
 
@@ -93,7 +118,7 @@ Five layers, none trusting each other:
 
 One false negative from any source → agent demoted to draft, samples zeroed, evidence chain written to immutable ledger.
 
-## Model Leaderboard (20-signal AAP test, Xeon 6 CPU)
+## Model Leaderboard (n = 20 AAP signals, Xeon 6 CPU)
 
 | Model | Score | Latency | Dangerous Misses |
 |-------|------:|--------:|-----------------:|
@@ -104,6 +129,10 @@ One false negative from any source → agent demoted to draft, samples zeroed, e
 
 granite-8b and phi4-mini: every error is over-escalation (safe failure), never dismissal.
 
+This is a 20-signal hand-graded set — one signal separates 14/20 from 13/20, so treat the
+ordering as indicative rather than a ranking. What it does establish is the failure *mode*:
+on this set the top two models never dismissed a signal that mattered.
+
 ## TCO
 
 The calculator produces workload-specific estimates only when measured throughput exists for every requested model/hardware pair. Unsupported options are reported separately rather than being sized as one unit. Hardware prices and throughput data remain operator-supplied assumptions, not validated cost guarantees.
@@ -112,6 +141,8 @@ The calculator produces workload-specific estimates only when measured throughpu
 
 | Doc | Audience | What |
 |-----|----------|------|
+| [Claims register](docs/CLAIMS.md) | Both | Every quantitative claim, with its source and verification status |
+| [Replay methodology](docs/REPLAY-METHODOLOGY.md) | Technical | How the 142.4M replay was run, and what it does and doesn't show |
 | [Architecture](docs/architecture.md) | Both | How the cascade works — executive overview + technical deep-dive |
 | [Whitepaper](docs/cascade-compression-whitepaper.md) | Executive | Full story with benchmark proof points and TCO |
 | [Model Benchmarks](docs/model-benchmarks.md) | Technical | 6-model comparison, prompt tuning, live cascade stats |
@@ -132,9 +163,9 @@ cascade_compression/
   bridge.py                Orchestrator — collector → pipeline → LLM → shadow → feedback
   cli.py                   cascade-run, cascade-replay entrypoints
   cascade/                 Pipeline, agents, promotion (hardened), corpus analyzer
-  collectors/              20 collectors (k8s, aap, jira, git, confluence, prometheus, ceph, gitops, ovn, platform, provisioner, dashboard, catalog, finance, healthcare, insurance, retail, telecom, + custom)
+  collectors/              23 collector modules; 17 selectable sidecar modes (k8s, aap, macos + 14 registered: jira, git, confluence, prometheus, ceph, gitops, ovn, governor, agnosticv, babylon, labagator, poolboy, sandbox_conan, stargate)
   domains/                 10 domain packs (kubernetes, aap, knowledge, finance, healthcare, insurance, retail, telecom, memory, + synthetic)
-  routing/                 Benchmark-graded model selection (19 models, 5 lanes)
+  routing/                 Benchmark-graded model selection (6 lanes; 24 models with measured throughput on the Xeon profile)
   infra/                   Pressure-aware scaler, fleet manager
   tco/                     TCO calculator, FastAPI API, FSI scenarios
   integrations/            Immutable ledger client + promotion event writer

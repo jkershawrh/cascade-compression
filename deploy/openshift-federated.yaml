@@ -1,5 +1,5 @@
 ---
-# Federated Cascade Deployment — infra01
+# Federated Cascade Deployment
 #
 # Three cascade instances:
 #   1. cascade-k8s      — monitors Kubernetes clusters, forms K8s memories

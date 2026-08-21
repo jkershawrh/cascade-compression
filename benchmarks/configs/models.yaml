@@ -1,5 +1,5 @@
 # Model Roster — Maps aliases to Oberon backends
-# Source: triforce/infrastructure/oberon/model_roster.yaml
+# Source: benchmark cluster model roster
 # Cluster: Oberon (Intel Xeon 6767P, 128c/256t, 503 GiB, AMX BF16/INT8)
 
 cluster:

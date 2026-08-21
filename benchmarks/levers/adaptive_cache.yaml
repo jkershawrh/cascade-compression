@@ -17,4 +17,4 @@ protocol:
 simulation: true
 
 measure: [warm_cache_speedup, cold_start_ms]
-triforce_reference: "cold ~800ms, warm <5ms after 3 calls"
+internal_reference: "cold ~800ms, warm <5ms after 3 calls"

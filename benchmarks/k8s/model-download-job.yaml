@@ -2,7 +2,7 @@ apiVersion: batch/v1
 kind: Job
 metadata:
   name: download-gguf-models
-  namespace: triforce
+  namespace: cascade-benchmarks
   labels:
     app: benchmark-harness
     bench-phase: setup

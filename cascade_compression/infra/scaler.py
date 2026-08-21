@@ -8,6 +8,7 @@ snapshots so the scaler can be exercised in tests and development.
 
 from __future__ import annotations
 
+import os
 import platform
 import re
 import time
@@ -540,7 +541,8 @@ class InferenceScaler:
 class ModelLifecycleManager:
     """Executes scaler decisions by scaling model deployments."""
 
-    def __init__(self, namespace: str = "triforce", dry_run: bool = True):
+    def __init__(self, namespace: str | None = None, dry_run: bool = True):
+        namespace = namespace or os.getenv("CASCADE_NAMESPACE", "cascade-compression")
         self.namespace = namespace
         self.dry_run = dry_run
         self._last_actions: list[str] = []
