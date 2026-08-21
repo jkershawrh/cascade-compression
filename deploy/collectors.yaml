@@ -1,5 +1,5 @@
 ---
-# Signal collector sidecars for infra01
+# Signal collector sidecars
 #
 # K8s collector: polls 5 OCP clusters, pushes to cascade-k8s
 # AAP collector: polls AAP database, pushes to cascade-aap

@@ -540,7 +540,7 @@ class InferenceScaler:
 class ModelLifecycleManager:
     """Executes scaler decisions by scaling model deployments."""
 
-    def __init__(self, namespace: str = "triforce", dry_run: bool = True):
+    def __init__(self, namespace: str = "cascade-compression", dry_run: bool = True):
         self.namespace = namespace
         self.dry_run = dry_run
         self._last_actions: list[str] = []

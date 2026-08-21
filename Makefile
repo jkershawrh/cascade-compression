@@ -41,14 +41,17 @@ up:
 	uvicorn cascade_compression.tco.api:app --host 0.0.0.0 --port 8090 --reload
 
 ## ── Benchmark targets ───────────────────────────────────────────────
-BENCH_REGISTRY ?= default-route-openshift-image-registry.apps.REDACTED_CLUSTER.example.com
-BENCH_IMAGE ?= $(BENCH_REGISTRY)/triforce/cascade-benchmark-harness:latest
+## Set BENCH_REGISTRY and BENCH_NAMESPACE for your own cluster, e.g.
+##   make bench-push BENCH_REGISTRY=$$(oc registry info) BENCH_NAMESPACE=my-ns
+BENCH_REGISTRY ?= $(shell oc registry info 2>/dev/null)
+BENCH_NAMESPACE ?= cascade-benchmarks
+BENCH_IMAGE ?= $(BENCH_REGISTRY)/$(BENCH_NAMESPACE)/cascade-benchmark-harness:latest
 
 bench-build:
 	podman build -f benchmarks/Containerfile -t $(BENCH_IMAGE) --platform linux/amd64 .
 
 bench-push:
-	podman login $(BENCH_REGISTRY) -u kubeadmin -p $$(oc whoami -t)
+	podman login $(BENCH_REGISTRY) -u $$(oc whoami) -p $$(oc whoami -t)
 	podman push $(BENCH_IMAGE)
 
 bench-setup:
@@ -57,17 +60,17 @@ bench-setup:
 bench-run-all:
 	@for f in benchmarks/k8s/job-*.yaml; do \
 		name=$$(grep "name:" "$$f" | head -1 | awk '{print $$2}'); \
-		oc delete job "$$name" -n triforce --ignore-not-found; \
+		oc delete job "$$name" -n $(BENCH_NAMESPACE) --ignore-not-found; \
 		oc apply -f "$$f"; \
 	done
 	@echo "All jobs submitted. Watch with: make bench-status"
 
 bench-status:
-	oc get jobs -n triforce -l app=benchmark-harness
+	oc get jobs -n $(BENCH_NAMESPACE) -l app=benchmark-harness
 
 bench-results:
 	mkdir -p benchmarks/results
-	oc rsync $$(oc get pod -n triforce -l app=benchmark-harness --field-selector=status.phase=Succeeded -o jsonpath='{.items[-1].metadata.name}'):/results/ benchmarks/results/ -n triforce
+	oc rsync $$(oc get pod -n $(BENCH_NAMESPACE) -l app=benchmark-harness --field-selector=status.phase=Succeeded -o jsonpath='{.items[-1].metadata.name}'):/results/ benchmarks/results/ -n $(BENCH_NAMESPACE)
 
 bench-report:
 	@for f in benchmarks/results/benchmark-*.json; do \

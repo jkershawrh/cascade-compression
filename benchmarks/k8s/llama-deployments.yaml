@@ -7,7 +7,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: llama-smollm2-360m
-  namespace: triforce
+  namespace: cascade-benchmarks
   labels:
     app: llama-server
     model: smollm2-360m
@@ -51,7 +51,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: llama-smollm2-360m
-  namespace: triforce
+  namespace: cascade-benchmarks
 spec:
   selector:
     app: llama-smollm2-360m
@@ -64,7 +64,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: llama-smollm2-1.7b
-  namespace: triforce
+  namespace: cascade-benchmarks
   labels:
     app: llama-server
     model: smollm2-1.7b
@@ -108,7 +108,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: llama-smollm2-1.7b
-  namespace: triforce
+  namespace: cascade-benchmarks
 spec:
   selector:
     app: llama-smollm2-1.7b
@@ -121,7 +121,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: llama-phi4-mini
-  namespace: triforce
+  namespace: cascade-benchmarks
   labels:
     app: llama-server
     model: phi4-mini
@@ -165,7 +165,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: llama-phi4-mini
-  namespace: triforce
+  namespace: cascade-benchmarks
 spec:
   selector:
     app: llama-phi4-mini
@@ -178,7 +178,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: llama-gemma2-2b
-  namespace: triforce
+  namespace: cascade-benchmarks
   labels:
     app: llama-server
     model: gemma2-2b
@@ -222,7 +222,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: llama-gemma2-2b
-  namespace: triforce
+  namespace: cascade-benchmarks
 spec:
   selector:
     app: llama-gemma2-2b
@@ -235,7 +235,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: llama-qwen36-moe
-  namespace: triforce
+  namespace: cascade-benchmarks
   labels:
     app: llama-server
     model: qwen36-moe
@@ -280,7 +280,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: llama-qwen36-moe
-  namespace: triforce
+  namespace: cascade-benchmarks
 spec:
   selector:
     app: llama-qwen36-moe
@@ -293,7 +293,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: llama-granite-2b-q4
-  namespace: triforce
+  namespace: cascade-benchmarks
   labels:
     app: llama-server
     model: granite-2b-q4
@@ -337,7 +337,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: llama-granite-2b-q4
-  namespace: triforce
+  namespace: cascade-benchmarks
 spec:
   selector:
     app: llama-granite-2b-q4
@@ -350,7 +350,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: llama-granite-2b-q8
-  namespace: triforce
+  namespace: cascade-benchmarks
   labels:
     app: llama-server
     model: granite-2b-q8
@@ -394,7 +394,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: llama-granite-2b-q8
-  namespace: triforce
+  namespace: cascade-benchmarks
 spec:
   selector:
     app: llama-granite-2b-q8
@@ -407,7 +407,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: llama-granite-8b-q4
-  namespace: triforce
+  namespace: cascade-benchmarks
   labels:
     app: llama-server
     model: granite-8b-q4
@@ -451,7 +451,7 @@ apiVersion: v1
 kind: Service
 metadata:
   name: llama-granite-8b-q4
-  namespace: triforce
+  namespace: cascade-benchmarks
 spec:
   selector:
     app: llama-granite-8b-q4
