@@ -10,7 +10,7 @@ from cascade_compression.cascade.memory import MemoryArchive
 from cascade_compression.cascade.memory_intelligence import MemoryIntelligence
 from cascade_compression.cascade.protocol import CascadeDecision, Outcome, Signal
 from cascade_compression.cascade.inverse import SuppressionArchive
-from cascade_compression.service import generate_biography, _compute_health_score
+from cascade_compression.biography import generate_biography, _compute_health_score
 
 from tests.helpers import make_signal
 
