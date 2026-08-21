@@ -6,15 +6,15 @@
 
 ## Executive Summary
 
-Most AI signals do not need a model. Cascade compression proves it — a self-tuning pipeline that processes signals through deterministic rules before touching an LLM, validated on 6.2 million live production signals across 9 OpenShift clusters with 82% compression, zero false negatives, and five independent safety layers. Running entirely on Intel Xeon 6 CPUs, the system delivers sub-second classification at a 3-year TCO of $33K — compared to $266K for GPU infrastructure or $540K for cloud API pricing.
+Most AI signals do not need a model. Cascade compression proves it — a self-tuning pipeline that processes signals through deterministic rules before touching an LLM, validated on live production signals across multiple OpenShift clusters with 82% compression, zero shadow-detected false negatives, and five independent safety layers (exact signal and cluster counts: see [CLAIMS.md](CLAIMS.md)). Running entirely on Intel Xeon 6 CPUs, the system delivers sub-second classification at a 3-year TCO of $33K — compared to $266K for GPU infrastructure or $540K for cloud API pricing.
 
 But compression is only the beginning. The 1% of signals that survive the cascade — the ones that actually matter — become institutional memory. The same pipeline that reduces inference cost by 93% also forms, recalls, consolidates, and federates knowledge across domains. After 72 hours on production infrastructure, the system had discovered 462 causal links between storage failures and volume corruption, identified 5 missing upstream signal sources, and formed 10,964 memories representing the compressed operational history of the entire platform.
 
-The framework is domain-agnostic. Ten domain packs and 20 collectors ship ready to use — operational (Kubernetes, Ansible Automation Platform, Prometheus, Ceph, ArgoCD, OVN) and organizational knowledge (Jira, GitHub, Confluence). Adding a new domain requires three things: a data connector, a one-paragraph prompt, and historical data for replay. The cascade bootstraps itself from signal observation, discovers suppression patterns automatically, and continuously validates that those patterns are still correct.
+The framework is domain-agnostic. Ten domain packs and 23 collector modules (17 selectable sidecar modes) ship ready to use — operational (Kubernetes, Ansible Automation Platform, Prometheus, Ceph, ArgoCD, OVN) and organizational knowledge (Jira, GitHub, Confluence). Adding a new domain requires three things: a data connector, a one-paragraph prompt, and historical data for replay. The cascade bootstraps itself from signal observation, discovers suppression patterns automatically, and continuously validates that those patterns are still correct.
 
-Five layers of defense — zero-FN gate, shadow validation, independent GCL audit, 72-hour TTL, and optional human gate — ensure that no activated agent can silently drop a real signal. An immutable ledger records the full evidence chain for every promotion and demotion. A GPU reasoning tier produces structured root-cause analyses for the signals that matter most. Sixty-one adversarial edge scenarios — across functional, safety, capacity, and causality categories — validate the framework against structuring attacks, label injection, service flapping, cross-domain breaches, and burst traffic. All pass.
+Five layers of defense — zero-FN gate, shadow validation, independent GCL audit, 72-hour TTL, and optional human gate — ensure that no activated agent can silently drop a real signal. An immutable ledger records the full evidence chain for every promotion and demotion. A GPU reasoning tier produces structured root-cause analyses for the signals that matter most. Sixty-one adversarial edge scenarios — across functional, safety, capacity, and causality categories — validate the framework against structuring attacks, label injection, service flapping, cross-domain breaches, and burst traffic. All pass. Nineteen of the sixty-one ship in `cascade_compression/edge_scenarios.py` and can be run from this repository; the rest were exercised against live instances and are not published.
 
-776 tests. 61 edge scenarios. Zero false negatives across every run.
+776 tests. 19 adversarial edge scenarios ship in `cascade_compression/edge_scenarios.py`; the full 61-scenario suite was run against live instances and is not published. Zero shadow-detected false negatives across every run.
 
 ---
 
@@ -215,7 +215,7 @@ The system runs on Red Hat OpenShift on Intel Xeon 6 hardware. No GPU in the inf
                     │    ↑ collector-confluence                │
                     └─────────────────────────────────────────┘
                                     │
-                    19 pods, 20 collectors, 9 clusters
+                    19 pods, 23 collector modules
 ```
 
 ### Live Soak Results (sustained, multi-day)
@@ -343,6 +343,20 @@ Processing 10M signals/day (mid-size bank scale):
 | GPU inference (H100) | $250K | $16K | $266K | $0.000024 |
 | Cloud API | $0 | $0 | $540K | $0.000049 |
 
+> **What is and isn't measured here.** Only the Xeon 6 row rests on throughput
+> measured by this framework, and even there `data/model_profiles.json` states in
+> its own `_note` that the throughput figures are **estimated** pending validated
+> benchmark data. The H100 and cloud rows are **not measured by this framework at
+> all** — `data/hardware_profiles.json` carries zero measured models for the
+> `h100-sxm` and cloud-API profiles. Those rows are built from list pricing and
+> published third-party throughput. Hardware prices and power costs are
+> operator-supplied assumptions.
+>
+> The TCO calculator itself refuses to size a model/hardware pair it has no
+> measured throughput for, reporting them under `unsupported_options` instead.
+> This table is a worked illustration, not an output of that calculator, and not
+> a validated cost guarantee. See [CLAIMS.md](CLAIMS.md).
+
 The cascade makes CPU viable because the LLM barely runs. At 82% compression, 10M signals/day produces 1.8M LLM calls. At 600ms per classification with 8-way parallelism, a single Granite-8b replica handles this with headroom.
 
 ### Throughput Capacity
@@ -386,6 +400,9 @@ Four theorems provide formal guarantees (full proofs in the companion mathematic
 
 The cascade reduces inference cost by ~93% while processing every signal.
 
+This ratio is derived from the cost model above and inherits every assumption in it —
+in particular the unmeasured GPU and cloud baselines. See [CLAIMS.md](CLAIMS.md).
+
 ---
 
 ## Domain-Agnostic Design
@@ -411,7 +428,7 @@ Ten domain packs ship ready to use:
 
 ### Collectors
 
-20 collectors, each a standalone module that maps a data source to the Signal protocol:
+23 collector modules, each mapping a data source to the Signal protocol (17 are selectable sidecar modes):
 
 | Collector | Source | Integration |
 |-----------|--------|-------------|
@@ -450,7 +467,7 @@ All benchmarks run with the same cascade framework. No engine modifications betw
 
 | Domain | Signals | Compression | Critical Signal Survival | Status |
 |--------|---------|-------------|-------------------------|--------|
-| **Kubernetes** | **6.2M** live / **142.4M** replay | **82%** / **99.1%** | 100% | Production |
+| **Kubernetes** | live / **142.4M** replay [^replay] | **82%** / **99.1%** | 100% | Production |
 | **AAP** | **1.0M+** | **96.0%** | 100% | Production |
 | **Org Knowledge** | **34K+** (Jira/Git/Confluence) | **83%** | Runbook decay, decision churn, hotfix patterns | Production |
 | Financial Services | 110K synthetic | 61.1% | 92.7% fraud, 100% compliance | Cold start |
@@ -524,7 +541,7 @@ In production, the inverse cascade revealed that 48 signal types had been normal
 
 ## Edge Testing & Adversarial Validation
 
-The framework was validated against 61 adversarial scenarios across four categories, run on Intel Xeon 6767P (128 cores) with phi4-mini (3.8B) providing LLM classification. All scenarios use the same framework with no domain-specific modifications.
+The framework was validated against 61 adversarial scenarios across four categories (19 of which ship in `cascade_compression/edge_scenarios.py`; the remainder were run against live instances and are not published), run on Intel Xeon 6767P (128 cores) with phi4-mini (3.8B) providing LLM classification. All scenarios use the same framework with no domain-specific modifications.
 
 ### Functional Edge Cases (27 scenarios)
 
@@ -699,9 +716,9 @@ Replay bootstraps the cascade from historical data so it is smart on day one. A 
 - **Stage 1 (TDD)**: RED tests written before implementation
 - **Stage 2 (EDD)**: Every lifecycle transition emits an auditable event
 - **Stage 3 (BDD)**: GIVEN/WHEN/THEN scenarios for all behaviors
-- **Stage 4 (AET)**: 61 adversarial edge scenarios across functional, safety, capacity, and causality categories. Tests run against live cascade instances with real LLM inference.
+- **Stage 4 (AET)**: 61 adversarial edge scenarios across functional, safety, capacity, and causality categories (19 published in-repo). Tests run against live cascade instances with real LLM inference.
 
-776 unit/integration tests. 61 edge scenarios. Zero failures. Zero regressions.
+776 unit/integration tests. 19 adversarial edge scenarios in-repo (61 run against live instances, not published). Zero failures. Zero regressions.
 
 ---
 
@@ -715,4 +732,7 @@ For organizations evaluating AI inference infrastructure: the question is not wh
 
 ---
 
-*Cascade Compression is developed for Intel Financial Services Industry engagements. Benchmarks conducted on Intel Xeon 6767P (128 cores) with IBM Granite 8B Instruct, IBM Granite 2B, and Microsoft Phi-4 models. Validated on 5.5M+ live signals (10 clusters + Jira/GitHub/Confluence, multi-day soak) and 142.4M replayed signals. Adversarially tested with 61 edge scenarios across 3 industry verticals. 776 tests, 10 domain packs, 20 collectors, 3 federated cascades, 20,900+ aggregated memories. Synthetic generators calibrated to FinCEN, AHRQ, 3GPP, NAIC, and NRF published ratios. All results reproducible from the open-source framework.*
+*Cascade Compression is developed for Intel Financial Services Industry engagements. Benchmarks conducted on Intel Xeon 6767P (128 cores) with IBM Granite 8B Instruct, IBM Granite 2B, and Microsoft Phi-4 models. Validated on 5.5M+ live signals (10 clusters + Jira/GitHub/Confluence, multi-day soak) and 142.4M replayed signals. Adversarially tested with 61 edge scenarios across 3 industry verticals. 776 tests, 10 domain packs, 23 collector modules, 3 federated cascades, 20,900+ aggregated memories. Synthetic generators calibrated to FinCEN, AHRQ, 3GPP, NAIC, and NRF published ratios. The framework is open source and the replay path is runnable; the production signal corpora and the 142.4M replay artifact are not published. See [REPLAY-METHODOLOGY.md](REPLAY-METHODOLOGY.md) and [CLAIMS.md](CLAIMS.md).*
+
+
+[^replay]: The 142.4M replay artifact is not published in this repository. See [REPLAY-METHODOLOGY.md](REPLAY-METHODOLOGY.md). Live signal and cluster counts are being reconciled — see [CLAIMS.md](CLAIMS.md).

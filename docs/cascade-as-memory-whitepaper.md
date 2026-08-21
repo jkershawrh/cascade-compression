@@ -8,9 +8,9 @@
 
 Every organization has institutional memory. Today it lives in wikis nobody reads, runbooks nobody updates, and the heads of engineers who leave. It is fragile, unstructured, and degrades with every departure.
 
-Cascade compression offers a different model: institutional memory that forms automatically from the organization's own signal streams. The same three-tier pipeline that achieves 82% compression on 6.2 million live production signals — validated with zero false negatives across five independent safety layers — now encodes what matters, forgets what doesn't, recalls precedent when new events arrive, and forms associations across domains that no single human could hold in their head.
+Cascade compression offers a different model: institutional memory that forms automatically from the organization's own signal streams. The same three-tier pipeline that achieves 82% compression on live production signals — validated with zero shadow-detected false negatives across five independent safety layers — now encodes what matters, forgets what doesn't, recalls precedent when new events arrive, and forms associations across domains that no single human could hold in their head.
 
-This paper describes the memory architecture built on top of the validated cascade compression engine. Five capabilities — survivor archive, recall, consolidation, priming, and federation — transform the cascade from a cost optimization into a knowledge formation system. A GPU reasoning tier (Microsoft Phi-4) produces structured root-cause analyses with memory-informed evidence bundles. All capabilities are implemented, tested (760 tests, zero failures), and running in production on Intel Xeon 6 hardware across 9 OpenShift clusters.
+This paper describes the memory architecture built on top of the validated cascade compression engine. Five capabilities — survivor archive, recall, consolidation, priming, and federation — transform the cascade from a cost optimization into a knowledge formation system. A GPU reasoning tier (Microsoft Phi-4) produces structured root-cause analyses with memory-informed evidence bundles. All capabilities are implemented, tested (776 tests, zero failures), and running in production on Intel Xeon 6 hardware across the OpenShift fleet (exact cluster count: see [CLAIMS.md](CLAIMS.md)).
 
 After 72 hours of live operation, the system formed 10,964 memories, forgot 272,525, discovered 462 causal links between storage failures, identified 5 monitoring blind spots through causal gap analysis, and learned 101 contextual suppression rules. It wrote its own biography.
 
@@ -174,7 +174,7 @@ Multiple cascade instances share memories through export and import.
 
 ### Platform Memory After 48 Hours
 
-Monitoring 9 OpenShift clusters and Ansible Automation Platform through 11 collectors:
+Monitoring the production OpenShift fleet and Ansible Automation Platform through 11 collectors:
 
 | Metric | Value |
 |--------|-------|
@@ -258,7 +258,7 @@ Both classification models run on CPU. No GPU required for the inference path. T
 
 ### Test Coverage
 
-760 tests across all components. Zero failures. Zero regressions.
+776 tests across all components. Zero failures. Zero regressions.
 
 | Phase | Tests | What's Validated |
 |-------|-------|-----------------|
@@ -281,7 +281,7 @@ Both classification models run on CPU. No GPU required for the inference path. T
 
 ## The Bigger Claim
 
-The cascade compression engine, validated on 6.2M+ live production signals across 9 clusters with zero false negatives, proves that most AI signals don't need a model. The memory architecture proves something more: the compression process itself is how machines should form institutional knowledge.
+The cascade compression engine, validated on live production signals with zero shadow-detected false negatives, proves that most AI signals don't need a model. The memory architecture proves something more: the compression process itself is how machines should form institutional knowledge.
 
 A filing cabinet stores everything and retrieves on demand. A memory system decides what matters, strengthens what recurs, forgets what doesn't, and forms associations that no single query could surface. The cascade does all of this — not through a separate knowledge management layer, but as a natural consequence of the compression process.
 
@@ -291,4 +291,4 @@ After 48 hours, the cascade wrote the biography of a platform that has never bee
 
 ---
 
-*Cascade as Memory is built on the validated cascade compression framework (6.2M+ live signals, 82% compression, zero false negatives, 760 tests). All capabilities described in this paper are implemented, tested, and running in production on Intel Xeon 6 hardware across 9 OpenShift clusters. The framework is domain-agnostic — nine domain packs and 17 collectors ship ready to use.*
+*Cascade as Memory is built on the validated cascade compression framework (82% compression on live production signals, zero shadow-detected false negatives, 776 tests). Exact signal and cluster counts are tracked in [CLAIMS.md](CLAIMS.md). All capabilities described in this paper are implemented, tested, and running in production on Intel Xeon 6 hardware. The framework is domain-agnostic — ten domain packs and 23 collector modules ship ready to use.*
