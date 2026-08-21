@@ -9,14 +9,12 @@ documentation gaps (stale pages in critical spaces), expertise concentration
 after incidents).
 """
 
-import json
 import logging
 import os
 from base64 import b64encode
 from typing import Iterator, List, Optional
-from urllib.request import Request, urlopen
 
-from .base import BaseCollector
+from .base import BaseCollector, http_json_get
 
 log = logging.getLogger(__name__)
 
@@ -273,14 +271,7 @@ class ConfluenceCollector(BaseCollector):
         return signals
 
     def _get(self, path: str) -> Optional[dict]:
-        url = f"{self._base_url}{path}"
         headers = {"Accept": "application/json"}
         if self._auth_header:
             headers["Authorization"] = self._auth_header
-        try:
-            req = Request(url, headers=headers)
-            with urlopen(req, timeout=20) as resp:  # nosec B310
-                return json.loads(resp.read())
-        except Exception as e:
-            log.debug("Confluence GET %s: %s", path[:80], str(e)[:100])
-            return None
+        return http_json_get(f"{self._base_url}{path}", headers, label="Confluence")

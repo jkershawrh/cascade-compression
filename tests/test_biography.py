@@ -12,13 +12,7 @@ from cascade_compression.cascade.protocol import CascadeDecision, Outcome, Signa
 from cascade_compression.cascade.inverse import SuppressionArchive
 from cascade_compression.service import generate_biography, _compute_health_score
 
-
-def make_signal(signal_type="heartbeat", severity="info", content=None):
-    return Signal(
-        signal_type=signal_type,
-        severity=severity,
-        content=content or {"message": f"{signal_type} signal"},
-    )
+from tests.helpers import make_signal
 
 
 def make_decision(signal_id, agent="severity_gate", outcome=Outcome.DROP):
@@ -67,12 +61,12 @@ class TestGenerateBiography:
         archive = MemoryArchive()
         archive.store(
             make_signal("pod_crash", "critical",
-                        {"message": "CrashLoopBackOff on api-server"}),
+                        content={"message": "CrashLoopBackOff on api-server"}),
             classification="real_incident",
         )
         archive.store(
             make_signal("node_ready", "info",
-                        {"message": "Node ready"}),
+                        content={"message": "Node ready"}),
             classification="routine",
         )
 
@@ -159,7 +153,7 @@ class TestGenerateBiography:
         archive = MemoryArchive()
         archive.store(
             make_signal("pod_eviction", "high",
-                        {"message": "pod evicted"}),
+                        content={"message": "pod evicted"}),
             classification="incident",
         )
 
@@ -178,12 +172,12 @@ class TestGenerateBiography:
         archive = MemoryArchive()
         archive.store(
             make_signal("node_disk_pressure", "high",
-                        {"message": "disk pressure detected"}),
+                        content={"message": "disk pressure detected"}),
             classification="cause",
         )
         archive.store(
             make_signal("pod_eviction", "high",
-                        {"message": "pod evicted"}),
+                        content={"message": "pod evicted"}),
             classification="effect",
         )
 
@@ -270,7 +264,7 @@ class TestGenerateBiography:
         """Top memories with GPU analysis include root_cause."""
         archive = MemoryArchive()
         sig = make_signal("pod_crash", "critical",
-                          {"message": "CrashLoopBackOff"})
+                          content={"message": "CrashLoopBackOff"})
         m = archive.store(sig, classification="incident",
                           metadata={"analysis": {
                               "root_cause": "Memory limit exceeded",
@@ -290,7 +284,7 @@ class TestComputeHealthScore:
         """No gaps, no absences, strong memories = excellent score."""
         archive = MemoryArchive()
         archive.store(
-            make_signal("x", "critical", {"message": "x"}),
+            make_signal("x", "critical", content={"message": "x"}),
             classification="x",
         )
 
@@ -307,7 +301,7 @@ class TestComputeHealthScore:
         """Causal gaps reduce health score."""
         archive = MemoryArchive()
         archive.store(
-            make_signal("x", "high", {"message": "x"}),
+            make_signal("x", "high", content={"message": "x"}),
             classification="x",
         )
 
@@ -373,7 +367,7 @@ class TestComputeHealthScore:
         for i in range(10):
             archive.store(
                 make_signal(f"type_{i}", "info",
-                            {"message": f"info signal {i}"}),
+                            content={"message": f"info signal {i}"}),
                 classification="routine",
             )
         health = _compute_health_score(
@@ -400,7 +394,7 @@ class TestComputeHealthScore:
         # Best case
         archive = MemoryArchive()
         archive.store(
-            make_signal("x", "critical", {"message": "x"}),
+            make_signal("x", "critical", content={"message": "x"}),
             classification="x",
         )
         health = _compute_health_score(archive, [], [], [])

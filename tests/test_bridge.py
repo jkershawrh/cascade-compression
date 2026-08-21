@@ -1,6 +1,7 @@
 """Tests for the standalone CascadeBridge."""
 
 from cascade_compression.bridge import CascadeBridge, _to_cascade_signal, _BUILTIN_AGENT_NAMES
+from cascade_compression.cascade.memory import MemoryArchive
 
 
 class FakeSignal:
@@ -130,6 +131,33 @@ class TestLedgerIntegration:
     def test_ledger_url_set(self):
         bridge = CascadeBridge(ledger_url="http://fake:28099")
         assert bridge._ledger_url == "http://fake:28099"
+
+
+class TestEvidenceBundle:
+    def test_evidence_bundle_with_memory_archive(self):
+        bridge = CascadeBridge()
+        bridge.memory_archive = MemoryArchive(max_capacity=100)
+        from cascade_compression.cascade.protocol import Signal
+        mem_signal = Signal(
+            signal_type="pod_crashloop", severity="high",
+            source="test", namespace="prod",
+            content={"message": "Pod crashing in prod"}, labels={},
+        )
+        bridge.memory_archive.store(mem_signal, classification="important")
+        sig = {
+            "signal_type": "pod_crashloop", "severity": "high",
+            "namespace": "prod", "content": {"message": "Pod crashing in prod"},
+        }
+        bundle = bridge._build_evidence_bundle(sig)
+        assert "related_memories" in bundle
+        assert len(bundle["related_memories"]) > 0
+        assert bundle["related_memories"][0]["signal_type"] == "pod_crashloop"
+
+    def test_evidence_bundle_without_archive(self):
+        bridge = CascadeBridge()
+        bridge.memory_archive = None
+        bundle = bridge._build_evidence_bundle({"signal_type": "test"})
+        assert bundle["related_memories"] == []
 
 
 class TestGCLBuiltinFiltering:

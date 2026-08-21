@@ -9,13 +9,11 @@ hotspots), hotfix patterns (rapid follow-up commits), code review repeats
 or missing CHANGELOG entries).
 """
 
-import json
 import logging
 import os
 from typing import Iterator, List, Optional, Union
-from urllib.request import Request, urlopen
 
-from .base import BaseCollector
+from .base import BaseCollector, http_json_get
 
 log = logging.getLogger(__name__)
 
@@ -286,14 +284,7 @@ class GitCollector(BaseCollector):
         return signals
 
     def _get(self, path: str) -> Optional[Union[dict, list]]:
-        url = f"{self._base_url}{path}"
         headers = {"Accept": "application/vnd.github.v3+json"}
         if self._token:
             headers["Authorization"] = f"Bearer {self._token}"
-        try:
-            req = Request(url, headers=headers)
-            with urlopen(req, timeout=20) as resp:  # nosec B310
-                return json.loads(resp.read())
-        except Exception as e:
-            log.debug("Git GET %s: %s", path[:80], str(e)[:100])
-            return None
+        return http_json_get(f"{self._base_url}{path}", headers, label="Git")

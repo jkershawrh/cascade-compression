@@ -11,23 +11,8 @@ import pytest
 from cascade_compression.cascade.agents import default_agents
 from cascade_compression.cascade.memory import MemoryArchive
 from cascade_compression.cascade.pipeline import CascadePipeline
-from cascade_compression.cascade.protocol import Signal
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def make_signal(signal_type="pod_crashloop", severity="high", source="node-01",
-                namespace="production", content=None, labels=None):
-    return Signal(
-        signal_type=signal_type,
-        severity=severity,
-        source=source,
-        namespace=namespace,
-        content=content or {"message": f"{signal_type} detected"},
-        labels=labels or {},
-    )
+from tests.helpers import make_signal
 
 
 def make_pipeline():

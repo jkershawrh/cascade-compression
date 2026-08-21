@@ -13,7 +13,7 @@ import random
 from dataclasses import dataclass
 from typing import List
 
-from ..cascade.protocol import chat_completions_url
+from ..cascade.protocol import llm_complete
 
 log = logging.getLogger(__name__)
 
@@ -102,21 +102,11 @@ Respond with exactly one word: correct (the signal truly needed attention) or fa
         for sample in samples:
             prompt = f"Signal classified as '{sample.classification}':\n{sample.signal_type}: {sample.content}"
             try:
-                r = client.post(
-                    chat_completions_url(llm_url),
-                    json={
-                        "model": llm_model,
-                        "messages": [
-                            {"role": "system", "content": system},
-                            {"role": "user", "content": prompt},
-                        ],
-                        "max_tokens": 5,
-                        "temperature": 0,
-                    },
-                    headers={"Authorization": f"Bearer {llm_key}"},
-                )
-                r.raise_for_status()
-                answer = r.json()["choices"][0]["message"]["content"].strip().lower()
+                answer = llm_complete(
+                    client, llm_url, llm_key, llm_model,
+                    [{"role": "system", "content": system},
+                     {"role": "user", "content": prompt}],
+                ).lower()
                 if "correct" in answer:
                     sample.verdict = "true_important"
                 elif "false" in answer or "alarm" in answer:

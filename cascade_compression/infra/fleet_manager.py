@@ -8,19 +8,14 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import List, Literal, Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
+from ..grades import Grade, worst_grade as _worst_grade
 from ..routing.corpora import CorporaEntry, RoutingCorpora, load_corpora
 from .scaler import estimate_memory_gb
 from ..routing.strategy_router import InferenceStrategy, StrategyRouter
-
-# ---------------------------------------------------------------------------
-# Data models
-# ---------------------------------------------------------------------------
-
-Grade = Literal["green", "yellow", "red"]
 
 
 class FleetScorecard(BaseModel):
@@ -59,17 +54,6 @@ class FleetPlan(BaseModel):
     allocations: List[ModelAllocation] = Field(default_factory=list)
     total_memory_used_gb: float = 0.0
     scorecard: FleetScorecard = Field(default_factory=FleetScorecard)
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-_GRADE_RANK = {"green": 0, "yellow": 1, "red": 2}
-
-
-def _worst_grade(*grades: Grade) -> Grade:
-    return max(grades, key=lambda g: _GRADE_RANK.get(g, 2))
 
 
 # ---------------------------------------------------------------------------

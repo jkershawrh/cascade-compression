@@ -11,7 +11,7 @@ from typing import Iterator, Optional
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from .base import BaseCollector
+from .base import BaseCollector, detect_in_cluster, load_sa_token
 
 logger = logging.getLogger(__name__)
 
@@ -98,11 +98,11 @@ class KubernetesCollector(BaseCollector):
     def connect(self, config: dict) -> bool:
         self._api_url = config.get("api_url", "").rstrip("/")
         if not self._api_url:
-            self._api_url = self._detect_in_cluster()
+            self._api_url = detect_in_cluster()
         if urlparse(self._api_url).scheme != "https":
             logger.warning("Kubernetes API URL must use HTTPS")
             return False
-        self._token = config.get("token", "") or self._load_sa_token()
+        self._token = config.get("token", "") or load_sa_token()
         self._namespaces = config.get("namespaces", [])
         self._exclude_ns = config.get("exclude_namespaces", [
             "openshift-*", "kube-*", "openshift",
@@ -254,18 +254,3 @@ class KubernetesCollector(BaseCollector):
             logger.debug("K8s GET %s: %s", path, str(e)[:100])
             return None
 
-    @staticmethod
-    def _load_sa_token() -> str:
-        try:
-            with open("/var/run/secrets/kubernetes.io/serviceaccount/token") as f:
-                return f.read().strip()
-        except Exception:
-            return ""
-
-    @staticmethod
-    def _detect_in_cluster() -> str:
-        host = os.getenv("KUBERNETES_SERVICE_HOST", "")
-        port = os.getenv("KUBERNETES_SERVICE_PORT", "443")
-        if host:
-            return f"https://{host}:{port}"
-        return ""

@@ -18,6 +18,8 @@ from cascade_compression.cascade.pipeline import CascadeResult
 from cascade_compression.cascade.promotion import AgentMetrics, PromotionEngine
 from cascade_compression.cascade.protocol import CascadeDecision, Outcome, Signal
 
+from tests.helpers import make_signal as _make_signal
+
 
 @pytest.fixture
 def bridge():
@@ -26,17 +28,6 @@ def bridge():
     b._llm_url = ""
     b._shadow_sample_rate = 1.0  # 100% for deterministic tests
     return b
-
-
-def _make_signal(signal_type="event_noise", severity="info"):
-    return Signal(
-        signal_id=uuid4(),
-        signal_type=signal_type,
-        severity=severity,
-        source="test",
-        namespace="test-ns",
-        content={"message": "test signal"},
-    )
 
 
 class TestShadowSampling:

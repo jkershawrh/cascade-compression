@@ -19,6 +19,7 @@ from typing import List, Literal, Optional, Set
 import yaml
 from pydantic import BaseModel, Field
 
+from ..grades import Grade, grade_higher as _grade_higher, grade_lower as _grade_lower, worst_grade as _worst_grade
 from ..resources import resource_path
 from ..routing.corpora import CORPORA_TO_ENDPOINT, RoutingCorpora
 
@@ -26,7 +27,6 @@ from ..routing.corpora import CORPORA_TO_ENDPOINT, RoutingCorpora
 # Data models
 # ---------------------------------------------------------------------------
 
-Grade = Literal["green", "yellow", "red"]
 Action = Literal["restore", "hold", "shed", "shed_aggressive"]
 
 
@@ -216,33 +216,6 @@ def _load_thresholds_from_yaml() -> PressureThresholds:
     )
 
 
-# ---------------------------------------------------------------------------
-# Grading helpers
-# ---------------------------------------------------------------------------
-
-_GRADE_RANK = {"green": 0, "yellow": 1, "red": 2}
-
-
-def _grade_lower(value: float, green: float, yellow: float) -> Grade:
-    """Grade a *lower-is-better* metric."""
-    if value <= green:
-        return "green"
-    if value <= yellow:
-        return "yellow"
-    return "red"
-
-
-def _grade_higher(value: float, green: float, yellow: float) -> Grade:
-    """Grade a *higher-is-better* metric."""
-    if value >= green:
-        return "green"
-    if value >= yellow:
-        return "yellow"
-    return "red"
-
-
-def _worst_grade(*grades: Grade) -> Grade:
-    return max(grades, key=lambda g: _GRADE_RANK.get(g, 2))
 
 
 # ---------------------------------------------------------------------------

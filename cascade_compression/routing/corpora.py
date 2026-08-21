@@ -12,20 +12,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
+from ..grades import GRADE_RANK as _GRADE_RANK, Grade, worst_grade as _worst_grade
 from ..resources import resource_path
-
-# ---------------------------------------------------------------------------
-# Grade helpers
-# ---------------------------------------------------------------------------
-Grade = Literal["green", "yellow", "red"]
-
-_GRADE_RANK = {"green": 0, "yellow": 1, "red": 2}
-
-
-def _worst_grade(*grades: Grade) -> Grade:
-    """Return the worst (highest-severity) grade from the inputs."""
-    return max(grades, key=lambda g: _GRADE_RANK.get(g, 2))
-
 
 # ---------------------------------------------------------------------------
 # Core data models

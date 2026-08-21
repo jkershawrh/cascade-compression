@@ -10,7 +10,6 @@ RED tests — written before implementation.
 import pytest
 
 from cascade_compression.cascade.memory import Memory, MemoryArchive
-from cascade_compression.cascade.protocol import Signal
 from cascade_compression.cascade.memory_intelligence import (
     AbsenceDetector,
     CausalGraph,
@@ -23,22 +22,7 @@ from cascade_compression.cascade.memory_intelligence import (
     TimeClusterEngine,
 )
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def make_signal(signal_type="pod_crashloop", severity="high", source="node-01",
-                namespace="production", content=None, labels=None, cluster="ocpv05"):
-    return Signal(
-        signal_type=signal_type,
-        severity=severity,
-        source=source,
-        namespace=namespace,
-        cluster=cluster,
-        content=content or {"message": f"{signal_type} detected"},
-        labels=labels or {},
-    )
+from tests.helpers import make_signal
 
 
 def make_memory(archive, signal_type="pod_crashloop", severity="high",

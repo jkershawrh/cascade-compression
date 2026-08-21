@@ -27,13 +27,7 @@ from cascade_compression.cascade.inverse import (
     wire_absence_detector,
 )
 
-
-def make_signal(signal_type="heartbeat", severity="info", content=None):
-    return Signal(
-        signal_type=signal_type,
-        severity=severity,
-        content=content or {"message": f"{signal_type} signal"},
-    )
+from tests.helpers import make_signal
 
 
 def make_decision(signal_id, agent="severity_gate", outcome=Outcome.DROP,

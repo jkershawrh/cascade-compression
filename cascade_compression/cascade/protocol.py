@@ -84,3 +84,21 @@ def chat_completions_url(base: str) -> str:
     if trimmed.endswith("/v1"):
         trimmed = trimmed[: -len("/v1")]
     return f"{trimmed}/v1/chat/completions"
+
+
+def llm_complete(client, url: str, key: str, model: str,
+                 messages: list, max_tokens: int = 5,
+                 temperature: float = 0) -> str:
+    """Post to an OpenAI-compatible endpoint and return the content string."""
+    r = client.post(
+        chat_completions_url(url),
+        json={
+            "model": model,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        },
+        headers={"Authorization": f"Bearer {key}"},
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"].strip()

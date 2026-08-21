@@ -6,14 +6,11 @@ Polls K8s API for ArgoCD Application CRDs to track sync drift,
 degraded health, and sync failures across the platform.
 """
 
-import json
 import logging
 import os
-import ssl
 from typing import Iterator, List, Optional
-from urllib.request import Request, urlopen
 
-from .base import BaseCollector
+from .base import BaseCollector, detect_in_cluster, k8s_api_get, load_sa_token
 
 log = logging.getLogger(__name__)
 
@@ -49,13 +46,13 @@ class GitOpsCollector(BaseCollector):
         else:
             self._clusters = self._discover_clusters()
         if not self._clusters:
-            in_cluster = self._detect_in_cluster()
+            in_cluster = detect_in_cluster()
             if in_cluster:
-                self._clusters = [{"name": "local", "api_url": in_cluster, "token": self._load_sa_token()}]
+                self._clusters = [{"name": "local", "api_url": in_cluster, "token": load_sa_token()}]
         if not self._clusters:
             return False
         for c in self._clusters:
-            data = self._get(c, "/apis/argoproj.io/v1alpha1/applications?limit=1")
+            data = k8s_api_get(c["api_url"], "/apis/argoproj.io/v1alpha1/applications?limit=1", c.get("token", ""), label="GitOps")
             if data is not None:
                 self._connected = True
                 log.info("GitOps connected: %s (%d clusters)", c["name"], len(self._clusters))
@@ -65,7 +62,7 @@ class GitOpsCollector(BaseCollector):
     def collect(self) -> list:
         signals = []
         for cluster in self._clusters:
-            data = self._get(cluster, "/apis/argoproj.io/v1alpha1/applications?limit=500")
+            data = k8s_api_get(cluster["api_url"], "/apis/argoproj.io/v1alpha1/applications?limit=500", cluster.get("token", ""), label="GitOps")
             if not data:
                 continue
             for item in data.get("items", []):
@@ -148,44 +145,3 @@ class GitOpsCollector(BaseCollector):
             })
         return clusters
 
-    def _get(self, cluster: dict, path: str) -> Optional[dict]:
-        url = f"{cluster['api_url']}{path}"
-        headers = {}
-        if cluster.get("token"):
-            headers["Authorization"] = f"Bearer {cluster['token']}"
-        try:
-            req = Request(url, headers=headers)
-            ctx = ssl.create_default_context()
-            ca_path = "/var/run/secrets/kubernetes.io/serviceaccount/ca.crt"
-            if os.path.exists(ca_path):
-                ctx.load_verify_locations(ca_path)
-            try:
-                with urlopen(req, timeout=15, context=ctx) as resp:  # nosec B310
-                    return json.loads(resp.read())
-            except Exception as _ssl_err:
-                if "CERTIFICATE_VERIFY_FAILED" not in str(_ssl_err):
-                    raise
-                ctx = ssl.create_default_context()
-                ctx.check_hostname = False
-                ctx.verify_mode = ssl.CERT_NONE
-                with urlopen(req, timeout=15, context=ctx) as resp:  # nosec B310
-                    return json.loads(resp.read())
-        except Exception as e:
-            log.debug("GitOps GET %s: %s", path, str(e)[:100])
-            return None
-
-    @staticmethod
-    def _load_sa_token() -> str:
-        try:
-            with open("/var/run/secrets/kubernetes.io/serviceaccount/token") as f:
-                return f.read().strip()
-        except Exception:
-            return ""
-
-    @staticmethod
-    def _detect_in_cluster() -> str:
-        host = os.getenv("KUBERNETES_SERVICE_HOST", "")
-        port = os.getenv("KUBERNETES_SERVICE_PORT", "443")
-        if host:
-            return f"https://{host}:{port}"
-        return ""

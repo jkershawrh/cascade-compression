@@ -24,7 +24,7 @@ from .cascade.inverse import SuppressionArchive
 from .cascade.memory import MemoryArchive
 from .cascade.pipeline import CascadePipeline
 from .cascade.promotion import AgentMetrics, Baseline, PromotionEngine, RuleAgent
-from .cascade.protocol import Signal, chat_completions_url
+from .cascade.protocol import Signal, llm_complete
 
 log = logging.getLogger(__name__)
 
@@ -491,22 +491,12 @@ class CascadeBridge:
         sev = sig.get("severity", "medium")
         model = self._macro_model if sev in ("critical", "high") else self._micro_model
         t0 = time.monotonic()
-        r = client.post(
-            chat_completions_url(self._llm_url),
-            json={
-                "model": model,
-                "messages": [
-                    {"role": "system", "content": self._system_prompt},
-                    {"role": "user", "content": text},
-                ],
-                "max_tokens": 5,
-                "temperature": 0,
-            },
-            headers={"Authorization": f"Bearer {self._llm_key}"},
-        )
-        r.raise_for_status()
+        ans = llm_complete(
+            client, self._llm_url, self._llm_key, model,
+            [{"role": "system", "content": self._system_prompt},
+             {"role": "user", "content": text}],
+        ).lower()
         ms = (time.monotonic() - t0) * 1000
-        ans = r.json()["choices"][0]["message"]["content"].strip().lower()
         return sig, ans, ms, model, sev
 
     def _build_evidence_bundle(self, sig: dict) -> dict:
@@ -522,8 +512,8 @@ class CascadeBridge:
                 source="", namespace=sig.get("namespace", ""),
                 content=sig.get("content", {}), labels={},
             )
-            engine = RecallEngine(self.memory_archive)
-            results = engine.recall(query_signal, top_k=5, reinforce=False)
+            engine = RecallEngine()
+            results = engine.recall(query_signal, archive=self.memory_archive, top_k=5, reinforce=False)
             bundle["related_memories"] = [
                 {"signal_type": r.memory.signal.signal_type,
                  "strength": round(r.memory.strength, 3),
@@ -558,22 +548,13 @@ class CascadeBridge:
             )
 
             t0 = time.monotonic()
-            r = client.post(
-                chat_completions_url(self._gpu_url),
-                json={
-                    "model": self._gpu_model,
-                    "messages": [
-                        {"role": "system", "content": "You are an infrastructure analyst. Analyze signals and provide structured root cause analysis in JSON."},
-                        {"role": "user", "content": prompt},
-                    ],
-                    "max_tokens": 500,
-                    "temperature": 0,
-                },
-                headers={"Authorization": f"Bearer {self._gpu_key}"},
+            raw = llm_complete(
+                client, self._gpu_url, self._gpu_key, self._gpu_model,
+                [{"role": "system", "content": "You are an infrastructure analyst. Analyze signals and provide structured root cause analysis in JSON."},
+                 {"role": "user", "content": prompt}],
+                max_tokens=500,
             )
-            r.raise_for_status()
             ms = (time.monotonic() - t0) * 1000
-            raw = r.json()["choices"][0]["message"]["content"].strip()
 
             try:
                 analysis = json.loads(raw)
@@ -751,21 +732,11 @@ class CascadeBridge:
                         f"namespace={sig.get('namespace', '')}"
                     )
                     try:
-                        r = client.post(
-                            chat_completions_url(shadow_url),
-                            json={
-                                "model": shadow_model,
-                                "messages": [
-                                    {"role": "system", "content": self._system_prompt},
-                                    {"role": "user", "content": text},
-                                ],
-                                "max_tokens": 5,
-                                "temperature": 0,
-                            },
-                            headers={"Authorization": f"Bearer {shadow_key}"},
-                        )
-                        r.raise_for_status()
-                        ans = r.json()["choices"][0]["message"]["content"].strip().lower()
+                        ans = llm_complete(
+                            client, shadow_url, shadow_key, shadow_model,
+                            [{"role": "system", "content": self._system_prompt},
+                             {"role": "user", "content": text}],
+                        ).lower()
                         self._shadow_checks += 1
 
                         if not _is_noise_classification(ans):
