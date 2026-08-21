@@ -31,9 +31,14 @@ cascade-state-*.json
 *.swo
 *~
 .DS_Store
+# Internal docs — contain cluster names, infra details, internal reports
 docs/memory-visualization.md
 docs/rhdp-biography.md
 docs/rhdp-platform-memory.md
+docs/session-summary-*.md
+
+# Deploy manifests — contain internal project names, org refs, cluster details
+deploy/
 
 # Local-only knowledge corpus — harvested from local project sessions,
 # may contain third-party names and internal hostnames. Never publish.
