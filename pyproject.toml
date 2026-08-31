@@ -47,6 +47,15 @@ prometheus = "cascade_compression.collectors.prometheus:PrometheusCollector"
 retail = "cascade_compression.collectors.retail:RetailCollector"
 telecom = "cascade_compression.collectors.telecom:TelecomCollector"
 
+[project.entry-points."cascade_compression.domains"]
+finance = "cascade_compression.domains.finance"
+healthcare = "cascade_compression.domains.healthcare"
+insurance = "cascade_compression.domains.insurance"
+kubernetes = "cascade_compression.domains.kubernetes"
+macos = "cascade_compression.domains.macos"
+retail = "cascade_compression.domains.retail"
+telecom = "cascade_compression.domains.telecom"
+
 [tool.setuptools.packages.find]
 include = ["cascade_compression*"]
 

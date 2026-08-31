@@ -22,7 +22,6 @@ Environment variables:
     CASCADE_STATE_FILE       Path to persist agent state across restarts
 """
 
-import importlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -46,6 +45,7 @@ from .memory_search import (
     MemorySearchEngine, _available as _search_available,
     _unavailable_reason as _search_unavailable_reason,
 )
+from .domain_plugins import DomainPluginError, load_domain_plugin
 
 log = logging.getLogger(__name__)
 
@@ -57,9 +57,8 @@ _search_engine: MemorySearchEngine = None
 
 def _load_prompt(domain: str) -> str:
     try:
-        mod = importlib.import_module(f"cascade_compression.domains.{domain}")
-        return getattr(mod, "SYSTEM_PROMPT", "")
-    except ImportError:
+        return load_domain_plugin(domain).system_prompt
+    except DomainPluginError:
         return ""
 
 
@@ -79,14 +78,13 @@ async def lifespan(app: FastAPI):
     _memory_archive = _bridge.memory_archive
     _memory_intel = MemoryIntelligence()
     try:
-        mod = importlib.import_module(f"cascade_compression.domains.{domain}")
-        domain_config = getattr(mod, "MEMORY_CONFIG", None)
+        domain_config = load_domain_plugin(domain).memory_config
         if domain_config:
             _memory_intel.register_domain(domain, domain_config)
             if _memory_archive:
                 _memory_archive.set_decay_config(_memory_intel.decay_config)
             log.info("Registered memory config for domain=%s", domain)
-    except (ImportError, AttributeError):
+    except DomainPluginError:
         pass
     # Optional: connect pgvector search engine
     global _search_engine

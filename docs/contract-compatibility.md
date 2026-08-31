@@ -22,6 +22,10 @@ Collector packages register implementations through the
 collector descriptor name. The loader rejects duplicate names, incompatible API majors,
 unsupported capabilities, and implementations that do not inherit `BaseCollector`.
 
+Domain packs register modules through the `cascade_compression.domains` entry-point group. The
+entry-point name must match the module's `DOMAIN` value; prompts and memory configuration are loaded
+through that contract instead of package-path imports.
+
 ## Contract ownership
 
 The OSS engine owns these contracts. The production-proof layer validates released contracts but
