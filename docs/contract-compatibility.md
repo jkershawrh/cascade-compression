@@ -17,6 +17,11 @@ packages expose the same artifacts through `cascade_compression.contracts`.
 - Specialized collectors advertise capabilities through the `cascade.collector-plugin` descriptor;
   environment configuration and credentials are never part of that descriptor.
 
+Collector packages register implementations through the
+`cascade_compression.collectors` Python entry-point group. The entry-point name must match the
+collector descriptor name. The loader rejects duplicate names, incompatible API majors,
+unsupported capabilities, and implementations that do not inherit `BaseCollector`.
+
 ## Contract ownership
 
 The OSS engine owns these contracts. The production-proof layer validates released contracts but

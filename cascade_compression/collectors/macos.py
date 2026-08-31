@@ -21,6 +21,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
+from .base import BaseCollector
+
 log = logging.getLogger(__name__)
 
 
@@ -41,7 +43,7 @@ class MacOSSignal:
         self.labels = {"domain": "macos", "category": record.get("category", "")}
 
 
-class MacOSCollector:
+class MacOSCollector(BaseCollector):
     """Polls macOS system state and produces activity signals."""
 
     name = "macos"

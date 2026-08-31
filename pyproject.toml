@@ -37,6 +37,16 @@ cascade-run = "cascade_compression.cli:run"
 cascade-replay = "cascade_compression.cli:replay"
 cascade-value-export = "cascade_compression.value_evidence_cli:main"
 
+[project.entry-points."cascade_compression.collectors"]
+finance = "cascade_compression.collectors.finance:FinanceCollector"
+healthcare = "cascade_compression.collectors.healthcare:HealthcareCollector"
+insurance = "cascade_compression.collectors.insurance:InsuranceCollector"
+kubernetes = "cascade_compression.collectors.kubernetes:KubernetesCollector"
+macos = "cascade_compression.collectors.macos:MacOSCollector"
+prometheus = "cascade_compression.collectors.prometheus:PrometheusCollector"
+retail = "cascade_compression.collectors.retail:RetailCollector"
+telecom = "cascade_compression.collectors.telecom:TelecomCollector"
+
 [tool.setuptools.packages.find]
 include = ["cascade_compression*"]
 

@@ -99,7 +99,7 @@ wheels = [
 
 [[package]]
 name = "cascade-compression"
-version = "0.1.0"
+version = "0.1.0a1"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi", version = "0.128.8", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
@@ -112,9 +112,6 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
-aap = [
-    { name = "psycopg2-binary" },
-]
 dev = [
     { name = "jsonschema", version = "4.25.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
     { name = "jsonschema", version = "4.26.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
@@ -141,7 +138,6 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.24.0" },
     { name = "jsonschema", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "pgvector", marker = "extra == 'search'", specifier = ">=0.2.0" },
-    { name = "psycopg2-binary", marker = "extra == 'aap'", specifier = ">=2.9" },
     { name = "psycopg2-binary", marker = "extra == 'finance'", specifier = ">=2.9" },
     { name = "psycopg2-binary", marker = "extra == 'search'", specifier = ">=2.9" },
     { name = "pydantic", specifier = ">=2.0" },
@@ -152,7 +148,7 @@ requires-dist = [
     { name = "sentence-transformers", marker = "extra == 'search'", specifier = ">=2.2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.22.0" },
 ]
-provides-extras = ["dev", "search", "aap", "finance"]
+provides-extras = ["dev", "search", "finance"]
 
 [[package]]
 name = "certifi"
