@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cascade-compression.org/contracts/cascade.signal/1.0.0",
+  "title": "Cascade Signal",
+  "type": "object",
+  "required": ["signal_id", "signal_type", "severity", "source", "content", "labels"],
+  "properties": {
+    "signal_id": {"type": "string", "format": "uuid"},
+    "signal_type": {"type": "string"},
+    "severity": {"enum": ["info", "low", "medium", "high", "critical"]},
+    "source": {"type": "string"},
+    "content": {"type": "object"},
+    "labels": {"type": "object", "additionalProperties": {"type": "string"}},
+    "namespace": {"type": "string", "default": ""},
+    "cluster": {"type": "string", "default": ""}
+  },
+  "additionalProperties": true
+}

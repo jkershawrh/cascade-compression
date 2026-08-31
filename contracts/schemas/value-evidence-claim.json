@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cascade-compression.org/contracts/cascade.value-evidence/1.0.0-alpha.1",
+  "title": "Cascade Value Evidence Claim",
+  "type": "object",
+  "required": ["schema_version", "id", "product", "outcome_id", "value_type", "measurement", "counterfactual", "attribution", "financial_model", "evidence", "realization_cost"],
+  "properties": {
+    "schema_version": {"const": "vef.claim.v1alpha1"},
+    "id": {"const": "cascade.model-calls-avoided"},
+    "product": {"const": "cascade-compression"},
+    "outcome_id": {"type": "string", "minLength": 1},
+    "value_type": {"const": "cost_avoidance"},
+    "measurement": {
+      "type": "object",
+      "required": ["observed", "unit", "period", "raw_calls_avoided", "raw_inference_cost_avoided_usd"],
+      "properties": {
+        "observed": {"type": "integer", "minimum": 0},
+        "unit": {"const": "model_calls_avoided"},
+        "period": {"type": "string", "minLength": 1},
+        "raw_calls_avoided": {"type": "integer", "minimum": 0},
+        "raw_inference_cost_avoided_usd": {"type": "number", "minimum": 0}
+      },
+      "additionalProperties": true
+    },
+    "counterfactual": {"type": "object"},
+    "attribution": {"type": "object"},
+    "financial_model": {"type": "object"},
+    "evidence": {"type": "object"},
+    "realization_cost": {"type": "number", "minimum": 0}
+  },
+  "additionalProperties": true
+}

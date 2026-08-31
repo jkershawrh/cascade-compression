@@ -1,0 +1,70 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg
+
+# Secrets
+.env
+.env.*
+*.secrets*
+credentials*
+*secret*
+!cascade_compression/collectors/*.py
+*.pem
+*.key
+*.p12
+kubeconfig*
+.kube/
+
+# Private value evidence — only reviewed synthetic test fixtures belong in git
+evidence/
+value-claim*.json
+replay-result*.json
+customer-economics*.json
+customer-data/
+worklogs/
+classifier-ground-truth-*.jsonl
+classifier-review-*.jsonl
+!tests/fixtures/value_evidence/
+!tests/fixtures/value_evidence/*.json
+
+# Local deployment overrides
+values.local.yaml
+values-*.local.yaml
+*-deployment.local.yaml
+*.tfstate
+*.tfstate.*
+
+# State
+*.state.json
+cascade-state-*.json
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+# Internal docs — contain cluster names, infra details, internal reports
+docs/memory-visualization.md
+docs/rhdp-biography.md
+docs/rhdp-platform-memory.md
+docs/session-summary-*.md
+
+# Deploy manifests — contain internal project names, org refs, cluster details
+deploy/
+
+# Local-only knowledge corpus — harvested from local project sessions,
+# may contain third-party names and internal hostnames. Never publish.
+docs/shared-knowledge-corpus.json
+docs/shared-knowledge-corpus.md

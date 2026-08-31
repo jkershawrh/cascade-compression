@@ -1,0 +1,10 @@
+{
+  "model_call_cost_usd": 0.10,
+  "other_realization_cost_usd": 5.00,
+  "customer_validated": true,
+  "product_share": 1.0,
+  "engineering_effort": [
+    {"activity": "rule_authoring", "role": "platform_engineer", "hours": 0.20, "loaded_rate_usd": 100.0, "lifecycle": "initial", "source": "pilot_work_log"},
+    {"activity": "drift_review", "role": "ml_engineer", "hours": 0.10, "loaded_rate_usd": 100.0, "lifecycle": "recurring", "source": "pilot_work_log"}
+  ]
+}

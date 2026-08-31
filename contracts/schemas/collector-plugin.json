@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cascade-compression.org/contracts/cascade.collector-plugin/1.0.0",
+  "title": "Cascade Collector Plugin Descriptor",
+  "type": "object",
+  "required": ["api_version", "name", "capabilities", "signal_types", "supports_stream"],
+  "properties": {
+    "api_version": {"const": "1.0"},
+    "name": {"type": "string", "minLength": 1},
+    "capabilities": {
+      "type": "array",
+      "items": {"enum": ["batch", "stream", "replay", "multi_cluster"]},
+      "uniqueItems": true
+    },
+    "signal_types": {
+      "type": "array",
+      "items": {"type": "string"},
+      "uniqueItems": true
+    },
+    "supports_stream": {"type": "boolean"},
+    "config_schema": {"type": "object", "default": {}}
+  },
+  "additionalProperties": false
+}

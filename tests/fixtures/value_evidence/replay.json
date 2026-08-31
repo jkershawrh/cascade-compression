@@ -1,0 +1,27 @@
+{
+  "baseline": {
+    "workload_digest": "sha256:matched-pilot-fixture",
+    "total_signals": 1000,
+    "model_calls": 600,
+    "dangerous_misses": 0,
+    "routes": [
+      {"route": "deduplicated", "signal_count": 200, "ai_eligible": false},
+      {"route": "existing_rules", "signal_count": 200, "ai_eligible": false},
+      {"route": "baseline_ai", "signal_count": 600, "ai_eligible": true, "ai_calls": 600, "input_tokens": 90000, "output_tokens": 12000, "inference_seconds": 480.0, "inference_cost_usd": 60.0}
+    ]
+  },
+  "cascade": {
+    "workload_digest": "sha256:matched-pilot-fixture",
+    "total_signals": 1000,
+    "model_calls": 130,
+    "dangerous_misses": 0,
+    "routes": [
+      {"route": "deduplicated", "signal_count": 200, "ai_eligible": false},
+      {"route": "nano", "signal_count": 470, "ai_eligible": true},
+      {"route": "micro", "signal_count": 250, "ai_eligible": true, "ai_calls": 80, "input_tokens": 12000, "output_tokens": 1600, "inference_seconds": 20.0, "inference_cost_usd": 4.0},
+      {"route": "macro", "signal_count": 80, "ai_eligible": true, "ai_calls": 50, "input_tokens": 10000, "output_tokens": 2500, "inference_seconds": 45.0, "inference_cost_usd": 10.0}
+    ]
+  },
+  "shadow_sampled_suppressions": 470,
+  "total_suppressions": 470
+}

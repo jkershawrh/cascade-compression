@@ -1,0 +1,17 @@
+{
+  "manifest_version": "1.0.0",
+  "compatibility": {
+    "stable": "Within a major version, producers may add optional fields; consumers must ignore unknown fields.",
+    "alpha": "May change before promotion to stable; every artifact must declare its exact version.",
+    "breaking_change": "Requires a new major contract version and a migration note."
+  },
+  "contracts": [
+    {"id": "cascade.signal", "version": "1.0.0", "stability": "stable", "schema": "schemas/signal.json"},
+    {"id": "cascade.decision", "version": "1.0.0", "stability": "stable", "schema": "schemas/cascade-decision.json"},
+    {"id": "cascade.collector-plugin", "version": "1.0.0", "stability": "stable", "schema": "schemas/collector-plugin.json"},
+    {"id": "cascade.memory-record", "version": "1.0.0", "stability": "stable", "schema": "schemas/memory-record.json"},
+    {"id": "cascade.memory-event", "version": "1.0.0", "stability": "stable", "schema": "schemas/memory-event.json"},
+    {"id": "cascade.agent-promotion", "version": "1.0.0", "stability": "stable", "schema": "schemas/agent-promotion.json"},
+    {"id": "cascade.value-evidence", "version": "1.0.0-alpha.1", "stability": "alpha", "schema": "schemas/value-evidence-claim.json"}
+  ]
+}
