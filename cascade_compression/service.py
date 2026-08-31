@@ -26,7 +26,6 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Dict, List
 
 from fastapi import FastAPI
@@ -46,6 +45,7 @@ from .memory_search import (
     _unavailable_reason as _search_unavailable_reason,
 )
 from .domain_plugins import DomainPluginError, load_domain_plugin
+from .resources import resource_dir
 
 log = logging.getLogger(__name__)
 
@@ -448,9 +448,9 @@ def biography():
 # Frontend
 # ---------------------------------------------------------------------------
 
-_FRONTEND = Path(__file__).resolve().parent.parent / "frontend"
+_FRONTEND = resource_dir("frontend")
 
-if _FRONTEND.is_dir():
+if _FRONTEND is not None:
     @app.get("/")
     def dashboard():
         return FileResponse(_FRONTEND / "index.html")

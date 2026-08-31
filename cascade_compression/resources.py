@@ -26,3 +26,11 @@ def resource_path(category: str, filename: str) -> Path:
         f"cascade-compression resource {category}/{filename} was not found; "
         f"searched: {searched}"
     )
+
+
+def resource_dir(category: str) -> Path | None:
+    """Return a source or installed resource directory when it exists."""
+    for candidate in (_PROJECT_ROOT / category, _INSTALLED_ROOT / category):
+        if candidate.is_dir():
+            return candidate
+    return None

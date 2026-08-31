@@ -62,6 +62,7 @@ include = ["cascade_compression*"]
 [tool.setuptools.data-files]
 "share/cascade-compression/config" = ["config/*.json", "config/*.yaml"]
 "share/cascade-compression/data" = ["data/*.json"]
+"share/cascade-compression/frontend" = ["frontend/*"]
 "share/cascade-compression/contracts" = ["contracts/*.json"]
 "share/cascade-compression/contracts/schemas" = ["contracts/schemas/*.json"]
 
