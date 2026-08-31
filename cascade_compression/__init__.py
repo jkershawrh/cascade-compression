@@ -4,6 +4,8 @@ Three-tier cascade (nano/micro/macro) with benchmark-graded model selection,
 workload classification, and strategy routing for Intel Xeon CPU inference.
 """
 
+__version__ = "0.1.0"
+
 from .routing.bootstrapper import (
     ClassificationScorecard,
     WorkloadBootstrapper,
@@ -48,6 +50,7 @@ from .routing.task_mapping import (
 )
 
 __all__ = [
+    "__version__",
     "RoutingCorpora", "CorporaEntry", "ModelConfig", "RubricScorecard",
     "CORPORA_TO_ENDPOINT", "TASK_LATENCY_THRESHOLDS", "LANE_RESPONSE_FORMAT",
     "grade_task_latency", "load_corpora", "reload_corpora", "resolve_lane_response_format",

@@ -20,7 +20,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --extra dev
+      - run: uv sync --extra dev --locked
       - run: uv run python -m pytest -q
 
   package:
@@ -31,3 +31,9 @@ jobs:
         with:
           python-version: "3.11"
       - run: uv build
+      - run: |
+          python -m venv .wheel-venv
+          .wheel-venv/bin/pip install dist/*.whl
+          cd /tmp
+          "$GITHUB_WORKSPACE/.wheel-venv/bin/python" \
+            "$GITHUB_WORKSPACE/scripts/release_smoke.py"

@@ -12,6 +12,8 @@ collectors.
 
 ## Install and test
 
+The first supported OSS release is `0.1.0`. The Python package supports Python 3.9 through 3.13.
+
 ```bash
 python -m venv .venv
 . .venv/bin/activate
@@ -24,6 +26,14 @@ Run the API and dashboard locally:
 ```bash
 python -m uvicorn cascade_compression.service:app --port 8090
 ```
+
+Then open <http://localhost:8090>. The service starts without an LLM for deterministic and
+synthetic evaluation; configure an OpenAI-compatible endpoint only when testing model-backed
+classification.
+
+Container images for tagged releases are published at
+`ghcr.io/jkershawrh/cascade-compression`. Release artifacts include an SPDX SBOM and signed GitHub
+artifact attestations. See `RELEASING.md` for verification and release policy.
 
 ## Public contracts
 

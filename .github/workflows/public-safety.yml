@@ -8,6 +8,19 @@ permissions:
   contents: read
 
 jobs:
+  internal-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Reject internal infrastructure references
+        run: |
+          if grep -RInEi \
+            'infra01|dal12|api\.ocpv|\.infra\.demo\.redhat\.com|oberon|babylon|poolboy|rhpds|stargate|sandbox\.conan|labagator' \
+            . --exclude-dir=.git; then
+            echo 'Internal infrastructure reference found'
+            exit 1
+          fi
+
   gitleaks:
     runs-on: ubuntu-latest
     steps:

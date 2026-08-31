@@ -4,11 +4,25 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cascade-compression"
-version = "0.1.0a1"
+version = "0.1.0"
 description = "Domain-agnostic three-tier signal compression for safe CPU inference"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "Apache-2.0"
+authors = [{name = "Cascade Compression contributors"}]
+keywords = ["inference", "signal-processing", "observability", "cpu", "routing"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Monitoring",
+]
 dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
@@ -30,6 +44,12 @@ search = [
     "sentence-transformers>=2.2.0",
 ]
 finance = ["psycopg2-binary>=2.9"]
+
+[project.urls]
+Homepage = "https://github.com/jkershawrh/cascade-compression"
+Documentation = "https://github.com/jkershawrh/cascade-compression#readme"
+Issues = "https://github.com/jkershawrh/cascade-compression/issues"
+Changelog = "https://github.com/jkershawrh/cascade-compression/blob/main/CHANGELOG.md"
 
 [project.scripts]
 compile-corpora = "cascade_compression.routing.compile_corpora:main"

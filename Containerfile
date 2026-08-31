@@ -2,15 +2,14 @@ FROM registry.access.redhat.com/ubi9/python-311:latest
 
 WORKDIR /opt/app-root/src
 
-COPY pyproject.toml .
-RUN pip install --no-cache-dir .
-
+COPY pyproject.toml README.md LICENSE ./
 COPY cascade_compression/ cascade_compression/
 COPY config/ config/
 COPY data/ data/
 COPY frontend/ frontend/
+COPY contracts/ contracts/
 
-RUN pip install --no-cache-dir ".[aap]"
+RUN pip install --no-cache-dir .
 
 EXPOSE 8090
 

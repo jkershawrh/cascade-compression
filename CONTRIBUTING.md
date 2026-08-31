@@ -7,9 +7,13 @@ memories, replay output, work logs, economics, or credentials.
 Before opening a pull request:
 
 ```bash
-pytest -q
-python -m build
+uv sync --extra dev --locked
+uv run pytest -q
+uv build
 ```
 
 Breaking contract changes require a new major contract version, migration notes, and compatibility
 fixtures for the previous major version.
+
+By contributing, you agree that your contribution is licensed under Apache-2.0. Contributions must
+be your own work or include clear attribution and a compatible license.
