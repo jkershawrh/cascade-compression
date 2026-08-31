@@ -36,3 +36,16 @@ def test_domain_collector_reads_public_json_fixture(tmp_path):
     collector = DomainCollector(data_path=str(fixture))
     assert collector.connect({}) is True
     assert collector._events == [{"event": "synthetic"}]
+
+
+def test_public_domain_collectors_include_their_synthetic_generators():
+    for collector_type in (
+        FinanceCollector,
+        HealthcareCollector,
+        InsuranceCollector,
+        RetailCollector,
+        TelecomCollector,
+    ):
+        collector = collector_type(synthetic_count=3)
+        assert collector.connect({}) is True
+        assert collector.collect_all()
