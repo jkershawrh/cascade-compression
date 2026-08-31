@@ -65,9 +65,12 @@ def discover_collector_plugins(
 
     plugins: dict[str, CollectorPlugin] = {}
     for entry_point in candidates if candidates is not None else _installed_entry_points():
+        plugin = _validate(entry_point)
         if entry_point.name in plugins:
-            raise CollectorPluginError(f"duplicate collector plugin {entry_point.name!r}")
-        plugins[entry_point.name] = _validate(entry_point)
+            if candidates is not None or plugins[entry_point.name] != plugin:
+                raise CollectorPluginError(f"duplicate collector plugin {entry_point.name!r}")
+            continue
+        plugins[entry_point.name] = plugin
     return plugins
 
 

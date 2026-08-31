@@ -51,3 +51,12 @@ def test_rejects_duplicate_plugin_names():
     candidate = entry("example", "tests.test_plugins:ExampleCollector")
     with pytest.raises(CollectorPluginError, match="duplicate"):
         discover_collector_plugins([candidate, candidate])
+
+
+def test_coalesces_identical_duplicates_reported_by_installed_metadata(monkeypatch):
+    candidate = entry("example", "tests.test_plugins:ExampleCollector")
+    monkeypatch.setattr(
+        "cascade_compression.plugins._installed_entry_points",
+        lambda: [candidate, candidate],
+    )
+    assert set(discover_collector_plugins()) == {"example"}
