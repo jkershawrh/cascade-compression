@@ -16,7 +16,7 @@ jobs:
         run: |
           if grep -RInEi \
             'infra01|dal12|api\.ocpv|\.infra\.demo\.redhat\.com|oberon|babylon|poolboy|rhpds|stargate|sandbox\.conan|labagator' \
-            . --exclude-dir=.git; then
+            . --exclude-dir=.git --exclude=public-safety.yml; then
             echo 'Internal infrastructure reference found'
             exit 1
           fi
