@@ -5,6 +5,8 @@ from unittest.mock import MagicMock, patch
 
 from cascade_compression.bridge import CascadeBridge, _to_cascade_signal, _BUILTIN_AGENT_NAMES
 from cascade_compression.cascade.memory import MemoryArchive
+from cascade_compression.cascade.protocol import Signal
+from cascade_compression.classifier import ClassificationResult
 
 
 class FakeSignal:
@@ -72,6 +74,41 @@ class TestBridgeProcess:
         bridge.process([FakeSignal() for _ in range(10)])
         bridge.process([FakeSignal() for _ in range(10)])
         assert bridge.stats.signals_processed == 20
+
+    def test_disabled_classifier_does_not_retain_pending_memory_ids(self):
+        bridge = CascadeBridge()
+        bridge.process([FakeSignal(signal_type="unhandled", severity="critical")])
+        assert bridge._pending_memory_ids == {}
+
+    def test_authoritative_classification_updates_exact_memory(self):
+        bridge = CascadeBridge(llm_url="http://example.invalid")
+        stored = bridge.memory_archive.store(
+            Signal(
+                signal_type="service_health", severity="medium",
+                content={"message": "Review the unusual error rate"},
+            ),
+            classification="needs_attention",
+        )
+        queued = {
+            "signal_id": "memory-writeback-test",
+            "signal_type": "service_health",
+            "severity": "medium",
+            "namespace": "example",
+            "content": {"message": "Review the unusual error rate"},
+        }
+        bridge._pending_memory_ids[queued["signal_id"]] = stored.memory_id
+        bridge.classifier.classify = MagicMock(return_value=ClassificationResult(
+            label="real_incident",
+            backend="semantic",
+            authoritative_backend="semantic",
+            model_revision="test-revision",
+        ))
+        bridge._llm_active_threads = 1
+
+        bridge._run_llm([queued])
+
+        assert bridge.memory_archive.get(stored.memory_id).classification == "real_incident"
+        assert bridge._pending_memory_ids == {}
 
 
 class TestSignalConversion:
@@ -215,6 +252,7 @@ class TestGCLBuiltinFiltering:
             "written_ts": 1786208236746,
             "content": {
                 "verdict": "FAILS",
+                "decision_ref": "signal-123",
                 "original_agent": "dominant_noise_suppressor",
                 "subject_type": "event_unhealthy",
                 "reason": "important signal suppressed",
@@ -225,6 +263,7 @@ class TestGCLBuiltinFiltering:
         client = MagicMock()
         client.get.return_value = response
         client.__enter__.return_value = client
+        bridge.classifier.record_gcl_verdict = MagicMock()
 
         with patch("httpx.Client", return_value=client):
             bridge._poll_gcl_verdicts()
@@ -234,6 +273,9 @@ class TestGCLBuiltinFiltering:
         assert list(bridge._verdict_seen_ids) == ["verdict-1"]
         assert bridge._fn_count == 1
         assert bridge._fn_evaluated == 1
+        bridge.classifier.record_gcl_verdict.assert_called_once_with(
+            "event_unhealthy", "FAILS", "signal-123"
+        )
 
 
 class TestLLMBackpressure:

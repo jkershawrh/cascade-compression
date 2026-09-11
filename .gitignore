@@ -34,6 +34,8 @@ customer-data/
 worklogs/
 classifier-ground-truth-*.jsonl
 classifier-review-*.jsonl
+classifier-evidence*.jsonl
+classifier-comparison*.jsonl
 !tests/fixtures/value_evidence/
 !tests/fixtures/value_evidence/*.json
 

@@ -43,6 +43,10 @@ search = [
     "pgvector>=0.2.0",
     "sentence-transformers>=2.2.0",
 ]
+semantic-classifier = [
+    "grpcio>=1.80",
+    "protobuf>=6.31.1",
+]
 finance = ["psycopg2-binary>=2.9"]
 
 [project.urls]
@@ -78,6 +82,9 @@ telecom = "cascade_compression.domains.telecom"
 
 [tool.setuptools.packages.find]
 include = ["cascade_compression*"]
+
+[tool.setuptools.package-data]
+"cascade_compression.integrations.llm_d_sc" = ["*.proto"]
 
 [tool.setuptools.data-files]
 "share/cascade-compression/config" = ["config/*.json", "config/*.yaml"]

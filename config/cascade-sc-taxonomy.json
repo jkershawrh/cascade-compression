@@ -1,0 +1,46 @@
+{
+  "classifier_id": "cascade-classification",
+  "signal": "cascade_classification",
+  "taxonomy_revision": "cascade-classification-anchors-v1",
+  "model_repo": "cnuland/llm-d-sc-complexity",
+  "model_revision": "c5f55ef419d268ba843c544dc00988d1e9878044",
+  "method": "anchor-topk-mean",
+  "top_k": 3,
+  "labels": ["routine_noise", "known_pattern", "needs_attention", "real_incident"],
+  "lifecycle": {
+    "status": "approved",
+    "approved_by": "Cascade OSS bootstrap",
+    "activation_required": true
+  },
+  "anchors": {
+    "routine_noise": [
+      "Scheduled reconciliation completed successfully",
+      "Expected sandbox pod restart during a student exercise",
+      "Routine status update with no action required",
+      "Normal retry recovered without intervention",
+      "Periodic health check reports healthy"
+    ],
+    "known_pattern": [
+      "Known deployment rollout briefly failed a readiness probe",
+      "Recurring low priority warning with an established workaround",
+      "Previously observed configuration issue in a non-production namespace",
+      "Repeated job retry matches a documented benign pattern",
+      "Familiar transient platform event with limited impact"
+    ],
+    "needs_attention": [
+      "Unusual error rate increase requires investigation",
+      "Repeated failure no longer matches the normal operating pattern",
+      "Documentation gap is causing the same operational question to recur",
+      "Resource pressure is degrading a production workload",
+      "Unexpected behavior may affect service reliability"
+    ],
+    "real_incident": [
+      "Production service is unavailable across multiple regions",
+      "Critical data corruption is affecting customer transactions",
+      "Credentials may have been exposed from a production system",
+      "Cluster control plane failure is affecting platform stability",
+      "Active security incident requires immediate response"
+    ]
+  },
+  "provenance": "Initial public anchors; calibrate with representative held-out data before granting semantic authority."
+}

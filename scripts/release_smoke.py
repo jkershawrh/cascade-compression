@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Smoke-test an installed OSS package without repository import paths."""
 
+import json
+
 from fastapi.testclient import TestClient
 
 from cascade_compression import __version__
+from cascade_compression.anchor_engineering import validate_taxonomy
+from cascade_compression.classifier import normalize_label
 from cascade_compression.collectors.finance import FinanceCollector
 from cascade_compression.domain_plugins import discover_domain_plugins
 from cascade_compression.plugins import discover_collector_plugins
@@ -16,6 +20,10 @@ def main() -> None:
     assert len(discover_collector_plugins()) == 8
     assert len(discover_domain_plugins()) == 7
     assert resource_path("config", "strategies.yaml").is_file()
+    taxonomy_path = resource_path("config", "cascade-sc-taxonomy.json")
+    assert taxonomy_path.is_file()
+    validate_taxonomy(json.loads(taxonomy_path.read_text(encoding="utf-8")))
+    assert normalize_label("needs_attention") == "needs_attention"
     assert resource_path("contracts", "manifest.json").is_file()
     frontend = resource_dir("frontend")
     assert frontend is not None and (frontend / "index.html").is_file()

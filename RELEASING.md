@@ -4,8 +4,8 @@
 
 1. Update `CHANGELOG.md`, `pyproject.toml`, and `cascade_compression.__version__` to the same
    Semantic Versioning value.
-2. Run `uv lock`, `uv run pytest -q`, `uv build`, and `scripts/release_smoke.py` against an isolated
-   wheel installation.
+2. Run `uv lock`, `uv run --extra dev pytest -q`, `uv build`, and `scripts/release_smoke.py` against
+   an isolated wheel installation.
 3. Confirm public safety and credential scans pass and review the complete diff for internal names,
    endpoints, deployment details, and raw evidence.
 4. Merge to `main` and wait for all required checks.

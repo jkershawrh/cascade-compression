@@ -27,6 +27,7 @@ from .cascade.pipeline import CascadePipeline
 from .cascade.promotion import AgentMetrics, Baseline, PromotionEngine, RuleAgent
 from .cascade.protocol import Signal, llm_complete
 from .cascade.protocol import Outcome
+from .classifier import SERIALIZER_REVISION, classifier_from_environment
 
 log = logging.getLogger(__name__)
 
@@ -111,6 +112,13 @@ class CascadeBridge:
         self._gpu_analyses: list = []
         self._gpu_analyses_file = os.getenv("CASCADE_GPU_ANALYSES_FILE", "")
         self._system_prompt = system_prompt
+        self.classifier = classifier_from_environment(
+            url=self._llm_url,
+            key=self._llm_key,
+            micro_model=self._micro_model,
+            macro_model=self._macro_model,
+            system_prompt=self._system_prompt,
+        )
         self._ledger_url = ledger_url or os.getenv("CASCADE_LEDGER_URL", "")
         self._ledger_token = ledger_token or os.getenv("CASCADE_LEDGER_TOKEN", "")
         self._ledger_max_pending = max(
@@ -243,6 +251,8 @@ class CascadeBridge:
         self._meta_target = os.getenv("CASCADE_META_TARGET", "")
         self._meta_last_emitted: Dict[str, float] = {}
         self._context_lock = threading.Lock()
+        self._pending_memory_ids: Dict[str, Any] = {}
+        self._pending_memory_lock = threading.Lock()
 
         self._restore_state()
 
@@ -279,12 +289,15 @@ class CascadeBridge:
 
         if self.memory_archive is not None:
             for sig in cascade_result.remaining:
-                classification = ""
+                classification = "needs_attention"
                 for d in cascade_result.decisions:
                     if d.signal_id == sig.signal_id and d.classification:
                         classification = d.classification
                         break
-                self.memory_archive.store(sig, classification=classification)
+                memory = self.memory_archive.store(sig, classification=classification)
+                if self._classification_dispatch_enabled():
+                    with self._pending_memory_lock:
+                        self._pending_memory_ids[str(sig.signal_id)] = memory.memory_id
 
         # Meta: detect memory pressure (above 80% capacity)
         if self.memory_archive is not None:
@@ -370,6 +383,7 @@ class CascadeBridge:
             for sig in signals:
                 content, truncated = self._compact_llm_content(sig.content)
                 entry = {
+                    "signal_id": str(sig.signal_id),
                     "signal_type": sig.signal_type,
                     "severity": sig.severity,
                     "namespace": sig.namespace,
@@ -388,7 +402,7 @@ class CascadeBridge:
             self._enforce_llm_priority_limit_locked()
 
     def _dispatch_llm_batches(self) -> None:
-        if not self._llm_url:
+        if not self._classification_dispatch_enabled():
             return
         while True:
             with self._llm_queue_lock:
@@ -418,6 +432,16 @@ class CascadeBridge:
                     )
                     batch.extend(normal)
             threading.Thread(target=self._run_llm, args=(batch,), daemon=True).start()
+
+    def _classification_dispatch_enabled(self) -> bool:
+        """Return whether queued survivors have an available classifier path."""
+        if self._llm_url:
+            return True
+        return self.classifier.mode == "semantic" and self.classifier.semantic is not None
+
+    def _forget_pending_memory(self, sig: dict) -> None:
+        with self._pending_memory_lock:
+            self._pending_memory_ids.pop(str(sig.get("signal_id", "")), None)
 
     def _estimate_llm_entry_bytes(self, entry: dict) -> int:
         """Estimate retained queue bytes, including container overhead."""
@@ -541,6 +565,7 @@ class CascadeBridge:
         self._llm_dropped += len(dropped)
         for sig in dropped:
             self._llm_dropped_by_severity[sig.get("severity", "unknown")] += 1
+            self._forget_pending_memory(sig)
 
         self._emit_meta(
             "meta_llm_queue_drop", "critical",
@@ -584,6 +609,7 @@ class CascadeBridge:
         self._llm_dropped += len(dropped)
         for sig in dropped:
             self._llm_dropped_by_severity[sig.get("severity", "unknown")] += 1
+            self._forget_pending_memory(sig)
         self._emit_meta(
             "meta_llm_priority_overflow", "critical",
             f"Protected LLM queue overflowed by {len(dropped)} signals",
@@ -779,21 +805,7 @@ class CascadeBridge:
             self._activation_timestamps.pop(sig_type, None)
 
     def _classify_one(self, sig, client):
-        text = (
-            f"{sig['signal_type']} {sig['severity']}: "
-            f"{sig.get('content', {}).get('message', '')} "
-            f"namespace={sig.get('namespace', '')}"
-        )
-        sev = sig.get("severity", "medium")
-        model = self._macro_model if sev in ("critical", "high") else self._micro_model
-        t0 = time.monotonic()
-        ans = llm_complete(
-            client, self._llm_url, self._llm_key, model,
-            [{"role": "system", "content": self._system_prompt},
-             {"role": "user", "content": text}],
-        ).lower()
-        ms = (time.monotonic() - t0) * 1000
-        return sig, ans, ms, model, sev
+        return self.classifier.classify(sig, client)
 
     def _build_evidence_bundle(self, sig: dict) -> dict:
         bundle = {"signal": sig, "related_memories": [], "causal_chain": [], "entity_context": []}
@@ -932,8 +944,26 @@ class CascadeBridge:
                     futures = {pool.submit(self._classify_one, sig, client): sig for sig in signals}
                     for future in as_completed(futures):
                         orig_sig = futures[future]
+                        with self._pending_memory_lock:
+                            memory_id = self._pending_memory_ids.pop(
+                                str(orig_sig.get("signal_id", "")), None,
+                            )
                         try:
-                            sig, ans, ms, model, sev = future.result()
+                            classification = future.result()
+                            if not classification.ok:
+                                raise RuntimeError(
+                                    f"{classification.error_code}: {classification.error}"
+                                )
+                            sig = orig_sig
+                            ans = classification.label
+                            ms = classification.latency_ms
+                            model = classification.model_revision
+                            sev = sig.get("severity", "medium")
+                            if memory_id and self.memory_archive:
+                                memory = self.memory_archive.get(memory_id)
+                                if memory:
+                                    memory.classification = ans
+                                    memory.last_modified_at = datetime.now(timezone.utc).isoformat()
                             self.stats.llm_classified += 1
                             tier = "macro" if sev in ("critical", "high") else "micro"
                             self._llm_calls_by_tier[tier] += 1
@@ -945,6 +975,12 @@ class CascadeBridge:
                                 "latency_ms": round(ms),
                                 "model": model,
                                 "tier": tier,
+                                "classifier_backend": classification.authoritative_backend,
+                                "classifier_mode": self.classifier.mode,
+                                "semantic_margin": (
+                                    classification.alternatives.get("semantic").margin
+                                    if classification.alternatives.get("semantic") else None
+                                ),
                             })
                             if len(self._llm_results) > 1000:
                                 self._llm_results = self._llm_results[-1000:]
@@ -1272,6 +1308,7 @@ class CascadeBridge:
 
                 agent_name = content.get("original_agent", "")
                 signal_type = content.get("subject_type", "")
+                decision_ref = str(content.get("decision_ref", ""))
                 reason = content.get("reason", "GCL audit verdict: FAILS")
 
                 if agent_name in _BUILTIN_AGENT_NAMES:
@@ -1283,6 +1320,9 @@ class CascadeBridge:
                     continue
 
                 if signal_type:
+                    self.classifier.record_gcl_verdict(
+                        signal_type, "FAILS", decision_ref,
+                    )
                     self.record_feedback(
                         signal_type, was_suppressed=True, is_important=True,
                     )
@@ -1491,6 +1531,13 @@ class CascadeBridge:
         stats["ledger_memory_pending"] = len(self._ledger_memory_pending)
         stats["ledger_memory_events_dropped"] = self._ledger_memory_events_dropped
         stats["ledger_memory_batches_written"] = self._ledger_memory_batches_written
+        stats["classifier"] = {
+            "mode": self.classifier.mode,
+            "config_error": self.classifier.config_error,
+            "serializer_revision": SERIALIZER_REVISION,
+            "coverage": self.classifier.coverage_stats(),
+            **self.classifier.recorder.stats(),
+        }
         return stats
 
     def wait_for_llm(self, timeout_seconds: float = 60.0) -> bool:
