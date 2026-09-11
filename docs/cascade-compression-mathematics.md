@@ -14,7 +14,7 @@ Under those assumptions, we show that:
 3. Memory strength converges to a stationary distribution under reinforcement and decay (Theorem 3)
 4. The inverse cascade's baseline converges to the true steady-state distribution (Theorem 4)
 
-Operational evidence is produced by the separate RHPDS production-proof pilot, not by this OSS repository. The public project provides implementation, contracts, synthetic fixtures, and reproducible evaluation methods; current pilot measurements remain with the private evidence record from which they were collected.
+Operational evidence is produced by the separately maintained production-proof pilot, not by this OSS repository. The public project provides implementation, contracts, synthetic fixtures, and reproducible evaluation methods; current pilot measurements remain with the private evidence record from which they were collected.
 
 ---
 
@@ -420,7 +420,7 @@ production results. A deployment must measure its own compression ratio, classif
 false-negative rate, promotion history, model-tier volume, and memory dynamics against an
 adjudicated workload.
 
-The RHPDS production-proof pilot is the source of Cascade's operational evidence. Its measurements
+The separately maintained production-proof pilot is the source of Cascade's operational evidence. Its measurements
 must retain their observation window, collector coverage, configuration revision, denominator, and
 evaluation method. They should not be generalized to a new workload or attributed to the OSS
 package. This repository therefore does not reproduce private pilot totals or claim that synthetic

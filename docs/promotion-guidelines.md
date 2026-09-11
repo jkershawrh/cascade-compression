@@ -199,7 +199,7 @@ AgentMetrics:
 
 ## Operational Evidence
 
-The RHPDS production-proof pilot, maintained separately from this OSS repository, is the source of
+The production-proof pilot, maintained separately from this OSS repository, is the source of
 operational promotion and compression results. Public examples and tests demonstrate mechanics;
 they do not establish production effectiveness or predict results for another workload.
 
