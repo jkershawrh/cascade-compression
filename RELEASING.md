@@ -11,7 +11,8 @@
 4. Merge to `main` and wait for all required checks.
 5. Create an annotated tag named `v<version>` on the reviewed commit and push the tag. The release
    workflow signs the resulting package and container provenance through GitHub artifact
-   attestations.
+   attestations. Versions containing `a`, `b`, or `rc` are published as GitHub prereleases and must
+   not move stable major/minor container tags.
 
 The tag workflow builds the wheel, source archive, SPDX SBOM, and multi-architecture container. It
 publishes the container to `ghcr.io/jkershawrh/cascade-compression`, records build provenance, signs
@@ -23,7 +24,7 @@ until a project-owned trusted publisher is configured.
 With the GitHub CLI installed, verify a downloaded artifact:
 
 ```bash
-gh attestation verify cascade_compression-0.1.0-py3-none-any.whl \
+gh attestation verify cascade_compression-0.2.0rc1-py3-none-any.whl \
   --repo jkershawrh/cascade-compression
 ```
 

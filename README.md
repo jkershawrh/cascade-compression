@@ -20,7 +20,9 @@ collectors.
 
 ## Install and test
 
-The first supported OSS release is `0.1.0`. The Python package supports Python 3.9 through 3.13.
+The latest stable OSS release is `0.1.0`. The governed semantic-classification and custom-anchor
+work is available for evaluation as release candidate `0.2.0rc1`; it is not the final 0.2.0
+release. The Python package supports Python 3.9 through 3.13.
 
 ```bash
 python -m venv .venv

@@ -2,7 +2,9 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
-## Unreleased
+## 0.2.0rc1 - 2026-09-11
+
+Release candidate for public evaluation. This is not the final 0.2.0 release.
 
 - Add an optional llm-d-sc gRPC classifier with generative, comparison, semantic, and hybrid
   policies, conservative confidence and severity gates, TLS support, and observable fallback.

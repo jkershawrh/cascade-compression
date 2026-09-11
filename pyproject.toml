@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cascade-compression"
-version = "0.1.0"
+version = "0.2.0rc1"
 description = "Domain-agnostic three-tier signal compression for safe CPU inference"
 readme = "README.md"
 requires-python = ">=3.9"

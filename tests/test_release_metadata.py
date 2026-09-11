@@ -11,7 +11,10 @@ def test_package_and_runtime_versions_match():
     declared = re.search(r'^version = "([^"]+)"$', project, re.MULTILINE)
     assert declared is not None
     assert declared.group(1) == cascade_compression.__version__
-    assert re.fullmatch(r"\d+\.\d+\.\d+", cascade_compression.__version__)
+    assert re.fullmatch(
+        r"\d+\.\d+\.\d+(?:(?:a|b|rc)\d+)?",
+        cascade_compression.__version__,
+    )
 
 
 def test_first_release_policy_files_exist():

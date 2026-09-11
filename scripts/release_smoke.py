@@ -16,7 +16,7 @@ from cascade_compression.service import app
 
 
 def main() -> None:
-    assert __version__ == "0.1.0"
+    assert __version__ == "0.2.0rc1"
     assert len(discover_collector_plugins()) == 8
     assert len(discover_domain_plugins()) == 7
     assert resource_path("config", "strategies.yaml").is_file()
