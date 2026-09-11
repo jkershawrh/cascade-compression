@@ -197,40 +197,13 @@ AgentMetrics:
 
 5. **Zero-FN invariant** — activated agents (nano+) that miss ANY real incident are instantly demoted to draft, deactivated, and must re-accumulate from scratch. The immutable ledger records the full demotion evidence chain. Three layers enforce this: cascade prevents (zero-FN promotion gate), ledger records (provenance), GCL verifies (independent audit).
 
-## Live Examples
+## Operational Evidence
 
-### K8s cascade (observed in production)
+The RHPDS production-proof pilot, maintained separately from this OSS repository, is the source of
+operational promotion and compression results. Public examples and tests demonstrate mechanics;
+they do not establish production effectiveness or predict results for another workload.
 
-**Peak run (68.7M signals):**
-```
-23 nano agents activated, 37 total — all green on rubric
-99.5% compression
-0 false negatives
-```
-
-**Earlier run (3.3M signals, initial tuning):**
-```
-Activated agents (self-discovered):
-  event_deprecatedannotation  — 6,074 noise confirmations
-  event_pending               — 584 noise confirmations
-  event_completed             — 481 noise confirmations
-  pod_pending                 — 21 noise confirmations
-  task_runner_on_skipped      — 12 noise confirmations
-  task_warning                — 6 noise confirmations
-
-Result: 70-74% compression
-```
-
-### AAP cascade (observed in production)
-
-```
-Signals:   1.0M+
-Activated agents (self-discovered):
-  task_runner_on_skipped      — 1,496 noise confirmations
-  task_runner_on_ok           — 10 noise confirmations
-  task_verbose                — 8 noise confirmations
-
-Result: 96% compression, 0 false negatives
-```
-
-These agents were not written by a human. The cascade discovered them from watching the signal stream and validating against the LLM.
+When presenting pilot evidence, bind every result to its observation window, signal sources,
+configuration and taxonomy revisions, promotion thresholds, denominator, and adjudication method.
+Learned agents should be described as discovered only when their proposal, validation, approval,
+activation, and subsequent shadow-validation records support that statement.

@@ -6,15 +6,15 @@
 
 ## 1. Introduction
 
-Cascade compression is a three-tier signal processing architecture that reduces the volume of infrastructure telemetry by 85–99% while preserving all operationally significant signals. This paper formalizes the mathematical properties of the system: compression bounds, memory dynamics, promotion safety guarantees, and convergence behavior.
+Cascade compression is a three-tier signal processing architecture designed to reduce the volume of infrastructure telemetry while preserving operationally significant signals. This paper formalizes the mathematical model: compression bounds, memory dynamics, promotion safety controls, and convergence behavior under the stated assumptions.
 
-We prove that:
+Under those assumptions, we show that:
 1. The cascade achieves monotonically increasing compression over time (Theorem 1)
 2. The zero-false-negative promotion gate provides bounded error guarantees (Theorem 2)
 3. Memory strength converges to a stationary distribution under reinforcement and decay (Theorem 3)
 4. The inverse cascade's baseline converges to the true steady-state distribution (Theorem 4)
 
-Empirical validation uses data from a production deployment processing 1.36M signals across 8 clusters.
+Operational evidence is produced by the separate RHPDS production-proof pilot, not by this OSS repository. The public project provides implementation, contracts, synthetic fixtures, and reproducible evaluation methods; current pilot measurements remain with the private evidence record from which they were collected.
 
 ---
 
@@ -409,64 +409,32 @@ The K·log(K) term is from eviction sorting, amortized over the eviction fractio
 
 ### 8.3 Scalability
 
-The cascade is **linear in signal volume** for the nano tier and **sub-linear in effective volume** for LLM tiers due to compression. Doubling signal volume doubles nano-tier cost but increases LLM cost by only (1-ρ)·2x — with ρ = 0.82, LLM cost increases by 0.36x.
+The cascade is **linear in signal volume** for the nano tier and **sub-linear in effective volume** for LLM tiers due to compression. Doubling signal volume doubles nano-tier cost but increases LLM cost by only (1-ρ)·2x. For example, if a particular workload measures ρ = 0.82, its model-tier volume increases by 0.36x.
 
 ---
 
-## 9. Empirical Validation
+## 9. Evaluation Boundary
 
-### 9.1 Production Deployment
+The equations above describe expected behavior under explicit assumptions; they are not themselves
+production results. A deployment must measure its own compression ratio, classification quality,
+false-negative rate, promotion history, model-tier volume, and memory dynamics against an
+adjudicated workload.
 
-| Metric | Observed Value |
-|--------|---------------|
-| Signals processed | 1,363,390 |
-| Nano tier compression | 82.5% (K8s), 95.6% (AAP) |
-| LLM classifications | 4,190 |
-| Effective cost reduction | ~93% |
-| Agents discovered | 49 suppression patterns |
-| Agents activated | 7 (5 K8s + 2 AAP) |
-| Promotion false negatives | 0 |
-| Memory capacity | 10,000 per instance |
-| Memories formed | 207,382 |
-| Memories evicted | 190,242 |
-| Memories retained | 11,829 |
-| Retention rate | 5.7% |
-| Federation sources | 2 (K8s + AAP) |
-| Federated memories | 2,671 |
-| Observation window | ~26 hours |
-| Signal sources | 11 collectors, 8 clusters |
+The RHPDS production-proof pilot is the source of Cascade's operational evidence. Its measurements
+must retain their observation window, collector coverage, configuration revision, denominator, and
+evaluation method. They should not be generalized to a new workload or attributed to the OSS
+package. This repository therefore does not reproduce private pilot totals or claim that synthetic
+tests establish production effectiveness.
 
-### 9.2 Compression Ratio Over Time
+For a new evaluation, report at minimum:
 
-The compression ratio increases as agents are activated:
-
-    t=0h:   ρ = 0.78  (static agents only)
-    t=2h:   ρ = 0.80  (dedup warming)
-    t=4h:   ρ = 0.82  (first agents activating)
-    t=8h:   ρ = 0.83  (5 agents active)
-    t=12h:  ρ = 0.85  (7 agents active)
-    t=24h:  ρ = 0.87  (learning loop stabilizing)
-
-This confirms Theorem 1 — monotonically increasing compression.
-
-### 9.3 Memory Strength Distribution
-
-Observed steady-state strength distributions:
-
-    K8s:  avg=0.92, min=0.20, max=1.00  (strong — high reinforcement)
-    AAP:  avg=0.44, min=0.10, max=1.00  (bimodal — strong failures + weak noise)
-    Agg:  avg=0.73, min=0.30, max=1.00  (selective — federation filters weak signals)
-
-The K8s distribution matches Theorem 3 predictions: signal types with high frequency (deprecated annotations at 53K occurrences) converge to φ* ≈ 0.95, while rare types converge lower.
-
-### 9.4 Promotion Safety
-
-Of 49 discovered patterns and 7 activated agents:
-- 0 false negatives observed
-- 0 shadow validation demotions
-- 2 TTL expirations (re-qualified successfully)
-
-This is consistent with Theorem 2's 95.1% confidence bound at p ≤ 1.5%.
+- total and unique input signals by source;
+- decisions by nano, micro, and macro tier;
+- compression ratio with its exact denominator;
+- precision, recall, and false negatives against adjudicated labels;
+- agent proposals, approvals, demotions, expirations, and taxonomy revision;
+- memories formed, consolidated, federated, and evicted; and
+- observation duration, interruptions, and known data gaps.
 
 ---
 
@@ -474,7 +442,7 @@ This is consistent with Theorem 2's 95.1% confidence bound at p ≤ 1.5%.
 
 Cascade compression provides a mathematically grounded framework for infrastructure signal processing with:
 
-1. **Guaranteed monotonic compression** through validated agent promotion
+1. **A monotonic-compression model** under the promotion assumptions stated above
 2. **Bounded false negative rates** through the zero-FN promotion gate with 95%+ confidence
 3. **Convergent memory dynamics** through the interplay of asymptotic reinforcement and exponential decay
 4. **Automatic importance ranking** from the stationary strength distribution without supervised labeling
