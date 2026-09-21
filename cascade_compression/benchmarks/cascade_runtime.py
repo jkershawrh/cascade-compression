@@ -99,6 +99,141 @@ def _signal(index: int, *, severity: str = "info", unique: bool = True) -> Signa
     )
 
 
+def mixed_batch(batch_index: int) -> tuple[list[Signal], set[str]]:
+    """Synthetic 100-signal triage fixture with an explicit survivor oracle.
+
+    Each batch has fresh sources so persistent dedup state cannot silently
+    change the mix. The repeated medium signals deliberately share a source
+    and message, but have different event IDs; only the first should survive.
+    """
+    signals: list[Signal] = []
+    expected: set[str] = set()
+
+    def add(case: str, severity: str, message: str, *,
+            signal_type: str = "scheduled_reconciliation",
+            source: str | None = None, survives: bool = False) -> None:
+        index = len(signals)
+        event_id = f"{batch_index}-{index}"
+        signals.append(Signal(
+            signal_type=signal_type,
+            severity=severity,
+            source=source or f"benchmark-{event_id}",
+            namespace="benchmark",
+            content={"message": message, "benchmark_event_id": event_id},
+            labels={"benchmark_case": case},
+        ))
+        if survives:
+            expected.add(event_id)
+
+    for index in range(50):
+        add("routine_info", "info", f"Routine check {index} completed")
+    for index in range(20):
+        add("transient_low", "low", f"Transient restart {index} recovered",
+            signal_type="pod_restart")
+    for index in range(10):
+        source = f"benchmark-{batch_index}-repeat-{index}"
+        message = f"Medium repeat {index} requires review"
+        add("repeat_first", "medium", message, source=source, survives=True)
+        add("repeat_duplicate", "medium", message, source=source)
+    for index in range(5):
+        add("medium_pattern", "medium", f"Disk pressure detected on unit {index}",
+            survives=True)
+    for index in range(3):
+        add("high_unknown", "high", f"Unfamiliar failure on unit {index}",
+            survives=True)
+    for index in range(2):
+        add("info_escalation", "info", f"Critical integrity event on unit {index}",
+            survives=True)
+    return signals, expected
+
+
+def _observed_event_ids(signals: list[Signal]) -> set[str]:
+    return {str(signal.content["benchmark_event_id"]) for signal in signals}
+
+
+def benchmark_mixed_nano(*, iterations: int, warmup: int,
+                         cpu_limit: float | None) -> dict[str, Any]:
+    pipeline = CascadePipeline(default_agents())
+    for index in range(warmup):
+        batch, expected = mixed_batch(index)
+        observed = _observed_event_ids(pipeline.run(batch).remaining)
+        if observed != expected:
+            raise RuntimeError("mixed nano warmup survivor oracle failed")
+
+    latencies = []
+    started = time.perf_counter()
+    for index in range(warmup, warmup + iterations):
+        batch, expected = mixed_batch(index)
+        call_started = time.perf_counter_ns()
+        observed = _observed_event_ids(pipeline.run(batch).remaining)
+        latencies.append((time.perf_counter_ns() - call_started) / 1_000_000)
+        if observed != expected:
+            raise RuntimeError(
+                f"mixed nano survivor oracle failed: "
+                f"{len(expected - observed)} missed, {len(observed - expected)} extra"
+            )
+    cell = _summary(latencies, iterations * 100,
+                    time.perf_counter() - started, cpu_limit)
+    cell.update({
+        "batch_size": 100,
+        "expected_survivors_per_batch": 20,
+        "expected_handled_per_batch": 80,
+        "survivor_oracle_passed": True,
+        "oracle_type": "synthetic_expected_routes",
+    })
+    return cell
+
+
+def benchmark_mixed_http(*, base_url: str, samples: int, warmup: int,
+                         cpu_limit: float | None) -> dict[str, Any]:
+    import httpx
+
+    url = f"{base_url.rstrip('/')}/cascade"
+
+    def post_and_check(client: httpx.Client, index: int) -> float:
+        batch, expected = mixed_batch(index)
+        payload = {"signals": [
+            {"signal_type": signal.signal_type, "severity": signal.severity,
+             "source": signal.source, "namespace": signal.namespace,
+             "content": signal.content, "labels": signal.labels}
+            for signal in batch
+        ]}
+        call_started = time.perf_counter_ns()
+        response = client.post(url, json=payload)
+        latency_ms = (time.perf_counter_ns() - call_started) / 1_000_000
+        response.raise_for_status()
+        body = response.json()
+        observed = {
+            str(signal["content"]["benchmark_event_id"])
+            for signal in body["signals_needing_attention"]
+        }
+        if observed != expected or body["total"] != 100 or body["compressed"] != 80:
+            raise RuntimeError(
+                f"mixed HTTP survivor oracle failed: "
+                f"{len(expected - observed)} missed, {len(observed - expected)} extra"
+            )
+        return latency_ms
+
+    with httpx.Client(timeout=30.0) as client:
+        for index in range(warmup):
+            post_and_check(client, index)
+        latencies = []
+        started = time.perf_counter()
+        for index in range(warmup, warmup + samples):
+            latencies.append(post_and_check(client, index))
+        cell = _summary(latencies, samples * 100,
+                        time.perf_counter() - started, cpu_limit)
+    cell.update({
+        "batch_size": 100,
+        "expected_survivors_per_batch": 20,
+        "expected_handled_per_batch": 80,
+        "survivor_oracle_passed": True,
+        "oracle_type": "synthetic_expected_routes",
+        "concurrency": 1,
+    })
+    return cell
+
+
 def benchmark_nano(*, iterations: int, warmup: int,
                    batch_sizes: list[int], cpu_limit: float | None) -> list[dict[str, Any]]:
     cells = []
@@ -295,6 +430,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "nano": "In-process deterministic CascadePipeline only.",
             "http": "External POST /cascade latency; survivor model work is asynchronous.",
             "semantic": "Direct synchronous llm-d-sc gRPC round trip.",
+            "mixed": "Synthetic 100-signal route oracle; not adjudicated accuracy.",
         },
         "environment": {
             "label": args.environment_label,
@@ -316,6 +452,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "batch_sizes": args.batch_sizes,
             "concurrencies": args.concurrencies,
             "http_batch_size": args.http_batch_size,
+            "mixed_only": getattr(args, "mixed_only", False),
+            "mixed_iterations": getattr(args, "mixed_iterations", 0),
+            "mixed_http_samples": getattr(args, "mixed_http_samples", 0),
             "run_id": run_id,
         },
         "results": {
@@ -324,10 +463,20 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
                 warmup=args.warmup,
                 batch_sizes=args.batch_sizes,
                 cpu_limit=cpu_limit,
-            ),
+            ) if not getattr(args, "mixed_only", False) else [],
         },
     }
-    if args.http_url:
+    if getattr(args, "mixed_iterations", 0):
+        result["results"]["mixed_nano"] = benchmark_mixed_nano(
+            iterations=args.mixed_iterations, warmup=args.warmup,
+            cpu_limit=cpu_limit,
+        )
+        if args.http_url and getattr(args, "mixed_http_samples", 0):
+            result["results"]["mixed_http"] = benchmark_mixed_http(
+                base_url=args.http_url, samples=args.mixed_http_samples,
+                warmup=args.warmup, cpu_limit=cpu_limit,
+            )
+    if args.http_url and not getattr(args, "mixed_only", False):
         result["results"]["http"] = benchmark_http(
             base_url=args.http_url,
             samples=args.samples,
@@ -385,10 +534,20 @@ def main() -> None:
     parser.add_argument("--concurrencies", type=_positive, nargs="+", default=[1, 8, 32])
     parser.add_argument("--http-batch-size", type=_positive, default=1)
     parser.add_argument("--http-url", default="")
+    parser.add_argument("--mixed-only", action="store_true",
+                        help="Skip baseline nano/HTTP cells and run only mixed tests")
+    parser.add_argument("--mixed-iterations", type=_positive, default=0)
+    parser.add_argument("--mixed-http-samples", type=_positive, default=0)
     parser.add_argument("--sc-address", default="")
     parser.add_argument("--sc-signal", default="cascade_classification")
     parser.add_argument("--sc-deadline", type=float, default=5.0)
     args = parser.parse_args()
+    if args.mixed_only and not args.mixed_iterations:
+        parser.error("--mixed-only requires --mixed-iterations")
+    if args.mixed_http_samples and not args.http_url:
+        parser.error("--mixed-http-samples requires --http-url")
+    if args.mixed_http_samples and not args.mixed_iterations:
+        parser.error("--mixed-http-samples requires --mixed-iterations")
     result = run(args)
     output = Path(args.output)
     output.parent.mkdir(parents=True, exist_ok=True)
