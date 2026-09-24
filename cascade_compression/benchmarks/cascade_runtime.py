@@ -103,8 +103,8 @@ def mixed_batch(batch_index: int) -> tuple[list[Signal], set[str]]:
     """Synthetic 100-signal triage fixture with an explicit survivor oracle.
 
     Each batch has fresh sources so persistent dedup state cannot silently
-    change the mix. The repeated medium signals deliberately share a source
-    and message, but have different event IDs; only the first should survive.
+    change the mix. Repeated medium pairs are identical except for their
+    protocol signal IDs; only the first should survive.
     """
     signals: list[Signal] = []
     expected: set[str] = set()
@@ -114,16 +114,17 @@ def mixed_batch(batch_index: int) -> tuple[list[Signal], set[str]]:
             source: str | None = None, survives: bool = False) -> None:
         index = len(signals)
         event_id = f"{batch_index}-{index}"
+        source_id = source or f"benchmark-{event_id}"
         signals.append(Signal(
             signal_type=signal_type,
             severity=severity,
-            source=source or f"benchmark-{event_id}",
+            source=source_id,
             namespace="benchmark",
-            content={"message": message, "benchmark_event_id": event_id},
+            content={"message": message},
             labels={"benchmark_case": case},
         ))
         if survives:
-            expected.add(event_id)
+            expected.add(source_id)
 
     for index in range(50):
         add("routine_info", "info", f"Routine check {index} completed")
@@ -133,8 +134,8 @@ def mixed_batch(batch_index: int) -> tuple[list[Signal], set[str]]:
     for index in range(10):
         source = f"benchmark-{batch_index}-repeat-{index}"
         message = f"Medium repeat {index} requires review"
-        add("repeat_first", "medium", message, source=source, survives=True)
-        add("repeat_duplicate", "medium", message, source=source)
+        add("repeat", "medium", message, source=source, survives=True)
+        add("repeat", "medium", message, source=source)
     for index in range(5):
         add("medium_pattern", "medium", f"Disk pressure detected on unit {index}",
             survives=True)
@@ -148,7 +149,7 @@ def mixed_batch(batch_index: int) -> tuple[list[Signal], set[str]]:
 
 
 def _observed_event_ids(signals: list[Signal]) -> set[str]:
-    return {str(signal.content["benchmark_event_id"]) for signal in signals}
+    return {signal.source for signal in signals}
 
 
 def benchmark_mixed_nano(*, iterations: int, warmup: int,
@@ -204,7 +205,7 @@ def benchmark_mixed_http(*, base_url: str, samples: int, warmup: int,
         response.raise_for_status()
         body = response.json()
         observed = {
-            str(signal["content"]["benchmark_event_id"])
+            str(signal["source"])
             for signal in body["signals_needing_attention"]
         }
         if observed != expected or body["total"] != 100 or body["compressed"] != 80:

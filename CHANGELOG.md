@@ -2,6 +2,15 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## Unreleased
+
+- Add opt-in advisory triage and verified exact-repeat evaluation profiles.
+- Include full cluster, resource UID, and stable content in duplicate identity
+  so distinct incidents cannot collapse across clusters or replacement resources.
+- Preserve request-local survivor metadata in the API response.
+- Expose process-scoped original-signal classifier outcomes so queue,
+  completion, failure, and drop counts can be reconciled during evaluation.
+
 ## 0.2.0rc1 - 2026-09-11
 
 Release candidate for public evaluation. This is not the final 0.2.0 release.

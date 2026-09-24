@@ -156,6 +156,62 @@ class TestBridgeStats:
         assert summary["important"] == 0
         assert summary["activated_types"] == []
 
+    def test_original_signal_queue_accounting_reconciles(self):
+        bridge = CascadeBridge()
+        bridge._enqueue_llm_signals([
+            _to_cascade_signal(FakeSignal("first", "medium")),
+            _to_cascade_signal(FakeSignal("second", "medium")),
+        ])
+        outcomes = bridge.get_stats()["llm_signal_outcomes_since_start"]
+        assert outcomes["enqueued"] == outcomes["queued"] == 2
+        assert outcomes["dispatched"] == outcomes["classified"] == 0
+        assert outcomes["reconciled"] is True
+        assert outcomes["terminal_complete"] is False
+
+    def test_successful_classification_is_terminal_and_reconciled(self):
+        bridge = CascadeBridge(llm_url="http://example.invalid")
+        bridge._enqueue_llm_signals([
+            _to_cascade_signal(FakeSignal("first", "medium")),
+        ])
+        with bridge._llm_queue_lock:
+            entry = bridge._llm_buffer.pop()
+            bridge._llm_accounting_dispatched = 1
+        bridge._llm_active_threads = 1
+        bridge.classifier.classify = MagicMock(return_value=ClassificationResult(
+            label="needs_attention", backend="test",
+            authoritative_backend="test", model_revision="test-revision",
+        ))
+        bridge._dispatch_llm_batches = MagicMock()
+
+        bridge._run_llm([entry])
+
+        outcomes = bridge.get_stats()["llm_signal_outcomes_since_start"]
+        assert outcomes["classified"] == 1
+        assert outcomes["failed"] == outcomes["in_flight"] == 0
+        assert outcomes["reconciled"] is True
+        assert outcomes["terminal_complete"] is True
+
+    def test_worker_start_failure_is_terminal_and_reconciled(self, monkeypatch):
+        bridge = CascadeBridge(llm_url="http://example.invalid")
+        bridge._enqueue_llm_signals([
+            _to_cascade_signal(FakeSignal("first", "medium")),
+        ])
+
+        class FailedThread:
+            def __init__(self, **_kwargs):
+                pass
+
+            def start(self):
+                raise RuntimeError("thread unavailable")
+
+        monkeypatch.setattr("cascade_compression.bridge.threading.Thread", FailedThread)
+        bridge._dispatch_llm_batches()
+        outcomes = bridge.get_stats()["llm_signal_outcomes_since_start"]
+        assert outcomes["failed"] == 1
+        assert outcomes["queued"] == outcomes["in_flight"] == 0
+        assert outcomes["reconciled"] is True
+        assert bridge._llm_active_threads == 0
+
     def test_route_ledger_partitions_processed_population(self):
         bridge = CascadeBridge()
         bridge.process([FakeSignal(severity="info") for _ in range(5)])

@@ -55,11 +55,11 @@ def test_mixed_fixture_has_expected_composition_and_survivors():
     assert len(batch) == 100
     assert len(expected) == 20
     assert {s.labels["benchmark_case"] for s in batch} == {
-        "routine_info", "transient_low", "repeat_first", "repeat_duplicate",
+        "routine_info", "transient_low", "repeat",
         "medium_pattern", "high_unknown", "info_escalation",
     }
     result = CascadePipeline(default_agents()).run(batch)
-    observed = {s.content["benchmark_event_id"] for s in result.remaining}
+    observed = {s.source for s in result.remaining}
     assert observed == expected
     assert result.deduped_count == 10
     assert result.suppressed_count == 20
@@ -95,7 +95,7 @@ def test_mixed_fixture_matches_http_survivors(monkeypatch):
     body = response.json()
     assert body["total"] == 100
     assert body["compressed"] == 80
-    assert {s["content"]["benchmark_event_id"]
+    assert {s["source"]
             for s in body["signals_needing_attention"]} == expected
 
 

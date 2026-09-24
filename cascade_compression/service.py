@@ -124,6 +124,7 @@ class SignalInput(BaseModel):
     signal_type: str = ""
     severity: str = "info"
     source: str = ""
+    cluster: str = ""
     namespace: str = ""
     content: Dict[str, Any] = Field(default_factory=dict)
     labels: Dict[str, str] = Field(default_factory=dict)
@@ -141,7 +142,7 @@ class _SignalAdapter:
         self.severity = s.severity
         self.resource_name = s.source
         self.namespace = s.namespace
-        self.cluster_id = ""
+        self.cluster_id = s.cluster
         self.resource_kind = ""
         self.evidence = s.content
         self.labels = s.labels
@@ -153,6 +154,7 @@ def health():
         "status": "ok",
         "service": "cascade-compression",
         "enabled": _bridge.enabled if _bridge else False,
+        "nano_profile": _bridge.nano_profile if _bridge else "",
     }
 
 
@@ -181,18 +183,22 @@ def cascade(request: BatchRequest):
 
     survivors = []
     if bridge_result.get("enabled"):
-        for sig in _bridge._last_remaining or []:
-            original = next(
-                (s for a, s in zip(adapted, request.signals)
-                 if a.signal_id == sig.signal_id), None)
-            if original:
-                survivors.append({
+        remaining_ids = set(bridge_result.get("_remaining_signal_ids", []))
+        triage_tags = bridge_result.get("_triage", {})
+        for adapter, original in zip(adapted, request.signals):
+            if str(adapter.signal_id) in remaining_ids:
+                item = {
                     "signal_type": original.signal_type,
                     "severity": original.severity,
                     "source": original.source,
+                    "cluster": original.cluster,
                     "namespace": original.namespace,
                     "content": original.content,
-                })
+                }
+                tag = triage_tags.get(str(adapter.signal_id))
+                if tag:
+                    item["triage"] = tag
+                survivors.append(item)
 
     return {
         "total": len(request.signals),
@@ -201,6 +207,9 @@ def cascade(request: BatchRequest):
         "compression_ratio": bridge_result.get("compression", 0),
         "cascade_ms": round(cascade_ms, 1),
         "signals_needing_attention": survivors,
+        "triaged_repeats": bridge_result.get("triaged_repeats", 0),
+        "triage_eligible": bridge_result.get("triage_eligible", 0),
+        "triage_unqualified": bridge_result.get("triage_unqualified", 0),
     }
 
 
@@ -244,6 +253,7 @@ def recall(signal: SignalInput):
         signal_type=signal.signal_type,
         severity=signal.severity,
         source=signal.source,
+        cluster=signal.cluster,
         namespace=signal.namespace,
         content=signal.content,
         labels=signal.labels,

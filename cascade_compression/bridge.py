@@ -27,6 +27,7 @@ from .cascade.pipeline import CascadePipeline
 from .cascade.promotion import AgentMetrics, Baseline, PromotionEngine, RuleAgent
 from .cascade.protocol import Signal, llm_complete
 from .cascade.protocol import Outcome
+from .cascade.triage import ExactRepeatTriage
 from .classifier import SERIALIZER_REVISION, classifier_from_environment
 
 log = logging.getLogger(__name__)
@@ -65,7 +66,7 @@ def _to_cascade_signal(sig: Any) -> Signal:
         severity=getattr(sig, "severity", "info"),
         source=getattr(sig, "resource_name", ""),
         namespace=getattr(sig, "namespace", ""),
-        cluster=str(getattr(sig, "cluster_id", ""))[:8],
+        cluster=str(getattr(sig, "cluster_id", "")),
         content={
             "resource_kind": getattr(sig, "resource_kind", ""),
             "message": getattr(sig, "evidence", {}).get("message", ""),
@@ -146,7 +147,16 @@ class CascadeBridge:
         self._ledger_memory_batches_written = 0
 
         self.enabled = True
-        self.pipeline = CascadePipeline(default_agents())
+        nano_profile = os.getenv("CASCADE_NANO_PROFILE", "legacy").strip().lower()
+        if nano_profile not in {"legacy", "verified_repeat_only", "triage_only"}:
+            raise ValueError(f"unknown CASCADE_NANO_PROFILE: {nano_profile}")
+        self.nano_profile = nano_profile
+        self.pipeline = CascadePipeline(
+            default_agents(),
+            verified_repeat_only=nano_profile == "verified_repeat_only",
+            triage_only=nano_profile == "triage_only",
+        )
+        self._triage_advisor = ExactRepeatTriage() if nano_profile == "triage_only" else None
         self._human_gate = bool(os.getenv("CASCADE_HUMAN_GATE", ""))
         self.promotion = PromotionEngine(human_gate_enabled=self._human_gate)
         self.stats = BridgeStats(started_at=datetime.now(timezone.utc).isoformat())
@@ -199,6 +209,12 @@ class CascadeBridge:
         self._llm_noise_counts: Dict[str, int] = defaultdict(int)
         self._llm_important_counts: Dict[str, int] = defaultdict(int)
         self._llm_failure_counts: Dict[str, int] = defaultdict(int)
+        self._llm_accounting_started_at = datetime.now(timezone.utc).isoformat()
+        self._llm_accounting_enqueued = 0
+        self._llm_accounting_dispatched = 0
+        self._llm_accounting_succeeded = 0
+        self._llm_accounting_failed = 0
+        self._llm_accounting_dropped = 0
         self._llm_context_noise: Dict[str, int] = defaultdict(int)
         self._llm_context_important: Dict[str, int] = defaultdict(int)
 
@@ -265,6 +281,11 @@ class CascadeBridge:
         t0 = time.monotonic()
         cascade_result = self.pipeline.run(cascade_signals)
         cascade_ms = (time.monotonic() - t0) * 1000
+
+        triage_tags = (
+            self._triage_advisor.assess(cascade_signals)
+            if self._triage_advisor is not None else {}
+        )
 
         self._last_remaining = list(cascade_result.remaining)
         remaining_count = len(cascade_result.remaining)
@@ -357,6 +378,15 @@ class CascadeBridge:
             "signals": len(signals),
             "cascade_ms": round(cascade_ms, 1),
             "compression": round(cascade_result.compression_ratio, 3),
+            "triaged_repeats": sum(
+                bool(tag["exact_repeat"]) for tag in triage_tags.values()
+            ),
+            "triage_eligible": len(triage_tags),
+            "triage_unqualified": len(signals) - len(triage_tags),
+            "_remaining_signal_ids": [
+                str(sig.signal_id) for sig in cascade_result.remaining
+            ],
+            "_triage": triage_tags,
         }
 
     def _record_terminal_routes(self, signals: list, result: Any) -> None:
@@ -381,6 +411,7 @@ class CascadeBridge:
     def _enqueue_llm_signals(self, signals: list) -> None:
         with self._llm_queue_lock:
             for sig in signals:
+                self._llm_accounting_enqueued += 1
                 content, truncated = self._compact_llm_content(sig.content)
                 entry = {
                     "signal_id": str(sig.signal_id),
@@ -431,7 +462,22 @@ class CascadeBridge:
                         - sum(self._entry_queue_bytes(sig) for sig in normal),
                     )
                     batch.extend(normal)
-            threading.Thread(target=self._run_llm, args=(batch,), daemon=True).start()
+                self._llm_accounting_dispatched += len(batch)
+            try:
+                threading.Thread(
+                    target=self._run_llm, args=(batch,), daemon=True,
+                ).start()
+            except Exception as exc:
+                with self._llm_queue_lock:
+                    self._llm_accounting_failed += len(batch)
+                with self._pending_memory_lock:
+                    for entry in batch:
+                        self._pending_memory_ids.pop(
+                            str(entry.get("signal_id", "")), None,
+                        )
+                with self._llm_lock:
+                    self._llm_active_threads -= 1
+                log.error("Could not start classifier worker: %s", str(exc)[:80])
 
     def _classification_dispatch_enabled(self) -> bool:
         """Return whether queued survivors have an available classifier path."""
@@ -565,6 +611,7 @@ class CascadeBridge:
         self._llm_dropped += len(dropped)
         for sig in dropped:
             self._llm_dropped_by_severity[sig.get("severity", "unknown")] += 1
+            self._llm_accounting_dropped += 1
             self._forget_pending_memory(sig)
 
         self._emit_meta(
@@ -609,6 +656,7 @@ class CascadeBridge:
         self._llm_dropped += len(dropped)
         for sig in dropped:
             self._llm_dropped_by_severity[sig.get("severity", "unknown")] += 1
+            self._llm_accounting_dropped += 1
             self._forget_pending_memory(sig)
         self._emit_meta(
             "meta_llm_priority_overflow", "critical",
@@ -934,6 +982,19 @@ class CascadeBridge:
             fcntl.flock(f, fcntl.LOCK_UN)
 
     def _run_llm(self, signals):
+        accounted_entries: set[int] = set()
+
+        def record_outcome(entry: dict, succeeded: bool) -> None:
+            entry_id = id(entry)
+            if entry_id in accounted_entries:
+                return
+            with self._llm_queue_lock:
+                if succeeded:
+                    self._llm_accounting_succeeded += 1
+                else:
+                    self._llm_accounting_failed += 1
+            accounted_entries.add(entry_id)
+
         try:
             import httpx
             from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -944,6 +1005,7 @@ class CascadeBridge:
                     futures = {pool.submit(self._classify_one, sig, client): sig for sig in signals}
                     for future in as_completed(futures):
                         orig_sig = futures[future]
+                        succeeded = False
                         with self._pending_memory_lock:
                             memory_id = self._pending_memory_ids.pop(
                                 str(orig_sig.get("signal_id", "")), None,
@@ -1013,6 +1075,7 @@ class CascadeBridge:
                                             mem_sig, classification=ans,
                                             metadata={"analysis": gpu_result},
                                         )
+                            succeeded = True
 
                         except Exception as e:
                             model_key = orig_sig.get("signal_type", "unknown")
@@ -1020,11 +1083,16 @@ class CascadeBridge:
                             count = self._llm_failure_counts[model_key]
                             if count <= 5 or count % 100 == 0:
                                 log.warning("LLM call failed (%dx): %s", count, str(e)[:80])
+                        finally:
+                            record_outcome(orig_sig, succeeded)
         except Exception as e:
             log.warning("LLM error: %s", e)
+            for entry in signals:
+                record_outcome(entry, False)
         finally:
             with self._llm_lock:
                 self._llm_active_threads -= 1
+            self._dispatch_llm_batches()
 
     def _queue_shadow_samples(self, cascade_result, cascade_signals):
         """Sample suppressed signals from activated agents for LLM re-check.
@@ -1526,6 +1594,36 @@ class CascadeBridge:
         stats["llm_priority_buffer_max_bytes"] = self._llm_priority_max_bytes
         stats["llm_priority_dropped"] = self._llm_priority_dropped
         stats["llm_payloads_truncated"] = self._llm_payloads_truncated
+        with self._llm_queue_lock:
+            queued = len(self._llm_buffer) + len(self._llm_priority_buffer)
+            in_flight = (
+                self._llm_accounting_dispatched
+                - self._llm_accounting_succeeded
+                - self._llm_accounting_failed
+            )
+            accounted = (
+                queued + in_flight + self._llm_accounting_succeeded
+                + self._llm_accounting_failed + self._llm_accounting_dropped
+            )
+            stats["llm_signal_outcomes_since_start"] = {
+                "started_at": self._llm_accounting_started_at,
+                "enqueued": self._llm_accounting_enqueued,
+                "queued": queued,
+                "dispatched": self._llm_accounting_dispatched,
+                "in_flight": in_flight,
+                "classified": self._llm_accounting_succeeded,
+                "failed": self._llm_accounting_failed,
+                "dropped": self._llm_accounting_dropped,
+                "reconciled": (
+                    in_flight >= 0 and accounted == self._llm_accounting_enqueued
+                ),
+                "terminal_complete": (
+                    in_flight == 0 and queued == 0
+                    and self._llm_accounting_failed == 0
+                    and self._llm_accounting_dropped == 0
+                    and accounted == self._llm_accounting_enqueued
+                ),
+            }
         stats["ledger_writes_dropped"] = self._ledger_writes_dropped
         stats["ledger_max_pending"] = self._ledger_max_pending
         stats["ledger_memory_pending"] = len(self._ledger_memory_pending)

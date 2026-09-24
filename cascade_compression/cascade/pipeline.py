@@ -7,6 +7,7 @@ drop/suppress/dedupe signals so they don't reach later stages or inference.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import List, Optional
 from uuid import UUID
@@ -42,10 +43,15 @@ class CascadeResult:
 
 
 class CascadePipeline:
-    """Runs registered agents in stage order against a batch of signals."""
+    """Run registered agents, with optional fail-open evaluation profiles."""
 
-    def __init__(self, agents: Optional[List[CascadeAgent]] = None):
+    def __init__(self, agents: Optional[List[CascadeAgent]] = None,
+                 *, verified_repeat_only: bool = False, triage_only: bool = False):
+        if verified_repeat_only and triage_only:
+            raise ValueError("nano profiles are mutually exclusive")
         self._agents: List[CascadeAgent] = []
+        self._verified_repeat_only = verified_repeat_only
+        self._triage_only = triage_only
         if agents:
             for agent in sorted(agents, key=lambda a: a.stage):
                 self._agents.append(agent)
@@ -55,6 +61,8 @@ class CascadePipeline:
         self._agents.sort(key=lambda a: a.stage)
 
     def run(self, signals: List[Signal]) -> CascadeResult:
+        if self._triage_only:
+            return CascadeResult(total_signals=len(signals), remaining=list(signals))
         result = CascadeResult(total_signals=len(signals))
         active = list(signals)
         removed_ids: set[UUID] = set()
@@ -70,9 +78,33 @@ class CascadePipeline:
                 log.exception("Agent %s failed, skipping", agent.name)
                 continue
 
-            result.decisions.extend(decisions)
+            if not self._verified_repeat_only:
+                result.decisions.extend(decisions)
 
             for d in decisions:
+                signal = next(
+                    (candidate for candidate in active
+                     if candidate.signal_id == d.signal_id), None,
+                )
+                if self._verified_repeat_only and d.outcome in {Outcome.SUPPRESS, Outcome.DROP}:
+                    continue
+                if self._verified_repeat_only and d.outcome == Outcome.DEDUPE:
+                    content = signal.content if signal else {}
+                    labels = signal.labels if signal else {}
+                    verified_repeat = bool(
+                        signal and d.agent_name == "deduplicate"
+                        and labels.get("domain") == "kubernetes"
+                        and signal.signal_type.startswith("event_")
+                        and signal.severity == "medium"
+                        and signal.cluster and signal.namespace and signal.source
+                        and content.get("kind") == "Pod" and content.get("uid")
+                        and content.get("event_uid") and content.get("reason")
+                        and type(content.get("count")) is int
+                        and isinstance(content.get("message_sha256"), str)
+                        and re.fullmatch(r"[0-9a-f]{64}", content["message_sha256"])
+                    )
+                    if not verified_repeat:
+                        continue
                 if d.outcome == Outcome.SUPPRESS:
                     if d.signal_id not in escalated_ids:
                         removed_ids.add(d.signal_id)
@@ -93,17 +125,23 @@ class CascadePipeline:
                     # Only skip inference for info-severity classified signals.
                     # Everything medium+ still goes to inference for deeper analysis.
                     # Fail-open: when in doubt, send to inference.
-                    sig = next((s for s in active if s.signal_id == d.signal_id), None)
-                    if sig and sig.severity == "info" and d.signal_id not in escalated_ids:
+                    if (not self._verified_repeat_only and signal
+                            and signal.severity == "info"
+                            and d.signal_id not in escalated_ids):
                         removed_ids.add(d.signal_id)
+
+                if self._verified_repeat_only and d.outcome == Outcome.DEDUPE:
+                    result.decisions.append(d)
 
             active = [s for s in active if s.signal_id not in removed_ids]
 
         # Drop remaining info-severity signals that weren't explicitly escalated
-        result.remaining = [
-            s for s in active
-            if s.severity != "info" or s.signal_id in escalated_ids
-        ]
+        result.remaining = (
+            active if self._verified_repeat_only else [
+                s for s in active
+                if s.severity != "info" or s.signal_id in escalated_ids
+            ]
+        )
         result.dropped_count += len(active) - len(result.remaining)
 
         return result

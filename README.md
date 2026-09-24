@@ -68,6 +68,15 @@ See [the architecture](docs/architecture.md) and [the event workflow](docs/event
 the full mechanics. [Custom anchor engineering](docs/anchor-engineering.md) documents the separate
 proposal, evaluation, approval, activation, and rollback lifecycle.
 
+### Advisory triage evaluation
+
+Set `CASCADE_NANO_PROFILE=triage_only` to preserve every input while tagging
+fully identified exact-repeat Kubernetes Pod Events for analyst grouping. The
+API reports zero compression in this mode; a repeat tag is not an actionability
+verdict. The default `legacy` profile is unchanged. See the
+[triage profile guide](docs/triage-profile.md) for identity requirements and
+the separate, opt-in `verified_repeat_only` evaluation profile.
+
 ## Optional llm-d-sc integration
 
 The default is `generative`, so installing or running Cascade does not require llm-d-sc. A safe

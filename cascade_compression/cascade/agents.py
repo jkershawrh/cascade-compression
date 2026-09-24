@@ -7,6 +7,7 @@ These agents handle universal signal patterns.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 from collections import defaultdict
@@ -28,8 +29,9 @@ class DeduplicateAgent:
     stage = 1
 
     DEDUP_BYPASS_LABELS = frozenset({"compliance", "fraud", "sanctions"})
-    LOCATION_FIELDS = ("location", "span_id", "circuit_id", "node", "host",
-                       "region", "zone", "rack", "site", "service", "instance")
+    VOLATILE_EVIDENCE_FIELDS = frozenset({
+        "timestamp", "firstTimestamp", "lastTimestamp", "observed_at",
+    })
 
     def __init__(self, window_seconds: float = 60.0):
         self._window = window_seconds
@@ -44,11 +46,16 @@ class DeduplicateAgent:
             if self._is_compliance(s):
                 continue
 
-            content_key = s.content.get("message", "") if s.content else ""
-            location_key = self._location_key(s)
-            key = hashlib.sha256(
-                f"{s.signal_type}:{s.source}:{s.namespace}:{s.severity}:{content_key}:{location_key}".encode()
-            ).hexdigest()
+            stable_content = {
+                key: value for key, value in (s.content or {}).items()
+                if key not in self.VOLATILE_EVIDENCE_FIELDS
+            }
+            key_data = json.dumps(
+                [(s.labels or {}).get("domain", ""), s.cluster, s.signal_type,
+                 s.source, s.namespace, s.severity, stable_content],
+                sort_keys=True, separators=(",", ":"), default=str,
+            )
+            key = hashlib.sha256(key_data.encode()).hexdigest()
             if key in self._seen:
                 decisions.append(CascadeDecision(
                     signal_id=s.signal_id, agent_name=self.name,
@@ -61,16 +68,6 @@ class DeduplicateAgent:
     def _is_compliance(self, s: Signal) -> bool:
         label = s.labels.get("label", "") if s.labels else ""
         return label in self.DEDUP_BYPASS_LABELS
-
-    def _location_key(self, s: Signal) -> str:
-        parts = []
-        if s.content:
-            for field in self.LOCATION_FIELDS:
-                val = s.content.get(field)
-                if val:
-                    parts.append(str(val))
-        return "|".join(parts)
-
 
 class TransientSuppressor:
     """Suppresses transient signals that resolve within a window.
