@@ -1,6 +1,7 @@
 """Tests for the public domain-pack plugin contract."""
 
 from importlib.metadata import EntryPoint
+from types import SimpleNamespace
 
 import pytest
 
@@ -47,3 +48,14 @@ def test_coalesces_identical_installed_metadata(monkeypatch):
         lambda: [candidate, candidate],
     )
     assert set(discover_domain_plugins()) == {"finance"}
+
+
+def test_cli_loads_external_domain_entry_point(monkeypatch):
+    from cascade_compression.cli import _load_domain
+
+    module = SimpleNamespace(DOMAIN="external")
+    monkeypatch.setattr(
+        "cascade_compression.domain_plugins.load_domain_plugin",
+        lambda name: SimpleNamespace(module=module),
+    )
+    assert _load_domain("external") is module

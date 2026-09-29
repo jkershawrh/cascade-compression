@@ -1,209 +1,106 @@
-# Agent Promotion Guidelines
+# Nano-agent promotion guidelines
 
-> Historical run examples in this document are not release guarantees. The current runtime reports false-negative telemetry as unmeasured until ground-truth feedback is supplied and requires zero important classifications in its promotion sample.
+Cascade can move a repeated model-backed judgment into a deterministic rule. This is a governed
+optimization, not autonomous truth creation: the corpus analyzer proposes, the promotion engine
+qualifies, and runtime safety controls can deactivate the result.
 
-## Overview
+## Lifecycle
 
-The cascade discovers and promotes agents automatically. No human writes rules. The system watches signal patterns, proposes agents, validates them against real data, and promotes or demotes them based on performance.
-
-## The Promotion Ladder
-
-```
-                    ┌─────────┐
-                    │  MACRO  │  1000+ samples, 85% accuracy, 5% FP, 0% FN
-                    │ terminal│  Human reviewed.
-                    └────▲────┘
-                         │ promote (human review required)
-                    ┌────┴────┐
-                    │  MICRO  │  500+ samples, 85% accuracy, 10% FP, 0% FN
-                    │         │  Human reviewed.
-                    └────▲────┘
-                         │ promote (automated)
-                    ┌────┴────┐
-                    │  NANO   │  200+ samples, 75% accuracy, 15% FP, 0% FN
-                    │         │  Agent is ACTIVATED. Zero-FN enforced.
-                    └────▲────┘
-                         │ promote (automated, or human gate if enabled)
-               ┌─────────┴──────────┐
-               │ PENDING_APPROVAL   │  (optional, human_gate_enabled only)
-               │                    │  Meets nano thresholds, awaiting human sign-off.
-               └─────────▲──────────┘
-                         │ promote (automated)
-                    ┌────┴────┐
-                    │CANDIDATE│  50+ samples, 60% accuracy, 30% FP, 20% FN
-                    │         │  Under observation. FN tolerated.
-                    └────▲────┘
-                         │ promote (automated)
-                    ┌────┴────┐
-                    │  DRAFT  │  Proposed by CorpusAnalyzer.
-                    │         │  Awaiting LLM validation.
-                    └─────────┘
+```text
+observed pattern
+    -> draft proposal (inactive)
+    -> candidate (inactive)
+    -> pending approval (optional, inactive)
+    -> nano (active)
+    -> micro / macro evidence tiers
 ```
 
-## Tier Requirements
+Default thresholds are:
 
-| Tier | Min Samples | Min Accuracy | Max FP Rate | Max FN Rate | Human Gate | Status |
-|------|------------|-------------|-------------|-------------|------------|--------|
-| Draft | 0 | none | none | none | No | Proposed, not active |
-| Candidate | 50 | 60% | 30% | 20% | No | Under observation |
-| Pending Approval | — | — | — | — | Yes (optional) | Awaiting human sign-off |
-| Nano | 200 | 75% | 15% | **0%** | No | **ACTIVATED** — processing signals |
-| Micro | 500 | 85% | 10% | **0%** | Yes | Active, human-validated |
-| Macro | 1000 | 85% | 5% | **0%** | Yes | Terminal |
+| Tier | Minimum samples | Minimum accuracy | Maximum FP rate | Maximum FN rate | Human reviewed |
+|---|---:|---:|---:|---:|---|
+| Candidate | 50 | 0.60 | 0.30 | 0.20 | No |
+| Nano | 200 | 0.75 | 0.15 | 0 | Optional gate |
+| Micro | 500 | 0.85 | 0.10 | 0 | Yes |
+| Macro | 1,000 | 0.85 | 0.05 | 0 | Yes |
 
-## How Agents Are Discovered
+Nano is the first active tier. When `CASCADE_HUMAN_GATE` is enabled, a qualifying candidate pauses
+at `pending_approval` before nano activation. Thresholds are policy defaults, not statistical proof.
 
-The `CorpusAnalyzer` watches the signal stream and detects three patterns:
+## Discovery
 
-### 1. Repeat Floods
+The `CorpusAnalyzer` maintains a bounded observation buffer and reports:
 
-```
-Detection: Same signal_type appears N+ times within a time window
-Threshold: min_repeat_count=10, repeat_window_seconds=300
+- repeated type/source/namespace patterns;
+- signal types that dominate the observed window; and
+- strong type/severity regularities.
 
-Example:
-  "event_deprecatedannotation" appeared 6,074 times in 5 minutes
-  → Proposes: RepeatFloodSuppressor for "event_deprecatedannotation"
-  → Rule: signal_type == "event_deprecatedannotation" → SUPPRESS
-```
+The current bridge turns only repeat-flood and dominant-type proposals into activation candidates.
+Mono-severity patterns remain discovery evidence because severity alone is not a safe suppression
+rule.
 
-### 2. Dominant Types
+Every proposal begins inactive. Frequency establishes that a pattern exists; it does not establish
+that the pattern is unimportant.
 
-```
-Detection: One signal_type dominates the stream (>N% of total volume)
-Threshold: min_frequency=0.05 (5% of all signals)
+## Qualification in the bridge
 
-Example:
-  "job_succeeded" is 92% of all AAP signals
-  → Proposes: DominantNoiseSuppressor for "job_succeeded"
-  → Rule: signal_type == "job_succeeded" → DROP
-```
+Authoritative classifier outcomes are counted per signal type as suppressive (`routine_noise` or
+`known_pattern`) or important (`needs_attention` or `real_incident`). For a discovered repeat or
+dominant pattern, the bridge supplies those counts to the promotion engine.
 
-### 3. Mono-Severity Patterns
+Activation requires the promotion thresholds plus the bridge's zero-known-important policy. A
+model answer is evidence, not ground truth, so decision-grade evaluation also requires independent
+held-out adjudication. Production feedback coverage must be measured separately.
 
-```
-Detection: A signal_type always appears at the same severity level
-Threshold: min_frequency=0.05
+## Active rule types
 
-Example:
-  "job_error" always appears at severity "high" (100% of instances)
-  → Proposes: SeverityGate for "job_error" at "high"
-  → Rule: signal_type == "job_error" AND severity == "high" → CLASSIFY
-```
+- `RepeatFloodSuppressor` handles a validated repeating signal type after its repeat threshold.
+- `DominantNoiseSuppressor` handles a validated noise type.
+- `ContextualNoiseSuppressor` narrows a mixed type to a validated context value.
 
-## Validation Flow
+Built-in deterministic agents are not part of this promotion ladder. They include deduplication,
+transient suppression, severity handling, pattern classification, numeric threshold classification,
+and escalate-only trend or priming behavior.
 
-When the CorpusAnalyzer proposes a draft agent, the validation process:
+## Demotion and expiry
 
-```
-Step 1: DRAFT proposed
-        CorpusAnalyzer sees pattern → creates RuleAgent
-        Agent is registered but NOT processing signals
-        Status: "awaiting_phi4_validation"
+An active learned rule is deactivated when:
 
-Step 2: LLM validation
-        The LLM classifies signals matching the proposed rule
-        If LLM consistently says "routine_noise" for this pattern:
-          → Confidence increases
-        If LLM says "needs_attention" or "real_incident":
-          → Agent stays in draft or is discarded
+- external feedback confirms that it suppressed an important signal;
+- sampled shadow classification identifies a disagreement treated as a miss;
+- its activation TTL expires; or
+- an enabled external audit returns a failed verdict.
 
-Step 3: Sample accumulation
-        Agent tracks metrics:
-          - true_positives: correctly suppressed noise
-          - false_positives: suppressed something important
-          - accuracy: TP / (TP + FP)
-        At 50 samples with 60%+ accuracy → promote to CANDIDATE
+A confirmed miss demotes the rule directly to draft and resets its qualifying sample count. TTL
+expiry also demotes it and makes it eligible to begin re-qualification. Demotion is automatic;
+reactivation is never an automatic restoration of the previous active tier.
 
-Step 4: CANDIDATE observation
-        Agent continues tracking metrics
-        At 200 samples with 75%+ accuracy, <15% FP → promote to NANO
-        If accuracy drops below threshold → demote to DRAFT
+These controls detect known mistakes. They cannot detect an error that is never sampled, labeled,
+or returned through feedback.
 
-Step 5: NANO activation
-        Agent is now ACTIVATED
-        Processes signals in Stage 3 of the pipeline
-        Signals matching this agent's rule never reach the LLM
-        Compression ratio increases
-```
+## Audit trail
 
-## Demotion (Hardened)
+Promotion and demotion events include the agent, transition, timestamp, sample count, accuracy,
+false-positive and false-negative rates, reason, and optional batch identity. They remain in local
+state. When a ledger is configured with persisted Cascade state, the bridge first writes the event
+to its durable receipt spool and acknowledges it only after successful remote delivery.
 
-Any activated agent (nano, micro, macro) with **ANY** false negative in a
-validation batch is **instantly demoted to draft** and deactivated:
+An external ledger and GCL are optional assurance layers. Documentation must not imply an immutable
+receipt or independent verdict when those integrations are not configured and healthy.
 
-```
-Triggers (any one of these fires demotion):
-  - ANY false negative (fn > 0) in a validation batch → instant demote
-  - Shadow validation: LLM disagrees with a suppressed signal → instant demote
-  - GCL FAILS verdict: independent audit finds a false negative → instant demote
-  - TTL expiry: agent has been active for 72h+ without re-qualification → demote + reactivate
+## Acceptance checklist
 
-What happens:
-  1. Agent tier → draft
-  2. Agent deactivated (stops processing signals immediately)
-  3. samples_tested → 0 (cooling-off: must re-accumulate from scratch)
-  4. human_approved → false (must re-earn if human gate is enabled)
-  5. Demotion event → immutable ledger (full evidence chain)
-  6. Agent must be explicitly reactivated before it can climb again
+Before activating a learned rule:
 
-Demotion path (all activated tiers):
-  NANO/MICRO/MACRO → DRAFT (instant, no intermediate stops)
+- [ ] Input identity prevents unrelated events from collapsing together.
+- [ ] The proposal is narrow enough to inspect and reverse.
+- [ ] The qualifying sample meets the configured threshold.
+- [ ] No known important example appears in that sample.
+- [ ] The holdout includes adequate support for every classification label.
+- [ ] Authoritative dangerous misses are zero on the adjudicated holdout.
+- [ ] Shadow validation, feedback accounting, TTL expiry, and demotion are observable.
+- [ ] Optional audit delivery is durable and drained if a governed staging claim requires it.
 
-There is no gradual demotion. One false negative = back to draft.
-```
-
-## Agent Types
-
-### Built-in Agents (always active, not promotable)
-
-| Agent | Stage | Action | Safety |
-|-------|-------|--------|--------|
-| DeduplicateAgent | 1 | Content hash, 60s window | Only deduplicates exact matches |
-| TransientSuppressor | 1 | Type+severity filter | Fail-open: oomkill, segfault, panic, security, data loss always pass |
-| SeverityGate | 1 | Drops info severity | Escalation patterns override: oomkill, segfault, panic, security |
-| PatternClassifier | 2 | 7 regex patterns | Tags only, never drops |
-| ThresholdClassifier | 2 | Numeric thresholds | Tags only, never drops |
-
-### Discovered Agents (runtime, promotable)
-
-| Agent | Stage | Discovery | Rule |
-|-------|-------|-----------|------|
-| RepeatFloodSuppressor | 3 | Repeat flood pattern | signal_type == X → SUPPRESS |
-| DominantNoiseSuppressor | 3 | Dominant type pattern | signal_type == X → DROP |
-| RuleAgent | 3 | Mono-severity or custom | field operator value → outcome |
-
-## Metrics Tracked Per Agent
-
-```python
-AgentMetrics:
-    samples: int           # total signals evaluated
-    true_positives: int    # correctly handled (noise correctly suppressed)
-    false_positives: int   # incorrectly handled (important signal suppressed)
-    accuracy: float        # TP / (TP + FP)
-    fp_rate: float         # FP / samples
-    last_evaluated: str    # ISO timestamp
-```
-
-## Safety Invariants
-
-1. **Built-in agents never drop high/critical severity** — TransientSuppressor and SeverityGate have hardcoded keyword lists that always pass through (oomkill, segfault, panic, security, data loss).
-
-2. **Discovered agents start inactive** — a proposed agent cannot process signals until it reaches NANO tier (200+ validated samples).
-
-3. **The LLM is always the backstop** — if no agent handles a signal, it passes through to the LLM. The cascade can only reduce LLM load, never increase it.
-
-4. **Demotion is automatic** — if an agent's accuracy drops, it is demoted without human intervention. Human review is only required for MICRO/MACRO promotion, not demotion.
-
-5. **Zero-FN invariant** — activated agents (nano+) that miss ANY real incident are instantly demoted to draft, deactivated, and must re-accumulate from scratch. The immutable ledger records the full demotion evidence chain. Three layers enforce this: cascade prevents (zero-FN promotion gate), ledger records (provenance), GCL verifies (independent audit).
-
-## Operational Evidence
-
-The production-proof pilot, maintained separately from this OSS repository, is the source of
-operational promotion and compression results. Public examples and tests demonstrate mechanics;
-they do not establish production effectiveness or predict results for another workload.
-
-When presenting pilot evidence, bind every result to its observation window, signal sources,
-configuration and taxonomy revisions, promotion thresholds, denominator, and adjudication method.
-Learned agents should be described as discovered only when their proposal, validation, approval,
-activation, and subsequent shadow-validation records support that statement.
+The separately maintained pilot may supply operational evidence, but public OSS examples and tests
+establish mechanics only. Publish only sanitized aggregates bound to their observation window,
+configuration, taxonomy, denominator, and adjudication method.

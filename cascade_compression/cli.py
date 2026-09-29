@@ -1,7 +1,7 @@
 """CLI entrypoint for cascade-compression.
 
 Usage:
-    cascade-run --domain aap --llm-url https://maas/v1 --llm-key sk-... --db-url postgresql://...
+    cascade-run --domain finance --llm-url http://localhost:8000/v1
     cascade-replay --domain finance --data transactions.csv --llm-url https://maas/v1
 """
 
@@ -26,17 +26,24 @@ def _collector_config(db_url: str = "", data_path: str = "") -> dict:
 
 
 def _load_domain(name: str):
+    module_name = f"cascade_compression.domains.{name}"
     try:
-        return importlib.import_module(f"cascade_compression.domains.{name}")
-    except ImportError:
-        print(f"Unknown domain: {name}")
-        print("Available: kubernetes, aap, finance")
-        sys.exit(1)
+        return importlib.import_module(module_name)
+    except ModuleNotFoundError as exc:
+        if exc.name != module_name:
+            raise
+        try:
+            from .domain_plugins import load_domain_plugin
+            return load_domain_plugin(name).module
+        except Exception:
+            print(f"Unknown or unavailable domain pack: {name}")
+            print("Install a package exposing the cascade_compression.domains entry point.")
+            sys.exit(1)
 
 
 def run():
     parser = argparse.ArgumentParser(description="Run cascade compression pipeline")
-    parser.add_argument("--domain", required=True, help="Domain pack name (kubernetes, aap, finance)")
+    parser.add_argument("--domain", required=True, help="Installed domain-pack name")
     parser.add_argument("--llm-url", default="", help="LLM API base URL")
     parser.add_argument("--llm-key", default="", help="LLM API key")
     parser.add_argument("--llm-model", default="", help="LLM model name")

@@ -2,7 +2,11 @@
 
 import json
 
-from cascade_compression.collectors.base import BaseCollector, DomainCollector
+from cascade_compression.collectors.base import (
+    BaseCollector,
+    DomainCollector,
+    k8s_api_get,
+)
 from cascade_compression.collectors.finance import FinanceCollector
 from cascade_compression.collectors.healthcare import HealthcareCollector
 from cascade_compression.collectors.insurance import InsuranceCollector
@@ -49,3 +53,18 @@ def test_public_domain_collectors_include_their_synthetic_generators():
         collector = collector_type(synthetic_count=3)
         assert collector.connect({}) is True
         assert collector.collect_all()
+
+
+def test_k8s_api_never_retries_with_tls_verification_disabled(monkeypatch):
+    calls = []
+
+    def certificate_failure(*args, **kwargs):
+        calls.append(kwargs["context"])
+        raise OSError("CERTIFICATE_VERIFY_FAILED")
+
+    monkeypatch.setattr(
+        "cascade_compression.collectors.base.urlopen", certificate_failure,
+    )
+    assert k8s_api_get("https://api.example", "/health") is None
+    assert len(calls) == 1
+    assert calls[0].check_hostname is True
