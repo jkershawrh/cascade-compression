@@ -24,6 +24,7 @@ def _write_jsonl(path: str, records: list) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--corpus", required=True)
+    parser.add_argument("--holdout-manifest", required=True)
     parser.add_argument("--review", action="append", required=True)
     parser.add_argument("--resolution")
     parser.add_argument("--output-corpus", required=True)
@@ -37,6 +38,9 @@ def main() -> int:
         _read_jsonl(args.review[0]),
         _read_jsonl(args.review[1]),
         _read_jsonl(args.resolution) if args.resolution else None,
+        holdout_manifest=json.loads(
+            Path(args.holdout_manifest).read_text(encoding="utf-8")
+        ),
     )
     _write_jsonl(args.output_corpus, merged)
     _write_jsonl(args.output_disagreements, unresolved)

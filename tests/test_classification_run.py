@@ -13,8 +13,12 @@ LABELS = ["routine_noise", "known_pattern", "needs_attention", "real_incident"]
 class FakeGenerative:
     structured_confidence = True
 
+    def __init__(self):
+        self.calls = 0
+
     def classify(self, signal, text, client=None):
         del text, client
+        self.calls += 1
         return ClassificationResult(
             label=signal["signal_type"], confidence=0.9,
             backend="generative", model_revision="generative-v1",
@@ -23,8 +27,12 @@ class FakeGenerative:
 
 
 class FakeSemantic:
+    def __init__(self):
+        self.calls = 0
+
     def classify(self, signal, text):
         del text
+        self.calls += 1
         label = signal["signal_type"]
         ranked = [RankedLabel(label, 0.9)] + [
             RankedLabel(other, 0.05) for other in LABELS if other != label
@@ -38,13 +46,9 @@ class FakeSemantic:
 
 
 class DriftingSemantic(FakeSemantic):
-    def __init__(self):
-        self.calls = 0
-
     def classify(self, signal, text):
         result = super().classify(signal, text)
-        self.calls += 1
-        if self.calls > len(LABELS):
+        if self.calls > 2:
             result.taxonomy_revision = "taxonomy-v2"
         return result
 
@@ -74,19 +78,25 @@ def inputs():
         "case_id": row["case_id"], "signal_sha256": row["signal_sha256"],
     } for row in rows), key=lambda item: item["case_id"])
     digest = canonical_digest(identity)
+    now = datetime.now(timezone.utc)
     holdout = {
         "schema_version": "cascade.holdout-manifest.v1alpha1",
         "dataset": {"name": "synthetic", "revision": "v1"},
+        "frozen_at": (now - timedelta(minutes=3)).isoformat(),
         "selection": {"selected_records": 4},
         "holdout_digest": digest,
     }
     summary = {
-        "schema_version": "cascade.adjudication-summary.v1alpha2",
+        "schema_version": "cascade.adjudication-summary.v1alpha3",
         "status": "complete", "unresolved": 0, "records": 4,
         "independent_reviewers": 2, "corpus_digest": digest,
+        "holdout_manifest_digest": canonical_digest(holdout),
         "review_evidence_digest": "sha256:" + "d" * 64,
+        "review_window": {
+            "started_at": (now - timedelta(minutes=2)).isoformat(),
+            "completed_at": (now - timedelta(minutes=1)).isoformat(),
+        },
     }
-    now = datetime.now(timezone.utc)
     run = {
         "commit": "a" * 40,
         "image_digest": "sha256:" + "b" * 64,
@@ -100,9 +110,11 @@ def inputs():
 
 def test_same_corpus_runner_produces_decision_grade_sanitized_report():
     rows, holdout, summary, run = inputs()
+    generative = FakeGenerative()
+    semantic = FakeSemantic()
     private_input, report = run_and_evaluate(
         rows, holdout, summary,
-        generative=FakeGenerative(), semantic=FakeSemantic(), run=run,
+        generative=generative, semantic=semantic, run=run,
         hybrid_margin=0.2, hybrid_suppress_margin=0.4, workers=2,
     )
     assert report["evidence"]["status"] == "decision_grade"
@@ -113,6 +125,8 @@ def test_same_corpus_runner_produces_decision_grade_sanitized_report():
     assert set(private_input["run"]["model_revisions"]) == {
         "generative", "semantic", "hybrid",
     }
+    assert generative.calls == len(rows)
+    assert semantic.calls == len(rows)
 
 
 def test_runner_rejects_corpus_not_bound_to_holdout():
@@ -155,5 +169,5 @@ def test_runner_detects_taxonomy_drift_in_hybrid_execution():
         run_and_evaluate(
             rows, holdout, summary,
             generative=FakeGenerative(), semantic=DriftingSemantic(), run=run,
-            hybrid_margin=0.2, hybrid_suppress_margin=0.4,
+            hybrid_margin=0.2, hybrid_suppress_margin=0.4, workers=1,
         )

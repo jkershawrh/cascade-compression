@@ -31,7 +31,7 @@ def _validate_corpus(corpus: Iterable[dict], holdout: dict,
                      adjudication: dict) -> List[dict]:
     if holdout.get("schema_version") != "cascade.holdout-manifest.v1alpha1":
         raise ValueError("unsupported holdout manifest")
-    if adjudication.get("schema_version") != "cascade.adjudication-summary.v1alpha2":
+    if adjudication.get("schema_version") != "cascade.adjudication-summary.v1alpha3":
         raise ValueError("unsupported adjudication summary")
     if adjudication.get("status") != "complete" or adjudication.get("unresolved") != 0:
         raise ValueError("adjudication is not complete")
@@ -42,6 +42,16 @@ def _validate_corpus(corpus: Iterable[dict], holdout: dict,
         str(adjudication.get("review_evidence_digest") or ""),
     ):
         raise ValueError("adjudication review evidence is not cryptographically bound")
+    if adjudication.get("holdout_manifest_digest") != canonical_digest(holdout):
+        raise ValueError("adjudication summary does not match the holdout manifest")
+    try:
+        frozen_at = _parse_time(holdout["frozen_at"])
+        review_started = _parse_time(adjudication["review_window"]["started_at"])
+        review_completed = _parse_time(adjudication["review_window"]["completed_at"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("adjudication review window is invalid") from exc
+    if review_started < frozen_at or review_completed < review_started:
+        raise ValueError("adjudication review window is invalid")
 
     rows = list(corpus)
     if not rows:
@@ -94,6 +104,38 @@ def _revision_digest(values: Iterable[Any]) -> str:
     ))
 
 
+class _ObservedBackend:
+    """Return one already-observed result without another backend request."""
+
+    def __init__(self, result: ClassificationResult):
+        self.result = result
+
+    def classify(self, signal: dict, text: str,
+                 client: Any = None) -> ClassificationResult:
+        del signal, text, client
+        return self.result
+
+
+def _hybrid_from_observations(
+    signal: dict,
+    generative_result: ClassificationResult,
+    semantic_result: ClassificationResult,
+    *,
+    hybrid_margin: float,
+    hybrid_suppress_margin: float,
+) -> ClassificationResult:
+    """Apply hybrid policy to the exact results used by the other arms."""
+    selector = CascadeClassifier(
+        _ObservedBackend(generative_result),
+        _ObservedBackend(semantic_result),
+        mode="hybrid",
+        hybrid_margin=hybrid_margin,
+        hybrid_suppress_margin=hybrid_suppress_margin,
+        recorder=ComparisonRecorder(max_events=1),
+    )
+    return selector.classify(signal)
+
+
 def run_classification_experiment(
     corpus: Iterable[dict],
     holdout: dict,
@@ -128,11 +170,6 @@ def run_classification_experiment(
         hybrid_suppress_margin=hybrid_suppress_margin,
         recorder=ComparisonRecorder(),
     )
-    hybrid = CascadeClassifier(
-        generative, semantic, mode="hybrid", hybrid_margin=hybrid_margin,
-        hybrid_suppress_margin=hybrid_suppress_margin,
-        recorder=ComparisonRecorder(),
-    )
     revisions = {"generative": set(), "semantic": set()}
 
     def observe(result: Any, observed: Dict[str, set]) -> None:
@@ -154,9 +191,15 @@ def run_classification_experiment(
         call_started = time.perf_counter()
         signal = row["signal"]
         compared = compare.classify(signal, client)
-        hybrid_result = hybrid.classify(signal, client)
         gen = compared.alternatives.get("generative")
         sem = compared.alternatives.get("semantic")
+        if gen is None or sem is None:
+            raise ValueError("comparison did not return both classifier observations")
+        hybrid_result = _hybrid_from_observations(
+            signal, gen, sem,
+            hybrid_margin=hybrid_margin,
+            hybrid_suppress_margin=hybrid_suppress_margin,
+        )
         observed = {"generative": set(), "semantic": set()}
         for result in (
             gen, sem, hybrid_result, *hybrid_result.alternatives.values(),
@@ -235,6 +278,10 @@ def run_classification_experiment(
                 "review_evidence_digest": adjudication[
                     "review_evidence_digest"
                 ],
+                "holdout_manifest_digest": adjudication[
+                    "holdout_manifest_digest"
+                ],
+                "review_window": adjudication["review_window"],
                 "summary_digest": canonical_digest(adjudication),
             },
         },

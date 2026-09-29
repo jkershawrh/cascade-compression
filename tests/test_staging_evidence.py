@@ -62,6 +62,11 @@ def inputs():
                 "independent": True, "reviewers": 2,
                 "corpus_digest": corpus_digest,
                 "review_evidence_digest": "sha256:" + "d" * 64,
+                "holdout_manifest_digest": "sha256:" + "f" * 64,
+                "review_window": {
+                    "started_at": "2026-08-30T00:00:00Z",
+                    "completed_at": "2026-08-31T00:00:00Z",
+                },
                 "summary_digest": "sha256:" + "e" * 64,
             },
         },

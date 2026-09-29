@@ -60,6 +60,20 @@ def signal_digest(index):
     return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def holdout_manifest():
+    identity = [
+        {"case_id": f"case-{index}", "signal_sha256": signal_digest(index)}
+        for index in range(4)
+    ]
+    return {
+        "schema_version": "cascade.holdout-manifest.v1alpha1",
+        "dataset": {"name": "test", "revision": "v1"},
+        "frozen_at": "2026-08-31T00:00:00Z",
+        "selection": {"selected_records": 4},
+        "holdout_digest": evidence_digest(identity),
+    }
+
+
 def evidence_digest(receipt):
     encoded = json.dumps(
         receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -70,6 +84,7 @@ def evidence_digest(receipt):
 def test_two_complete_independent_reviews_form_ground_truth():
     merged, summary, unresolved = merge_independent_reviews(
         corpus(), reviews("reviewer-a"), reviews("reviewer-b"),
+        holdout_manifest=holdout_manifest(),
     )
     assert summary["status"] == "complete"
     assert summary["labels"] == {label: 1 for label in sorted(LABELS)}
@@ -89,6 +104,7 @@ def test_disagreement_fails_closed_until_independent_resolution():
     second = reviews("reviewer-b", {0: "known_pattern"})
     merged, summary, unresolved = merge_independent_reviews(
         corpus(), reviews("reviewer-a"), second,
+        holdout_manifest=holdout_manifest(),
     )
     assert summary["status"] == "incomplete"
     assert summary["disagreements"] == 1
@@ -102,6 +118,7 @@ def test_third_reviewer_can_resolve_only_the_disagreement():
     resolution = [reviews("reviewer-c", {0: "known_pattern"})[0]]
     merged, summary, unresolved = merge_independent_reviews(
         corpus(), reviews("reviewer-a"), second, resolution,
+        holdout_manifest=holdout_manifest(),
     )
     assert summary["status"] == "complete"
     assert summary["resolution_reviewers"] == 1
@@ -116,6 +133,20 @@ def test_resolution_cannot_cover_an_agreed_case():
         merge_independent_reviews(
             corpus(), reviews("reviewer-a"), reviews("reviewer-b"),
             [reviews("reviewer-c")[0]],
+            holdout_manifest=holdout_manifest(),
+        )
+
+
+def test_all_disagreements_require_one_distinct_third_reviewer():
+    second = reviews("reviewer-b", {0: "known_pattern", 2: "real_incident"})
+    resolution = [
+        reviews("reviewer-c", {0: "known_pattern"})[0],
+        reviews("reviewer-d", {2: "real_incident"})[2],
+    ]
+    with pytest.raises(ValueError, match="one third reviewer"):
+        merge_independent_reviews(
+            corpus(), reviews("reviewer-a"), second, resolution,
+            holdout_manifest=holdout_manifest(),
         )
 
 
@@ -123,6 +154,7 @@ def test_same_reviewer_cannot_supply_both_reviews():
     with pytest.raises(ValueError, match="different reviewers"):
         merge_independent_reviews(
             corpus(), reviews("same"), reviews("same"),
+            holdout_manifest=holdout_manifest(),
         )
 
 
@@ -138,7 +170,9 @@ def test_review_receipt_must_bind_to_frozen_signal_evidence():
         key: value for key, value in second[0].items() if key != "evidence_ref"
     })
     with pytest.raises(ValueError, match="frozen signal evidence"):
-        merge_independent_reviews(corpus(), first, second)
+        merge_independent_reviews(
+            corpus(), first, second, holdout_manifest=holdout_manifest(),
+        )
 
 
 def test_known_pattern_requires_documented_authority():
@@ -147,14 +181,19 @@ def test_known_pattern_requires_documented_authority():
     first[1]["source"] = "independent_human_review"
     first[1]["source_record_ref"] = None
     with pytest.raises(ValueError, match="known_pattern requires"):
-        merge_independent_reviews(corpus(), first, second)
+        merge_independent_reviews(
+            corpus(), first, second, holdout_manifest=holdout_manifest(),
+        )
 
 
 def test_review_receipt_evidence_digest_must_match_contents():
     first = reviews("reviewer-a")
     first[0]["rationale"] = "Changed after the receipt was signed."
     with pytest.raises(ValueError, match="evidence digest does not match"):
-        merge_independent_reviews(corpus(), first, reviews("reviewer-b"))
+        merge_independent_reviews(
+            corpus(), first, reviews("reviewer-b"),
+            holdout_manifest=holdout_manifest(),
+        )
 
 
 def test_review_receipt_timestamp_requires_timezone():
@@ -163,4 +202,30 @@ def test_review_receipt_timestamp_requires_timezone():
     receipt = {key: value for key, value in first[0].items() if key != "evidence_ref"}
     first[0]["evidence_ref"] = evidence_digest(receipt)
     with pytest.raises(ValueError, match="must include a timezone"):
-        merge_independent_reviews(corpus(), first, reviews("reviewer-b"))
+        merge_independent_reviews(
+            corpus(), first, reviews("reviewer-b"),
+            holdout_manifest=holdout_manifest(),
+        )
+
+
+def test_review_cannot_predate_frozen_holdout():
+    first = reviews("reviewer-a")
+    first[0]["reviewed_at"] = "2026-08-30T23:59:59Z"
+    first[0]["evidence_ref"] = evidence_digest({
+        key: value for key, value in first[0].items() if key != "evidence_ref"
+    })
+    with pytest.raises(ValueError, match="predates the frozen holdout"):
+        merge_independent_reviews(
+            corpus(), first, reviews("reviewer-b"),
+            holdout_manifest=holdout_manifest(),
+        )
+
+
+def test_adjudication_requires_exact_holdout_manifest():
+    manifest = holdout_manifest()
+    manifest["holdout_digest"] = "sha256:" + "f" * 64
+    with pytest.raises(ValueError, match="does not match"):
+        merge_independent_reviews(
+            corpus(), reviews("reviewer-a"), reviews("reviewer-b"),
+            holdout_manifest=manifest,
+        )

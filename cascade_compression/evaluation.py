@@ -288,6 +288,7 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
     holdout_digest = dataset.get("holdout_digest")
     adjudication_corpus_digest = adjudication.get("corpus_digest")
     review_evidence_digest = adjudication.get("review_evidence_digest")
+    holdout_manifest_digest = adjudication.get("holdout_manifest_digest")
     adjudication_summary_digest = adjudication.get("summary_digest")
     for label, digest in (
         ("holdout_digest", holdout_digest),
@@ -297,8 +298,27 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
             raise ValueError(f"{label} must be a SHA-256 digest")
     adjudication_provenance_bound = all(
         re.fullmatch(r"sha256:[0-9a-f]{64}", str(digest or ""))
-        for digest in (review_evidence_digest, adjudication_summary_digest)
+        for digest in (
+            review_evidence_digest,
+            holdout_manifest_digest,
+            adjudication_summary_digest,
+        )
     )
+    review_window = adjudication.get("review_window") or {}
+    try:
+        review_started = datetime.fromisoformat(
+            str(review_window.get("started_at") or "").replace("Z", "+00:00")
+        )
+        review_completed = datetime.fromisoformat(
+            str(review_window.get("completed_at") or "").replace("Z", "+00:00")
+        )
+        review_window_valid = (
+            review_started.tzinfo is not None
+            and review_completed.tzinfo is not None
+            and review_completed >= review_started
+        )
+    except ValueError:
+        review_window_valid = False
     corpus_binding = bool(
         computed_corpus_digest
         and computed_corpus_digest == holdout_digest
@@ -321,12 +341,13 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
         and int(adjudication.get("reviewers") or 0) >= 2
         and corpus_binding
         and adjudication_provenance_bound
+        and review_window_valid
         and not missing_run_fields
         and not invalid_run_fields
         and model_revisions_frozen
     )
     return {
-        "schema_version": "cascade.classification-evaluation.v1alpha2",
+        "schema_version": "cascade.classification-evaluation.v1alpha3",
         "dataset": {
             "name": str(dataset.get("name") or "unnamed"),
             "revision": str(dataset.get("revision") or "unversioned"),
@@ -343,6 +364,8 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
                     if adjudication_corpus_digest else None
                 ),
                 "review_evidence_digest": review_evidence_digest,
+                "holdout_manifest_digest": holdout_manifest_digest,
+                "review_window": review_window,
                 "summary_digest": adjudication_summary_digest,
             },
         },
@@ -356,6 +379,7 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
             "same_corpus": True,
             "corpus_binding": corpus_binding,
             "adjudication_provenance_bound": adjudication_provenance_bound,
+            "review_window_valid": review_window_valid,
             "computed_corpus_digest": computed_corpus_digest,
             "missing_run_fields": missing_run_fields,
             "invalid_run_fields": invalid_run_fields,

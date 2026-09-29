@@ -35,7 +35,7 @@ def freeze(rows=None, quotas=None, seed="private-seed"):
         stratification_basis="source family",
         source_window_start="2026-09-01T00:00:00Z",
         source_window_end="2026-09-01T01:00:00Z",
-        frozen_at="2026-09-01T00:00:00Z",
+        frozen_at="2026-09-01T02:00:00Z",
     )
 
 
@@ -130,6 +130,20 @@ def test_holdout_digest_binds_to_adjudication_summary():
 
     _, summary, unresolved = merge_independent_reviews(
         corpus, receipts("reviewer-a"), receipts("reviewer-b"),
+        holdout_manifest=manifest,
     )
     assert not unresolved
     assert summary["corpus_digest"] == manifest["holdout_digest"]
+    assert summary["holdout_manifest_digest"] == canonical_digest(manifest)
+
+
+def test_freeze_cannot_predate_observation_window():
+    with pytest.raises(ValueError, match="cannot predate"):
+        freeze_stratified_holdout(
+            candidates(), {"source-a": 3, "source-b": 3},
+            seed="seed", dataset_name="held-out", dataset_revision="v1",
+            stratification_basis="source family",
+            source_window_start="2026-09-01T00:00:00Z",
+            source_window_end="2026-09-01T01:00:00Z",
+            frozen_at="2026-09-01T00:30:00Z",
+        )

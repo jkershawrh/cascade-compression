@@ -13,8 +13,8 @@
     {"id": "cascade.memory-event", "version": "1.0.0", "stability": "stable", "schema": "schemas/memory-event.json"},
     {"id": "cascade.agent-promotion", "version": "1.0.0", "stability": "stable", "schema": "schemas/agent-promotion.json"},
     {"id": "cascade.value-evidence", "version": "1.0.0-alpha.1", "stability": "alpha", "schema": "schemas/value-evidence-claim.json"},
-    {"id": "cascade.classification-evaluation", "version": "1.0.0-alpha.2", "stability": "alpha", "schema": "schemas/classification-evaluation.json"},
-    {"id": "cascade.adjudication-summary", "version": "1.0.0-alpha.2", "stability": "alpha", "schema": "schemas/adjudication-summary.json"},
+    {"id": "cascade.classification-evaluation", "version": "1.0.0-alpha.3", "stability": "alpha", "schema": "schemas/classification-evaluation.json"},
+    {"id": "cascade.adjudication-summary", "version": "1.0.0-alpha.3", "stability": "alpha", "schema": "schemas/adjudication-summary.json"},
     {"id": "cascade.holdout-manifest", "version": "1.0.0-alpha.1", "stability": "alpha", "schema": "schemas/holdout-manifest.json"},
     {"id": "cascade.staging-manifest", "version": "1.0.0-alpha.5", "stability": "alpha", "schema": "schemas/staging-manifest.json"},
     {"id": "cascade.staging-evidence", "version": "1.0.0-alpha.1", "stability": "alpha", "schema": "schemas/staging-evidence.json"}

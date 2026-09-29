@@ -1,14 +1,24 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cascade-compression.org/contracts/cascade.adjudication-summary/1.0.0-alpha.2",
+  "$id": "https://cascade-compression.org/contracts/cascade.adjudication-summary/1.0.0-alpha.3",
   "title": "Cascade Adjudication Summary",
   "type": "object",
-  "required": ["schema_version", "status", "corpus_digest", "review_evidence_digest", "records", "adjudicated", "disagreements", "unresolved", "labels", "independent_reviewers", "resolution_reviewers", "contains_raw_records"],
+  "required": ["schema_version", "status", "corpus_digest", "holdout_manifest_digest", "review_evidence_digest", "review_window", "records", "adjudicated", "disagreements", "unresolved", "labels", "independent_reviewers", "resolution_reviewers", "contains_raw_records"],
   "properties": {
-    "schema_version": {"const": "cascade.adjudication-summary.v1alpha2"},
+    "schema_version": {"const": "cascade.adjudication-summary.v1alpha3"},
     "status": {"enum": ["complete", "incomplete"]},
     "corpus_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "holdout_manifest_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "review_evidence_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "review_window": {
+      "type": "object",
+      "required": ["started_at", "completed_at"],
+      "properties": {
+        "started_at": {"type": "string", "format": "date-time"},
+        "completed_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
     "records": {"type": "integer", "minimum": 1},
     "adjudicated": {"type": "integer", "minimum": 0},
     "disagreements": {"type": "integer", "minimum": 0},

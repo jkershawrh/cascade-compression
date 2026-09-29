@@ -34,7 +34,17 @@ def _index(records: Iterable[dict], label: str) -> Dict[str, dict]:
     return indexed
 
 
-def _validate_receipt(receipt: dict) -> None:
+def _parse_time(value: Any, label: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError(f"{label} has an invalid timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{label} timestamp must include a timezone")
+    return parsed
+
+
+def _validate_receipt(receipt: dict) -> datetime:
     classification = receipt.get("classification")
     actionability = receipt.get("actionability")
     if classification not in CASCADE_LABELS:
@@ -49,14 +59,7 @@ def _validate_receipt(receipt: dict) -> None:
         raise ValueError("review receipt is not independent of evaluated arms")
     if not receipt.get("reviewer_ref") or not receipt.get("reviewed_at"):
         raise ValueError("review receipt is missing reviewer or timestamp")
-    try:
-        reviewed_at = datetime.fromisoformat(
-            str(receipt["reviewed_at"]).replace("Z", "+00:00")
-        )
-    except ValueError as exc:
-        raise ValueError("review receipt has an invalid timestamp") from exc
-    if reviewed_at.tzinfo is None:
-        raise ValueError("review receipt timestamp must include a timezone")
+    reviewed_at = _parse_time(receipt["reviewed_at"], "review receipt")
     if receipt.get("source") not in {
         "independent_human_review", "authoritative_record",
     }:
@@ -82,6 +85,7 @@ def _validate_receipt(receipt: dict) -> None:
     }
     if _digest(evidence) != evidence_ref:
         raise ValueError("review receipt evidence digest does not match its contents")
+    return reviewed_at
 
 
 def merge_independent_reviews(
@@ -89,8 +93,13 @@ def merge_independent_reviews(
     first_reviews: List[dict],
     second_reviews: List[dict],
     resolution_reviews: Optional[List[dict]] = None,
+    *,
+    holdout_manifest: dict,
 ) -> Tuple[List[dict], dict, List[dict]]:
     """Return adjudicated corpus, sanitized summary, and unresolved private cases."""
+    if holdout_manifest.get("schema_version") != "cascade.holdout-manifest.v1alpha1":
+        raise ValueError("unsupported holdout manifest")
+    frozen_at = _parse_time(holdout_manifest.get("frozen_at"), "holdout frozen_at")
     cases = _index(corpus, "corpus")
     first = _index(first_reviews, "first review")
     second = _index(second_reviews, "second review")
@@ -99,8 +108,10 @@ def merge_independent_reviews(
     if set(first) != set(cases) or set(second) != set(cases):
         raise ValueError("each independent review must cover the exact corpus")
 
-    for receipt in [*first.values(), *second.values()]:
+    review_times = [
         _validate_receipt(receipt)
+        for receipt in [*first.values(), *second.values()]
+    ]
     first_reviewers = {item["reviewer_ref"] for item in first.values()}
     second_reviewers = {item["reviewer_ref"] for item in second.values()}
     if len(first_reviewers) != 1 or len(second_reviewers) != 1:
@@ -111,11 +122,16 @@ def merge_independent_reviews(
     resolutions = _index(resolution_reviews or [], "resolution review")
     if not set(resolutions) <= set(cases):
         raise ValueError("resolution review contains a case outside the corpus")
-    for receipt in resolutions.values():
-        _validate_receipt(receipt)
+    review_times.extend(
+        _validate_receipt(receipt) for receipt in resolutions.values()
+    )
+    if any(reviewed_at < frozen_at for reviewed_at in review_times):
+        raise ValueError("review receipt predates the frozen holdout")
     resolution_reviewers = {
         item["reviewer_ref"] for item in resolutions.values()
     }
+    if len(resolution_reviewers) > 1:
+        raise ValueError("all disagreement resolutions must use one third reviewer")
     if resolution_reviewers & (first_reviewers | second_reviewers):
         raise ValueError("resolution reviewer must be independent of both reviewers")
     disagreement_ids = {
@@ -190,16 +206,28 @@ def merge_independent_reviews(
             },
         })
 
+    corpus_digest = _digest([
+        {"case_id": case_id, "signal_sha256": first[case_id]["signal_sha256"]}
+        for case_id in sorted(cases)
+    ])
+    if corpus_digest != holdout_manifest.get("holdout_digest"):
+        raise ValueError("adjudication corpus does not match the holdout manifest")
+    if len(cases) != int(
+        (holdout_manifest.get("selection") or {}).get("selected_records") or 0
+    ):
+        raise ValueError("adjudication corpus size does not match the holdout manifest")
     summary = {
-        "schema_version": "cascade.adjudication-summary.v1alpha2",
+        "schema_version": "cascade.adjudication-summary.v1alpha3",
         "status": "complete" if not unresolved else "incomplete",
-        "corpus_digest": _digest([
-            {"case_id": case_id, "signal_sha256": first[case_id]["signal_sha256"]}
-            for case_id in sorted(cases)
-        ]),
+        "corpus_digest": corpus_digest,
+        "holdout_manifest_digest": _digest(holdout_manifest),
         "review_evidence_digest": _digest(sorted(
             review_evidence, key=lambda item: item["case_id"],
         )),
+        "review_window": {
+            "started_at": min(review_times).isoformat(),
+            "completed_at": max(review_times).isoformat(),
+        },
         "records": len(cases),
         "adjudicated": len(merged),
         "disagreements": disagreements,

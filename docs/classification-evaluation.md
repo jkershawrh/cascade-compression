@@ -31,7 +31,12 @@ The input format is `cascade.classification-input.v1alpha1`:
       "independent": true,
       "reviewers": 2,
       "corpus_digest": "sha256:FROZEN_CORPUS_DIGEST",
+      "holdout_manifest_digest": "sha256:HOLDOUT_MANIFEST_DIGEST",
       "review_evidence_digest": "sha256:PRIVATE_REVIEW_EVIDENCE_DIGEST",
+      "review_window": {
+        "started_at": "2026-08-30T00:00:00Z",
+        "completed_at": "2026-08-31T00:00:00Z"
+      },
       "summary_digest": "sha256:ADJUDICATION_SUMMARY_DIGEST"
     }
   },
@@ -63,7 +68,7 @@ The input format is `cascade.classification-input.v1alpha1`:
 }
 ```
 
-The `cascade.classification-evaluation.v1alpha2` output never includes record identifiers or signal
+The `cascade.classification-evaluation.v1alpha3` output never includes record identifiers or signal
 payloads. Its dataset digest binds the report to the set of opaque identifiers and adjudicated
 labels. Its computed corpus digest must also match both the frozen holdout manifest and adjudication
 summary. A report is marked `decision_grade` only when that binding succeeds, adjudication is
@@ -101,7 +106,8 @@ cascade-freeze-holdout \
 The quota set must cover every candidate stratum, and undersized strata fail closed. Signals that
 contain nested ground-truth or model-output fields are rejected instead of exposing them to
 reviewers. The manifest aliases stratum names and records the bounded source observation window,
-selection counts, and digests but no raw records. Keep the seed and blinded corpus private; still
+selection counts, and digests but no raw records. The freezer rejects a `frozen_at` timestamp that
+predates the end of the source observation window. Keep the seed and blinded corpus private; still
 review all free-text manifest metadata before publishing it.
 Stratification can ensure class coverage for balanced accuracy, but it changes prevalence; do not
 present overall accuracy on a balanced corpus as the natural production rate.
@@ -113,6 +119,7 @@ exports locally:
 ```bash
 cascade-adjudicate \
   --corpus private-blinded-corpus.jsonl \
+  --holdout-manifest holdout-manifest.json \
   --review reviewer-a-receipts.jsonl \
   --review reviewer-b-receipts.jsonl \
   --output-corpus private-adjudicated-corpus.jsonl \
@@ -124,17 +131,21 @@ The command fails closed with exit code 2 while any disagreement remains. A thir
 reviewer can review only that disagreement file; pass those receipts with `--resolution`. Review
 files must cover the exact corpus, use distinct reviewer references, declare independence from the
 evaluated arms, and bind their signal digest to the exact frozen signal object. The merged corpus
-and disagreement file remain private. The `cascade.adjudication-summary.v1alpha2` summary commits
-to the exact private receipt set with `review_evidence_digest`. Adjudication recomputes each
-receipt's evidence digest and requires a timezone-aware review timestamp, so edited or incomplete
-receipts fail closed. The summary contains only counts and digests and is suitable for sanitized
-evidence review. A `known_pattern` receipt must cite an authoritative source record; repetition
-alone cannot establish that label.
+and disagreement file remain private. All resolved disagreements must be completed by the same
+single third reviewer; the adjudicator rejects a mixture of additional reviewers. The
+`cascade.adjudication-summary.v1alpha3` summary commits
+to both the exact holdout manifest and the private receipt set. Adjudication recomputes each
+receipt's evidence digest, requires a timezone-aware review timestamp after the holdout was frozen,
+and rejects a corpus or record count that differs from the manifest. The sanitized summary includes
+only counts, digests, and the review time window. A `known_pattern` receipt must cite an
+authoritative source record; repetition alone cannot establish that label.
 
 After adjudication, run every arm over the exact corpus with the bounded-concurrency runner. It
 requires structured generative confidence, derives immutable revision digests from the backends
-that actually answered, writes a private prediction input without signal payloads, and emits the
-sanitized report:
+that actually answered, and invokes each backend exactly once per case. The hybrid policy is
+applied to those same generative and semantic observations rather than making a second,
+potentially nondeterministic request. The runner writes a private prediction input without signal
+payloads and emits the sanitized report:
 
 ```bash
 CASCADE_GENERATIVE_STRUCTURED=1 CASCADE_SC_ADDRESS=classifier.example:443 \

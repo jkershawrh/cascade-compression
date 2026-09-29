@@ -43,6 +43,11 @@ def document():
                 "reviewers": 2,
                 "corpus_digest": corpus_digest,
                 "review_evidence_digest": "sha256:" + "d" * 64,
+                "holdout_manifest_digest": "sha256:" + "f" * 64,
+                "review_window": {
+                    "started_at": "2026-08-31T00:00:00Z",
+                    "completed_at": "2026-08-31T01:00:00Z",
+                },
                 "summary_digest": "sha256:" + "e" * 64,
             },
         },
@@ -126,6 +131,17 @@ def test_incomplete_adjudication_cannot_claim_decision_grade():
     source["dataset"]["adjudication"]["independent"] = False
     report = evaluate_classifiers(source)
     assert report["evidence"]["status"] == "mechanics_only"
+
+
+def test_invalid_review_window_cannot_claim_decision_grade():
+    source = document()
+    source["dataset"]["adjudication"]["review_window"] = {
+        "started_at": "2026-09-01T01:00:00Z",
+        "completed_at": "2026-09-01T00:00:00Z",
+    }
+    report = evaluate_classifiers(source)
+    assert report["evidence"]["status"] == "mechanics_only"
+    assert report["evidence"]["review_window_valid"] is False
 
 
 def test_mismatched_holdout_digest_cannot_claim_decision_grade():

@@ -163,7 +163,9 @@ def freeze_stratified_holdout(
         raise ValueError("opaque case identifier collision")
 
     timestamp = frozen_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    _aware_timestamp(timestamp, "frozen_at")
+    frozen_time = _aware_timestamp(timestamp, "frozen_at")
+    if frozen_time < source_end:
+        raise ValueError("frozen_at cannot predate the source observation window end")
     selected_identity = sorted(
         ({"case_id": row["case_id"], "signal_sha256": row["signal_sha256"]}
          for row in blinded),
