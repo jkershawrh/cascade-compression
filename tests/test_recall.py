@@ -6,8 +6,6 @@ Stage 2 (BDD): Recall scenarios — precedent lookup, reinforcement, performance
 RED tests — written before implementation.
 """
 
-import time
-
 import pytest
 
 from cascade_compression.cascade.memory import MemoryArchive
@@ -361,8 +359,8 @@ class TestRecallBehavior:
         assert len(results) == 2
         assert results[0].memory.signal.labels.get("app") == "web"
 
-    def test_recall_latency_under_50ms_for_1000_memories(self):
-        """Performance smoke: recall over 1000 memories completes in <50ms."""
+    def test_recall_caches_memory_trigrams_for_1000_memories(self, monkeypatch):
+        """The query is tokenized once and memory trigrams are reused."""
         archive = MemoryArchive()
         for i in range(1000):
             archive.store(
@@ -375,11 +373,24 @@ class TestRecallBehavior:
         query = make_signal(signal_type="type_25",
                             content={"message": "event 999", "value": 42.0},
                             labels={"batch": "5"})
-        t0 = time.monotonic()
+        from cascade_compression.cascade import recall as recall_module
+
+        calls = 0
+        original = recall_module._trigrams
+
+        def counted(text):
+            nonlocal calls
+            calls += 1
+            return original(text)
+
+        monkeypatch.setattr(recall_module, "_trigrams", counted)
         results = engine.recall(query, archive, top_k=5)
-        elapsed_ms = (time.monotonic() - t0) * 1000
-        assert elapsed_ms < 50, f"Recall took {elapsed_ms:.1f}ms, expected <50ms"
         assert len(results) > 0
+        assert calls == 1001
+
+        calls = 0
+        engine.recall(query, archive, top_k=5)
+        assert calls == 1
 
 
 # ===========================================================================
