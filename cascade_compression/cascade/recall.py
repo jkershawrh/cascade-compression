@@ -52,6 +52,10 @@ def _trigrams(text: str) -> set:
 def text_trigram_similarity(a: str, b: str) -> float:
     tri_a = _trigrams(a.lower())
     tri_b = _trigrams(b.lower())
+    return _trigram_set_similarity(tri_a, tri_b)
+
+
+def _trigram_set_similarity(tri_a: set, tri_b: set) -> float:
     if not tri_a or not tri_b:
         return 0.0
     intersection = len(tri_a & tri_b)
@@ -82,6 +86,7 @@ class RecallEngine:
         self.w_labels = w_labels
         self.w_features = w_features
         self.w_text = w_text
+        self._trigram_cache: Dict[str, set] = {}
 
     def recall(self, signal: Signal, archive: MemoryArchive,
                top_k: int = 5, min_score: float = 0.1,
@@ -91,6 +96,7 @@ class RecallEngine:
             return []
 
         query_message = _extract_message(signal)
+        query_trigrams = _trigrams(query_message.lower())
         query_features = _extract_features(signal)
 
         results = []
@@ -98,8 +104,13 @@ class RecallEngine:
             tm = type_match(signal.signal_type, memory.signal.signal_type)
             lj = label_jaccard(signal.labels, memory.signal.labels)
             fc = content_feature_cosine(query_features, memory.feature_vector)
-            ts = text_trigram_similarity(query_message,
-                                        _extract_message(memory.signal))
+            memory_trigrams = self._trigram_cache.get(memory.memory_id)
+            if memory_trigrams is None:
+                memory_trigrams = _trigrams(
+                    _extract_message(memory.signal).lower()
+                )
+                self._trigram_cache[memory.memory_id] = memory_trigrams
+            ts = _trigram_set_similarity(query_trigrams, memory_trigrams)
 
             raw_score = (self.w_type * tm + self.w_labels * lj +
                          self.w_features * fc + self.w_text * ts)

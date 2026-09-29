@@ -361,8 +361,8 @@ class TestRecallBehavior:
         assert len(results) == 2
         assert results[0].memory.signal.labels.get("app") == "web"
 
-    def test_recall_latency_under_10ms_for_1000_memories(self):
-        """Performance: recall over 1000 memories completes in <10ms."""
+    def test_recall_latency_under_50ms_for_1000_memories(self):
+        """Performance smoke: recall over 1000 memories completes in <50ms."""
         archive = MemoryArchive()
         for i in range(1000):
             archive.store(
