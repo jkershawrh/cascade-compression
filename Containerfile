@@ -1,6 +1,9 @@
-FROM registry.access.redhat.com/ubi9/python-311:latest
+FROM registry.access.redhat.com/ubi9/python-311@sha256:a0bdb55576fc5b8d6704279307817828ef027e1065533ceba133fe9516003a6c AS builder
 
 WORKDIR /opt/app-root/src
+
+COPY requirements-build.lock ./
+RUN pip install --no-cache-dir --require-hashes -r requirements-build.lock
 
 COPY pyproject.toml README.md LICENSE ./
 COPY cascade_compression/ cascade_compression/
@@ -9,7 +12,18 @@ COPY data/ data/
 COPY frontend/ frontend/
 COPY contracts/ contracts/
 
-RUN pip install --no-cache-dir .
+RUN pip wheel --no-cache-dir --no-deps --no-build-isolation \
+    --wheel-dir /tmp/wheels .
+
+FROM registry.access.redhat.com/ubi9/python-311@sha256:a0bdb55576fc5b8d6704279307817828ef027e1065533ceba133fe9516003a6c
+
+WORKDIR /opt/app-root/src
+
+COPY requirements-container.lock ./
+RUN pip install --no-cache-dir --require-hashes -r requirements-container.lock
+
+COPY --chown=1001:0 --from=builder /tmp/wheels/*.whl /tmp/wheels/
+RUN pip install --no-cache-dir --no-deps /tmp/wheels/*.whl
 
 EXPOSE 8090
 

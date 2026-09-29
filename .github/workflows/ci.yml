@@ -31,6 +31,14 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.11"
+      - name: Verify container dependency lock
+        run: |
+          uv export --frozen --no-dev --no-emit-project --no-header \
+            --format requirements-txt --output-file /tmp/requirements-container.lock
+          diff -u requirements-container.lock /tmp/requirements-container.lock
+          uv export --frozen --only-group build --no-emit-project --no-header \
+            --format requirements-txt --output-file /tmp/requirements-build.lock
+          diff -u requirements-build.lock /tmp/requirements-build.lock
       - run: uv build
       - run: |
           python -m venv .wheel-venv

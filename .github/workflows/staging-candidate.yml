@@ -27,6 +27,14 @@ jobs:
             exit 1
           fi
       - run: uv sync --extra dev --locked
+      - name: Verify container dependency lock
+        run: |
+          uv export --frozen --no-dev --no-emit-project --no-header \
+            --format requirements-txt --output-file /tmp/requirements-container.lock
+          diff -u requirements-container.lock /tmp/requirements-container.lock
+          uv export --frozen --only-group build --no-emit-project --no-header \
+            --format requirements-txt --output-file /tmp/requirements-build.lock
+          diff -u requirements-build.lock /tmp/requirements-build.lock
       - run: make test-all PYTHON="uv run python"
       - run: uv build
       - name: Smoke-test installed wheel

@@ -49,6 +49,13 @@ semantic-classifier = [
 ]
 finance = ["psycopg2-binary>=2.9"]
 
+[dependency-groups]
+build = [
+    "setuptools==82.0.1; python_version < '3.10'",
+    "setuptools==84.0.0; python_version >= '3.10'",
+    "wheel==0.48.0",
+]
+
 [project.urls]
 Homepage = "https://github.com/jkershawrh/cascade-compression"
 Documentation = "https://github.com/jkershawrh/cascade-compression#readme"

@@ -29,6 +29,12 @@ publishes the container to `ghcr.io/jkershawrh/cascade-compression`, records bui
 GitHub artifact attestations, and creates a GitHub release. PyPI publishing is intentionally disabled
 until a project-owned trusted publisher is configured.
 
+The container base is pinned to a multi-architecture manifest digest, and
+`requirements-container.lock` and `requirements-build.lock` are hash-locked exports of the
+production and build dependencies in `uv.lock`. A multi-stage build keeps build tooling out of the
+runtime image. When dependencies change, regenerate both locks with the commands encoded in CI;
+candidate and release workflows fail if either export is stale.
+
 Never tag an RC merely because unit tests are green. A candidate without a complete independently
 adjudicated corpus, immutable runtime evidence, and healthy audit delivery remains an engineering
 snapshot.

@@ -29,3 +29,27 @@ def test_first_release_policy_files_exist():
         "SUPPORT.md",
     }
     assert all((ROOT / name).is_file() for name in required)
+
+
+def test_container_inputs_are_immutable_and_hash_locked():
+    containerfile = (ROOT / "Containerfile").read_text()
+    bases = re.findall(r"^FROM\s+(\S+)", containerfile, re.MULTILINE)
+    assert len(bases) == 2
+    assert len(set(bases)) == 1
+    assert re.fullmatch(r"[^:]+(?:/[^:]+)+@sha256:[0-9a-f]{64}", bases[0])
+    assert ":latest" not in containerfile
+    for filename in ("requirements-build.lock", "requirements-container.lock"):
+        lock = (ROOT / filename).read_text()
+        assert "--hash=sha256:" in lock
+
+
+def test_workflow_actions_and_runner_are_pinned():
+    workflows = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
+    assert workflows
+    for workflow in workflows:
+        text = workflow.read_text()
+        assert "runs-on: ubuntu-latest" not in text
+        assert "runs-on: ubuntu-24.04" in text
+        action_refs = re.findall(r"uses:\s+[^\s@]+@([^\s#]+)", text)
+        assert action_refs
+        assert all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in action_refs)

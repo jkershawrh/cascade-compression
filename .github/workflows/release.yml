@@ -30,6 +30,14 @@ jobs:
           assert tag == f"v{version}", f"tag {tag!r} does not match package {version!r}"
           PY
       - run: uv sync --extra dev --locked
+      - name: Verify container dependency lock
+        run: |
+          uv export --frozen --no-dev --no-emit-project --no-header \
+            --format requirements-txt --output-file /tmp/requirements-container.lock
+          diff -u requirements-container.lock /tmp/requirements-container.lock
+          uv export --frozen --only-group build --no-emit-project --no-header \
+            --format requirements-txt --output-file /tmp/requirements-build.lock
+          diff -u requirements-build.lock /tmp/requirements-build.lock
       - run: uv run pytest -q
       - run: uv build
       - name: Smoke-test installed wheel
