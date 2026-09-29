@@ -7,13 +7,18 @@ All notable changes are documented here. This project follows Semantic Versionin
 - Add deterministic model-blind holdout freezing, two-reviewer adjudication, third-reviewer
   disagreement resolution, canonical signal binding, and a documented label rubric.
 - Add same-corpus generative/semantic/hybrid evaluation with per-label metrics, dangerous-miss
-  accounting, confidence coverage, calibration, and fail-closed decision-grade evidence.
+  accounting, confidence coverage, calibration, cryptographically bound independent-review
+  receipts, and fail-closed decision-grade evidence.
 - Add a fixed `oss-rc-a-v1` staging gate that binds classification, CPU runtime, audit delivery,
   ledger capacity, clean-clone/package/container checks, SBOM, provenance, and CI to one run.
 - Add durable bounded SQLite spools for decision, promotion, and memory audit delivery with restart
   recovery, retry/backoff, byte limits, and observable loss/failure counters.
 - Add a manual pre-release candidate workflow for immutable multi-architecture images with SBOM and
-  provenance, allowing soak evidence before a release tag is created.
+  provenance plus attested wheel/source/package-SBOM artifacts, allowing soak evidence before a
+  release tag is created.
+- Require non-destructive immutable-ledger outbox recovery evidence: idempotent relay, append-only
+  archival, no deletion of undelivered work, drained state, an in-window relay success, and a recent
+  recovery drill.
 - Add synthetic mixed-route and recall-scaling runtime benchmarks with correctness oracles and
   verified CPU-allocation reporting.
 - Add opt-in advisory triage and verified exact-repeat evaluation profiles.
