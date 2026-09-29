@@ -133,7 +133,9 @@ The command fails closed with exit code 2 while any disagreement remains. A thir
 reviewer can review only that disagreement file; pass those receipts with `--resolution`. Review
 files must cover the exact corpus, use distinct reviewer references, declare independence from the
 evaluated arms, conform to the published `cascade.review-receipt.v1alpha1` contract, and bind their
-signal digest to the exact frozen signal object. The merged corpus
+signal digest to the exact frozen signal object. The runtime enforces the schema's closed field set;
+undeclared fields such as model predictions are rejected even when included in a correctly hashed
+receipt. The merged corpus
 and disagreement file remain private. All resolved disagreements must be completed by the same
 single third reviewer; the adjudicator rejects a mixture of additional reviewers. The
 `cascade.adjudication-summary.v1alpha3` summary commits

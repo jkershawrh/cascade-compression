@@ -13,6 +13,12 @@ from .classifier import CASCADE_LABELS
 
 IMPORTANT = frozenset({"needs_attention", "real_incident"})
 REVIEW_FIELDS = ("actionability", "classification", "expected_memory")
+RECEIPT_FIELDS = frozenset({
+    "schema_version", "case_id", "signal_sha256", "actionability",
+    "classification", "expected_memory", "source", "source_record_ref",
+    "rationale", "reviewer_ref", "reviewed_at",
+    "independent_of_evaluated_arms", "evidence_ref",
+})
 
 
 def _digest(value: Any) -> str:
@@ -45,8 +51,37 @@ def _parse_time(value: Any, label: str) -> datetime:
 
 
 def _validate_receipt(receipt: dict) -> datetime:
+    if not isinstance(receipt, dict):
+        raise ValueError("review receipt must be an object")
     if receipt.get("schema_version") != "cascade.review-receipt.v1alpha1":
         raise ValueError("review receipt has an unsupported schema version")
+    missing = RECEIPT_FIELDS - set(receipt)
+    unexpected = set(receipt) - RECEIPT_FIELDS
+    if missing:
+        raise ValueError(
+            "review receipt is missing required fields: "
+            + ", ".join(sorted(missing))
+        )
+    if unexpected:
+        raise ValueError(
+            "review receipt contains undeclared fields: "
+            + ", ".join(sorted(unexpected))
+        )
+    if not isinstance(receipt["case_id"], str) or not receipt["case_id"].strip():
+        raise ValueError("review receipt requires a string case_id")
+    if (
+        not isinstance(receipt["reviewer_ref"], str)
+        or not receipt["reviewer_ref"].strip()
+    ):
+        raise ValueError("review receipt requires a string reviewer_ref")
+    if not isinstance(receipt["reviewed_at"], str):
+        raise ValueError("review receipt requires a string reviewed_at")
+    if not isinstance(receipt["rationale"], str):
+        raise ValueError("review receipt requires a string rationale")
+    if receipt["source_record_ref"] is not None and not isinstance(
+        receipt["source_record_ref"], str
+    ):
+        raise ValueError("review receipt source_record_ref must be a string or null")
     classification = receipt.get("classification")
     actionability = receipt.get("actionability")
     if classification not in CASCADE_LABELS:
@@ -59,8 +94,6 @@ def _validate_receipt(receipt: dict) -> datetime:
         raise ValueError("review receipt requires boolean expected_memory")
     if receipt.get("independent_of_evaluated_arms") is not True:
         raise ValueError("review receipt is not independent of evaluated arms")
-    if not receipt.get("reviewer_ref") or not receipt.get("reviewed_at"):
-        raise ValueError("review receipt is missing reviewer or timestamp")
     reviewed_at = _parse_time(receipt["reviewed_at"], "review receipt")
     if receipt.get("source") not in {
         "independent_human_review", "authoritative_record",
@@ -74,7 +107,7 @@ def _validate_receipt(receipt: dict) -> datetime:
         "source"
     ) != "authoritative_record":
         raise ValueError("known_pattern requires an authoritative source record")
-    if not str(receipt.get("rationale") or "").strip():
+    if not receipt["rationale"].strip():
         raise ValueError("review receipt requires a rationale")
     signal_digest = str(receipt.get("signal_sha256") or "")
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", signal_digest):
@@ -103,6 +136,10 @@ def merge_independent_reviews(
         raise ValueError("unsupported holdout manifest")
     frozen_at = _parse_time(holdout_manifest.get("frozen_at"), "holdout frozen_at")
     cases = _index(corpus, "corpus")
+    review_times = [
+        _validate_receipt(receipt)
+        for receipt in [*first_reviews, *second_reviews]
+    ]
     first = _index(first_reviews, "first review")
     second = _index(second_reviews, "second review")
     if not cases:
@@ -110,10 +147,6 @@ def merge_independent_reviews(
     if set(first) != set(cases) or set(second) != set(cases):
         raise ValueError("each independent review must cover the exact corpus")
 
-    review_times = [
-        _validate_receipt(receipt)
-        for receipt in [*first.values(), *second.values()]
-    ]
     first_reviewers = {item["reviewer_ref"] for item in first.values()}
     second_reviewers = {item["reviewer_ref"] for item in second.values()}
     if len(first_reviewers) != 1 or len(second_reviewers) != 1:
@@ -121,12 +154,11 @@ def merge_independent_reviews(
     if first_reviewers == second_reviewers:
         raise ValueError("independent review files must use different reviewers")
 
-    resolutions = _index(resolution_reviews or [], "resolution review")
+    raw_resolutions = resolution_reviews or []
+    review_times.extend(_validate_receipt(receipt) for receipt in raw_resolutions)
+    resolutions = _index(raw_resolutions, "resolution review")
     if not set(resolutions) <= set(cases):
         raise ValueError("resolution review contains a case outside the corpus")
-    review_times.extend(
-        _validate_receipt(receipt) for receipt in resolutions.values()
-    )
     if any(reviewed_at < frozen_at for reviewed_at in review_times):
         raise ValueError("review receipt predates the frozen holdout")
     resolution_reviewers = {

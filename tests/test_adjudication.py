@@ -215,6 +215,42 @@ def test_review_receipt_requires_versioned_contract():
         )
 
 
+def test_review_receipt_rejects_undeclared_model_output():
+    first = reviews("reviewer-a")
+    first[0]["model_prediction"] = {"label": "routine_noise", "confidence": 0.99}
+    first[0]["evidence_ref"] = evidence_digest({
+        key: value for key, value in first[0].items() if key != "evidence_ref"
+    })
+    with pytest.raises(ValueError, match="undeclared fields: model_prediction"):
+        merge_independent_reviews(
+            corpus(), first, reviews("reviewer-b"),
+            holdout_manifest=holdout_manifest(),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("case_id", 7, "string case_id"),
+        ("reviewer_ref", "   ", "string reviewer_ref"),
+        ("reviewed_at", 1_788_134_400, "string reviewed_at"),
+        ("rationale", {"text": "not a string"}, "string rationale"),
+        ("source_record_ref", 42, "string or null"),
+    ],
+)
+def test_review_receipt_enforces_published_field_types(field, value, message):
+    first = reviews("reviewer-a")
+    first[0][field] = value
+    first[0]["evidence_ref"] = evidence_digest({
+        key: item for key, item in first[0].items() if key != "evidence_ref"
+    })
+    with pytest.raises(ValueError, match=message):
+        merge_independent_reviews(
+            corpus(), first, reviews("reviewer-b"),
+            holdout_manifest=holdout_manifest(),
+        )
+
+
 def test_review_receipt_timestamp_requires_timezone():
     first = reviews("reviewer-a")
     first[0]["reviewed_at"] = "2026-09-01T00:00:00"
