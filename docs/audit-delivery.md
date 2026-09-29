@@ -13,6 +13,7 @@ locations. The spools:
 - acknowledges records only after the ledger accepts the batch;
 - survives process and pod restarts;
 - retries failures with bounded exponential backoff;
+- keeps at most one live retry timer per spool and cancels retry work during graceful shutdown;
 - has configurable row and serialized-payload bounds (`CASCADE_LEDGER_RECEIPT_PENDING`,
   `CASCADE_LEDGER_RECEIPT_BYTES`, `CASCADE_LEDGER_MEMORY_PENDING`, and
   `CASCADE_LEDGER_MEMORY_BYTES`);
@@ -29,7 +30,10 @@ The `/stats` response exposes those measurements independently as `ledger_receip
 policy, cumulative failures, consecutive failures, rejected/dropped events, successful writes or
 batches, and last successful delivery.
 Capacity rejections are counted transactionally in each SQLite spool and survive process restarts;
-the governed staging gate requires those counters in both audit snapshots with no increase.
+the governed staging gate requires those counters in both audit snapshots with no increase. It
+also recomputes row and serialized-payload utilization from their raw counters and fails closed if
+either spool is at or above 80% in either snapshot, if a capacity field is missing, or if a
+reported utilization is inconsistent with its counters.
 Alert at minimum on:
 
 - durability other than `sqlite` in governed staging;

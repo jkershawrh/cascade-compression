@@ -49,6 +49,7 @@ OSS_RC_RUNTIME_PROFILE = {
 
 OUTBOX_POLICY = "immutable-relay-and-archive-v1"
 MAX_RECOVERY_DRILL_AGE_SECONDS = 90 * 24 * 60 * 60
+AUDIT_SPOOL_ALERT_FRACTION = 0.80
 
 
 def _digest(document: Dict[str, Any]) -> str:
@@ -112,6 +113,48 @@ def _bounded_number(value: Any, minimum: float, maximum: float) -> bool:
     except (TypeError, ValueError):
         return False
     return math.isfinite(numeric) and minimum <= numeric <= maximum
+
+
+def _audit_spool_capacity(snapshot: dict, prefix: str) -> tuple[bool, dict]:
+    """Validate both row and payload-byte bounds from one /stats snapshot."""
+    try:
+        pending = int(snapshot[f"{prefix}_pending"])
+        pending_max = int(snapshot[f"{prefix}_pending_max"])
+        payload_bytes = int(snapshot[f"{prefix}_payload_bytes"])
+        bytes_max = int(snapshot[f"{prefix}_bytes_max"])
+        reported_rows = float(snapshot[f"{prefix}_utilization"])
+        reported_bytes = float(snapshot[f"{prefix}_byte_utilization"])
+    except (KeyError, TypeError, ValueError):
+        return False, {"measurements_present": False}
+
+    computed_rows = pending / pending_max if pending_max > 0 else math.inf
+    computed_bytes = payload_bytes / bytes_max if bytes_max > 0 else math.inf
+    measurements_valid = (
+        pending >= 0
+        and pending_max > 0
+        and payload_bytes >= 0
+        and bytes_max > 0
+        and pending <= pending_max
+        and payload_bytes <= bytes_max
+        and math.isfinite(reported_rows)
+        and math.isfinite(reported_bytes)
+        and abs(reported_rows - computed_rows) <= 0.0001
+        and abs(reported_bytes - computed_bytes) <= 0.0001
+    )
+    healthy = (
+        measurements_valid
+        and computed_rows < AUDIT_SPOOL_ALERT_FRACTION
+        and computed_bytes < AUDIT_SPOOL_ALERT_FRACTION
+    )
+    return healthy, {
+        "measurements_present": True,
+        "pending": pending,
+        "pending_max": pending_max,
+        "row_utilization": round(computed_rows, 4),
+        "payload_bytes": payload_bytes,
+        "bytes_max": bytes_max,
+        "byte_utilization": round(computed_bytes, 4),
+    }
 
 
 def build_staging_evidence(
@@ -438,6 +481,18 @@ def build_staging_evidence(
         and durable_loss_counters_present
         and all(delta == 0 for delta in drop_deltas.values())
     )
+    spool_capacity = {}
+    spool_capacity_healthy = True
+    for snapshot_name, snapshot in (
+        ("before", stats_before), ("after", stats_after),
+    ):
+        for queue_name, prefix in (
+            ("receipt", "ledger_receipt"),
+            ("memory", "ledger_memory"),
+        ):
+            healthy, evidence = _audit_spool_capacity(snapshot, prefix)
+            spool_capacity[f"{queue_name}_{snapshot_name}"] = evidence
+            spool_capacity_healthy = spool_capacity_healthy and healthy
     capacity_healthy = (
         ledger.get("capacity_measured") is True
         and 0 <= float(ledger.get("used_fraction", 2))
@@ -626,6 +681,10 @@ def build_staging_evidence(
                 "ledger_memory_overflow_policy"),
             "receipt_pending": stats_after.get("ledger_receipt_pending"),
             "memory_pending": stats_after.get("ledger_memory_pending"),
+        }),
+        _gate("cascade_spool_capacity_healthy", spool_capacity_healthy, {
+            "alert_fraction": AUDIT_SPOOL_ALERT_FRACTION,
+            "snapshots": spool_capacity,
         }),
         _gate("ledger_capacity_healthy", capacity_healthy, {
             "used_fraction": ledger.get("used_fraction"),

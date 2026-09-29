@@ -101,6 +101,8 @@ async def lifespan(app: FastAPI):
 
     log.info("Cascade compression ready (domain=%s)", domain)
     yield
+    if _bridge:
+        _bridge.close()
     if _search_engine:
         _search_engine.close()
 

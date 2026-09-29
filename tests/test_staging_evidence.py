@@ -208,6 +208,16 @@ def inputs():
         "ledger_memory_pending": 0,
         "ledger_receipt_consecutive_failures": 0,
         "ledger_memory_consecutive_failures": 0,
+        "ledger_receipt_pending_max": 100000,
+        "ledger_receipt_utilization": 0.0,
+        "ledger_receipt_payload_bytes": 0,
+        "ledger_receipt_bytes_max": 536870912,
+        "ledger_receipt_byte_utilization": 0.0,
+        "ledger_memory_pending_max": 50000,
+        "ledger_memory_utilization": 0.0,
+        "ledger_memory_payload_bytes": 0,
+        "ledger_memory_bytes_max": 536870912,
+        "ledger_memory_byte_utilization": 0.0,
     }
     return manifest, classification, runtime, dict(stats), dict(stats)
 
@@ -266,6 +276,50 @@ def test_audit_spools_must_be_durable_for_entire_window():
         manifest, classification, runtime, before, after,
     )
     assert "audit_delivery_healthy" in report["failed_gates"]
+
+
+def test_cascade_spool_near_row_capacity_blocks_staging_success():
+    manifest, classification, runtime, before, after = inputs()
+    before.update({
+        "ledger_receipt_pending": 80,
+        "ledger_receipt_pending_max": 100,
+        "ledger_receipt_utilization": 0.8,
+    })
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "cascade_spool_capacity_healthy" in report["failed_gates"]
+
+
+def test_cascade_spool_near_byte_capacity_blocks_staging_success():
+    manifest, classification, runtime, before, after = inputs()
+    before.update({
+        "ledger_memory_payload_bytes": 800,
+        "ledger_memory_bytes_max": 1000,
+        "ledger_memory_byte_utilization": 0.8,
+    })
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "cascade_spool_capacity_healthy" in report["failed_gates"]
+
+
+def test_missing_cascade_spool_capacity_measurement_fails_closed():
+    manifest, classification, runtime, before, after = inputs()
+    before.pop("ledger_receipt_bytes_max")
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "cascade_spool_capacity_healthy" in report["failed_gates"]
+
+
+def test_inconsistent_cascade_spool_utilization_fails_closed():
+    manifest, classification, runtime, before, after = inputs()
+    before["ledger_memory_utilization"] = 0.5
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "cascade_spool_capacity_healthy" in report["failed_gates"]
 
 
 def test_classifier_agreement_cannot_replace_decision_grade_truth():

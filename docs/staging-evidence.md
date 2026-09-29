@@ -44,7 +44,8 @@ The command returns zero only for `staging_success`. It requires:
   latency, mixed route oracles, llm-d-sc cache-hit and unique-miss overhead at serial and parallel
   load, and exact-precedent recall at 1K and 10K memories;
 - durable, drained audit queues using `preserve_queued_reject_new`, with persistent rejection
-  counters present and no new rejections or drops;
+  counters present, no new rejections or drops, and both row and serialized-payload utilization
+  below 80% in the before and after snapshots;
 - ledger capacity below its declared alert threshold;
 - a healthy, drained ledger-owned outbox with an explicit lifecycle policy;
 - clean-clone completion within 15 minutes;

@@ -576,6 +576,59 @@ class TestLLMBackpressure:
         assert stats["ledger_receipts_written"] == 1
         assert stats["ledger_receipt_last_success"]
 
+    def test_receipt_retry_has_at_most_one_live_timer(
+        self, monkeypatch, tmp_path,
+    ):
+        monkeypatch.setenv("CASCADE_STATE_FILE", str(tmp_path / "state.json"))
+        bridge = CascadeBridge()
+        bridge._ledger_receipt_store.enqueue([{"event": "queued"}])
+        timer = MagicMock()
+        timer.is_alive.return_value = True
+        with patch("cascade_compression.bridge.threading.Timer", return_value=timer) as make:
+            bridge._schedule_ledger_receipt_retry()
+            bridge._schedule_ledger_receipt_retry()
+
+        make.assert_called_once()
+        timer.start.assert_called_once()
+        bridge.close()
+
+    def test_memory_retry_has_at_most_one_live_timer(
+        self, monkeypatch, tmp_path,
+    ):
+        monkeypatch.setenv("CASCADE_STATE_FILE", str(tmp_path / "state.json"))
+        bridge = CascadeBridge()
+        bridge._ledger_memory_store.enqueue([{"event": "queued"}])
+        timer = MagicMock()
+        timer.is_alive.return_value = True
+        with patch("cascade_compression.bridge.threading.Timer", return_value=timer) as make:
+            bridge._schedule_memory_ledger_retry()
+            bridge._schedule_memory_ledger_retry()
+
+        make.assert_called_once()
+        timer.start.assert_called_once()
+        bridge.close()
+
+    def test_close_cancels_retries_and_preserves_durable_work(
+        self, monkeypatch, tmp_path,
+    ):
+        monkeypatch.setenv("CASCADE_STATE_FILE", str(tmp_path / "state.json"))
+        bridge = CascadeBridge()
+        bridge._ledger_receipt_store.enqueue([{"event": "receipt"}])
+        bridge._ledger_memory_store.enqueue([{"event": "memory"}])
+        receipt_timer = MagicMock()
+        memory_timer = MagicMock()
+        bridge._ledger_receipt_retry_timer = receipt_timer
+        bridge._ledger_memory_retry_timer = memory_timer
+
+        bridge.close()
+        bridge.close()
+
+        assert bridge.enabled is False
+        receipt_timer.cancel.assert_called_once()
+        memory_timer.cancel.assert_called_once()
+        assert bridge._ledger_receipt_store.count() == 1
+        assert bridge._ledger_memory_store.count() == 1
+
     def test_process_persists_decision_receipt_before_delivery(
         self, monkeypatch, tmp_path,
     ):

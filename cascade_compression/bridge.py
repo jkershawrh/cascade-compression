@@ -103,6 +103,7 @@ class CascadeBridge:
         ledger_token: str = "",
     ):
         self.domain = domain
+        self._closed = False
         self._llm_url = llm_url or os.getenv("CASCADE_LLM_URL", os.getenv("LITELLM_API_BASE", ""))
         self._llm_key = llm_key or os.getenv("CASCADE_LLM_KEY", os.getenv("LITELLM_API_KEY", ""))
         self._llm_model = llm_model or os.getenv("CASCADE_LLM_MODEL", "")
@@ -1322,29 +1323,46 @@ class CascadeBridge:
         return self._ledger_receipt_store.count() if self._ledger_receipt_store else 0
 
     def _start_ledger_receipt_drain(self):
-        if not self._ledger_receipt_store:
+        if self._closed or not self._ledger_receipt_store:
             return
         with self._ledger_receipt_lock:
             if (
-                self._ledger_receipt_flush_running
+                self._closed
+                or self._ledger_receipt_flush_running
                 or not self._ledger_receipt_pending_count()
             ):
                 return
             self._ledger_receipt_flush_running = True
-        self._ledger_executor.submit(self._drain_ledger_receipt_queue)
+        try:
+            self._ledger_executor.submit(self._drain_ledger_receipt_queue)
+        except RuntimeError:
+            with self._ledger_receipt_lock:
+                self._ledger_receipt_flush_running = False
 
     def _schedule_ledger_receipt_retry(self):
-        if not self._ledger_receipt_store or not self._ledger_receipt_pending_count():
-            return
-        delay = min(
-            self._ledger_memory_retry_max,
-            self._ledger_memory_retry_initial
-            * (2 ** max(0, self._ledger_receipt_consecutive_failures - 1)),
-        )
-        timer = threading.Timer(delay, self._start_ledger_receipt_drain)
-        timer.daemon = True
-        self._ledger_receipt_retry_timer = timer
+        with self._ledger_receipt_lock:
+            existing = self._ledger_receipt_retry_timer
+            if (
+                self._closed
+                or not self._ledger_receipt_store
+                or not self._ledger_receipt_pending_count()
+                or (existing is not None and existing.is_alive())
+            ):
+                return
+            delay = min(
+                self._ledger_memory_retry_max,
+                self._ledger_memory_retry_initial
+                * (2 ** max(0, self._ledger_receipt_consecutive_failures - 1)),
+            )
+            timer = threading.Timer(delay, self._retry_ledger_receipts)
+            timer.daemon = True
+            self._ledger_receipt_retry_timer = timer
         timer.start()
+
+    def _retry_ledger_receipts(self):
+        with self._ledger_receipt_lock:
+            self._ledger_receipt_retry_timer = None
+        self._start_ledger_receipt_drain()
 
     def _drain_ledger_receipt_queue(self):
         try:
@@ -1449,23 +1467,43 @@ class CascadeBridge:
 
     def _start_memory_ledger_drain(self):
         with self._ledger_memory_lock:
-            if self._ledger_memory_flush_running or not self._ledger_memory_pending_count():
+            if (
+                self._closed
+                or self._ledger_memory_flush_running
+                or not self._ledger_memory_pending_count()
+            ):
                 return
             self._ledger_memory_flush_running = True
-        self._ledger_memory_executor.submit(self._drain_memory_ledger_queue)
+        try:
+            self._ledger_memory_executor.submit(self._drain_memory_ledger_queue)
+        except RuntimeError:
+            with self._ledger_memory_lock:
+                self._ledger_memory_flush_running = False
 
     def _schedule_memory_ledger_retry(self):
-        if not self._ledger_memory_store or not self._ledger_memory_pending_count():
-            return
-        delay = min(
-            self._ledger_memory_retry_max,
-            self._ledger_memory_retry_initial
-            * (2 ** max(0, self._ledger_memory_consecutive_failures - 1)),
-        )
-        timer = threading.Timer(delay, self._start_memory_ledger_drain)
-        timer.daemon = True
-        self._ledger_memory_retry_timer = timer
+        with self._ledger_memory_lock:
+            existing = self._ledger_memory_retry_timer
+            if (
+                self._closed
+                or not self._ledger_memory_store
+                or not self._ledger_memory_pending_count()
+                or (existing is not None and existing.is_alive())
+            ):
+                return
+            delay = min(
+                self._ledger_memory_retry_max,
+                self._ledger_memory_retry_initial
+                * (2 ** max(0, self._ledger_memory_consecutive_failures - 1)),
+            )
+            timer = threading.Timer(delay, self._retry_memory_ledger)
+            timer.daemon = True
+            self._ledger_memory_retry_timer = timer
         timer.start()
+
+    def _retry_memory_ledger(self):
+        with self._ledger_memory_lock:
+            self._ledger_memory_retry_timer = None
+        self._start_memory_ledger_drain()
 
     def _drain_memory_ledger_queue(self):
         try:
@@ -1794,6 +1832,24 @@ class CascadeBridge:
             })
             log.info("RESTORED ACTIVATION: %s (%d noise, %d important, %.1f%% rate)",
                      sig_type, noise_count, important, important_rate * 100)
+
+    def close(self) -> None:
+        """Stop retry timers and executors without discarding durable work."""
+        if self._closed:
+            return
+        self._closed = True
+        self.enabled = False
+        for lock, timer_name in (
+            (self._ledger_receipt_lock, "_ledger_receipt_retry_timer"),
+            (self._ledger_memory_lock, "_ledger_memory_retry_timer"),
+        ):
+            with lock:
+                timer = getattr(self, timer_name)
+                if timer is not None:
+                    timer.cancel()
+                    setattr(self, timer_name, None)
+        self._ledger_executor.shutdown(wait=False, cancel_futures=True)
+        self._ledger_memory_executor.shutdown(wait=False, cancel_futures=True)
 
     def get_stats(self) -> Dict:
         stats = asdict(self.stats)
