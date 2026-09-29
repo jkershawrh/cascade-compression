@@ -4,6 +4,18 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## Unreleased
 
+- Add deterministic model-blind holdout freezing, two-reviewer adjudication, third-reviewer
+  disagreement resolution, canonical signal binding, and a documented label rubric.
+- Add same-corpus generative/semantic/hybrid evaluation with per-label metrics, dangerous-miss
+  accounting, confidence coverage, calibration, and fail-closed decision-grade evidence.
+- Add a fixed `oss-rc-a-v1` staging gate that binds classification, CPU runtime, audit delivery,
+  ledger capacity, clean-clone/package/container checks, SBOM, provenance, and CI to one run.
+- Add durable bounded SQLite spools for decision, promotion, and memory audit delivery with restart
+  recovery, retry/backoff, byte limits, and observable loss/failure counters.
+- Add a manual pre-release candidate workflow for immutable multi-architecture images with SBOM and
+  provenance, allowing soak evidence before a release tag is created.
+- Add synthetic mixed-route and recall-scaling runtime benchmarks with correctness oracles and
+  verified CPU-allocation reporting.
 - Add opt-in advisory triage and verified exact-repeat evaluation profiles.
 - Include full cluster, resource UID, and stable content in duplicate identity
   so distinct incidents cannot collapse across clusters or replacement resources.

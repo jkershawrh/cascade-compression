@@ -1,0 +1,107 @@
+name: Staging candidate
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.11"
+      - name: Reject internal infrastructure references
+        run: |
+          if grep -RInEi \
+            'infra01|dal12|api\.ocpv|\.infra\.demo\.redhat\.com|oberon|babylon|poolboy|rhpds|stargate|sandbox\.conan|labagator' \
+            . --exclude-dir=.git --exclude=public-safety.yml --exclude=staging-candidate.yml; then
+            echo 'Internal infrastructure reference found'
+            exit 1
+          fi
+      - run: uv sync --extra dev --locked
+      - run: make test-all PYTHON="uv run python"
+      - run: uv build
+      - name: Smoke-test installed wheel
+        run: |
+          python -m venv .wheel-venv
+          .wheel-venv/bin/pip install dist/*.whl
+          cd /tmp
+          "$GITHUB_WORKSPACE/.wheel-venv/bin/python" \
+            "$GITHUB_WORKSPACE/scripts/release_smoke.py"
+
+  container:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: metadata
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: type=raw,value=candidate-${{ github.sha }}
+      - id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Containerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.metadata.outputs.tags }}
+          labels: ${{ steps.metadata.outputs.labels }}
+          provenance: mode=max
+          sbom: true
+      - name: Attest candidate container provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/${{ github.repository }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: Write immutable candidate manifest
+        env:
+          CANDIDATE_COMMIT: ${{ github.sha }}
+          CANDIDATE_IMAGE: ghcr.io/${{ github.repository }}
+          CANDIDATE_DIGEST: ${{ steps.push.outputs.digest }}
+          CANDIDATE_RUN_ID: ${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+
+          manifest = {
+              "schema_version": "cascade.staging-candidate.v1alpha1",
+              "commit": os.environ["CANDIDATE_COMMIT"],
+              "image": os.environ["CANDIDATE_IMAGE"],
+              "image_digest": os.environ["CANDIDATE_DIGEST"],
+              "workflow_run_id": os.environ["CANDIDATE_RUN_ID"],
+              "generated_at": datetime.now(timezone.utc).isoformat(),
+              "multi_arch": ["linux/amd64", "linux/arm64"],
+              "sbom": True,
+              "provenance": True,
+          }
+          with open("staging-candidate-manifest.json", "w", encoding="utf-8") as handle:
+              json.dump(manifest, handle, indent=2, sort_keys=True)
+              handle.write("\n")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cascade-staging-candidate-${{ github.sha }}
+          path: staging-candidate-manifest.json
+          retention-days: 90
+          if-no-files-found: error

@@ -2,6 +2,7 @@
 """Smoke-test an installed OSS package without repository import paths."""
 
 import json
+from importlib.metadata import version
 
 from fastapi.testclient import TestClient
 
@@ -17,7 +18,7 @@ from cascade_compression.service import app
 
 
 def main() -> None:
-    assert __version__ == "0.2.0rc1"
+    assert __version__ == version("cascade-compression")
     assert len(discover_collector_plugins()) == 8
     assert len(discover_domain_plugins()) == 7
     assert resource_path("config", "strategies.yaml").is_file()
