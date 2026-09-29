@@ -7,7 +7,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, Iterable
 
-from .evaluation import REQUIRED_RUN_FIELDS
+from .evaluation import REQUIRED_RUN_FIELDS, run_identity_errors
 
 
 OSS_RC_A_PROFILE = {
@@ -30,7 +30,10 @@ def _digest(document: Dict[str, Any]) -> str:
 
 
 def _parse_time(value: str) -> datetime:
-    return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("timestamp must include a timezone")
+    return parsed
 
 
 def _runtime_cells(runtime: dict) -> Iterable[dict]:
@@ -62,6 +65,7 @@ def build_staging_evidence(
 
     run = manifest.get("run") or {}
     missing_run = [field for field in REQUIRED_RUN_FIELDS if not run.get(field)]
+    invalid_run = run_identity_errors(run)
     try:
         positive_window = (
             not missing_run
@@ -170,12 +174,18 @@ def build_staging_evidence(
     )
 
     gates = [
-        _gate("immutable_run_identity", not missing_run and positive_window, {
-            "missing_fields": missing_run, "positive_window": positive_window,
+        _gate("immutable_run_identity", (
+            not missing_run and not invalid_run and positive_window
+        ), {
+            "missing_fields": missing_run, "invalid_fields": invalid_run,
+            "positive_window": positive_window,
         }),
         _gate("classification_same_run", run_matches, {
             "arm": classification_arm,
             "dataset_digest": (classification.get("dataset") or {}).get("digest"),
+            "holdout_digest": (classification.get("dataset") or {}).get(
+                "holdout_digest"
+            ),
         }),
         _gate("classification_models_frozen", models_frozen, {
             "declared": model_revisions,
@@ -288,6 +298,9 @@ def build_staging_evidence(
             "quality_profile": "oss-rc-a-v1",
             "model_revisions": model_revisions,
             "dataset_digest": (classification.get("dataset") or {}).get("digest"),
+            "holdout_digest": (classification.get("dataset") or {}).get(
+                "holdout_digest"
+            ),
             "records": arm.get("records"),
             "coverage": arm.get("coverage"),
             "accuracy": arm.get("overall_accuracy"),

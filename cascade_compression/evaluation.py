@@ -10,7 +10,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import Counter
+from datetime import datetime
 from itertools import combinations
 from typing import Any, Dict, Iterable, List
 
@@ -28,6 +30,32 @@ REQUIRED_RUN_FIELDS = (
 )
 
 
+def run_identity_errors(run: Dict[str, Any]) -> List[str]:
+    """Return stable validation codes for immutable evaluation identity."""
+    errors = []
+    if not re.fullmatch(r"[0-9a-f]{40}", str(run.get("commit") or "")):
+        errors.append("commit")
+    for field in ("image_digest", "config_digest"):
+        if not re.fullmatch(
+            r"sha256:[0-9a-f]{64}", str(run.get(field) or ""),
+        ):
+            errors.append(field)
+    if not str(run.get("taxonomy_revision") or "").strip():
+        errors.append("taxonomy_revision")
+    try:
+        start = datetime.fromisoformat(
+            str(run.get("window_start") or "").replace("Z", "+00:00")
+        )
+        end = datetime.fromisoformat(
+            str(run.get("window_end") or "").replace("Z", "+00:00")
+        )
+        if start.tzinfo is None or end.tzinfo is None or end <= start:
+            raise ValueError
+    except ValueError:
+        errors.append("window")
+    return errors
+
+
 def _round(value: float) -> float:
     return round(value, 6)
 
@@ -41,6 +69,20 @@ def _dataset_digest(rows: Iterable[Dict[str, Any]]) -> str:
         key=lambda item: (item["record_id"], item["expected"]),
     )
     encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _corpus_digest(rows: Iterable[Dict[str, Any]]) -> str:
+    identity = sorted(
+        ({
+            "case_id": row["record_id"],
+            "signal_sha256": row["signal_sha256"],
+        } for row in rows),
+        key=lambda item: item["case_id"],
+    )
+    encoded = json.dumps(
+        identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    )
     return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
@@ -198,6 +240,7 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
 
     seen = set()
     arms = set()
+    signal_digests_complete = True
     for row in rows:
         record_id = str(row.get("record_id", "")).strip()
         truth = str(row.get("expected", ""))
@@ -209,6 +252,11 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
             raise ValueError(f"unknown expected label: {truth}")
         if not isinstance(row.get("predictions", {}), dict):
             raise ValueError("predictions must be an object keyed by arm")
+        signal_digest = str(row.get("signal_sha256") or "")
+        if signal_digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", signal_digest):
+            raise ValueError("signal_sha256 must be a SHA-256 digest")
+        if not signal_digest:
+            signal_digests_complete = False
         row["record_id"] = record_id
         row["expected"] = truth
         seen.add(record_id)
@@ -236,13 +284,39 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
 
     dataset = document.get("dataset") or {}
     adjudication = dataset.get("adjudication") or {}
+    computed_corpus_digest = _corpus_digest(rows) if signal_digests_complete else None
+    holdout_digest = dataset.get("holdout_digest")
+    adjudication_corpus_digest = adjudication.get("corpus_digest")
+    for label, digest in (
+        ("holdout_digest", holdout_digest),
+        ("adjudication corpus_digest", adjudication_corpus_digest),
+    ):
+        if digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", str(digest)):
+            raise ValueError(f"{label} must be a SHA-256 digest")
+    corpus_binding = bool(
+        computed_corpus_digest
+        and computed_corpus_digest == holdout_digest
+        and computed_corpus_digest == adjudication_corpus_digest
+    )
     run = document.get("run") or {}
     missing_run_fields = [field for field in REQUIRED_RUN_FIELDS if not run.get(field)]
+    invalid_run_fields = run_identity_errors(run)
+    raw_model_revisions = run.get("model_revisions") or {}
+    model_revisions = (
+        raw_model_revisions if isinstance(raw_model_revisions, dict) else {}
+    )
+    model_revisions_frozen = bool(model_revisions) and all(
+        str(key).strip() and str(value).strip()
+        for key, value in model_revisions.items()
+    )
     decision_grade = (
         adjudication.get("status") == "complete"
         and adjudication.get("independent") is True
         and int(adjudication.get("reviewers") or 0) >= 2
+        and corpus_binding
         and not missing_run_fields
+        and not invalid_run_fields
+        and model_revisions_frozen
     )
     return {
         "schema_version": "cascade.classification-evaluation.v1alpha1",
@@ -251,25 +325,34 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
             "revision": str(dataset.get("revision") or "unversioned"),
             "digest": _dataset_digest(rows),
             "records": len(rows),
+            "holdout_digest": str(holdout_digest) if holdout_digest else None,
             "adjudication": {
                 "status": str(adjudication.get("status") or "unknown"),
                 "method": str(adjudication.get("method") or "unspecified"),
                 "independent": adjudication.get("independent") is True,
                 "reviewers": int(adjudication.get("reviewers") or 0),
+                "corpus_digest": (
+                    str(adjudication_corpus_digest)
+                    if adjudication_corpus_digest else None
+                ),
             },
         },
         "run": {field: run.get(field) for field in REQUIRED_RUN_FIELDS},
-        "model_revisions": dict(run.get("model_revisions") or {}),
+        "model_revisions": dict(model_revisions),
         "arms": metrics,
         "pairwise_agreement": agreements,
         "evidence": {
             "status": "decision_grade" if decision_grade else "mechanics_only",
             "ground_truth_required": True,
             "same_corpus": True,
+            "corpus_binding": corpus_binding,
+            "computed_corpus_digest": computed_corpus_digest,
             "missing_run_fields": missing_run_fields,
+            "invalid_run_fields": invalid_run_fields,
+            "model_revisions_frozen": model_revisions_frozen,
             "contains_raw_records": False,
             "limitations": [] if decision_grade else [
-                "Decision-grade status requires complete independent adjudication by at least two reviewers and frozen run metadata."
+                "Decision-grade status requires complete independent adjudication by at least two reviewers, exact holdout/adjudication corpus binding, and frozen run metadata."
             ],
         },
     }

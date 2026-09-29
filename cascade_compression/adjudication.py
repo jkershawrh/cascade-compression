@@ -61,6 +61,10 @@ def _validate_receipt(receipt: dict) -> None:
         "source_record_ref"
     ):
         raise ValueError("authoritative review requires a source record reference")
+    if classification == "known_pattern" and receipt.get(
+        "source"
+    ) != "authoritative_record":
+        raise ValueError("known_pattern requires an authoritative source record")
     if not str(receipt.get("rationale") or "").strip():
         raise ValueError("review receipt requires a rationale")
     signal_digest = str(receipt.get("signal_sha256") or "")

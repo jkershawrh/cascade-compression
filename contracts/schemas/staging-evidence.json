@@ -13,7 +13,7 @@
     },
     "classification": {
       "type": "object",
-      "required": ["arm", "quality_profile", "model_revisions", "dataset_digest", "records", "coverage", "accuracy", "balanced_accuracy", "macro_f1", "dangerous_misses", "calibration"],
+      "required": ["arm", "quality_profile", "model_revisions", "dataset_digest", "holdout_digest", "records", "coverage", "accuracy", "balanced_accuracy", "macro_f1", "dangerous_misses", "calibration"],
       "properties": {
         "quality_profile": {"const": "oss-rc-a-v1"}
       }

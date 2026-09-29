@@ -6,6 +6,7 @@ import jsonschema
 import pytest
 
 from cascade_compression.evaluation import evaluate_classifiers
+from cascade_compression.holdout import canonical_digest
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -17,6 +18,7 @@ def document():
     for index, label in enumerate(labels):
         records.append({
             "record_id": f"opaque-{index}",
+            "signal_sha256": "sha256:" + str(index) * 64,
             "expected": label,
             "predictions": {
                 "generative": {"label": label, "confidence": 0.9, "authoritative": True},
@@ -24,16 +26,22 @@ def document():
                 "hybrid": {"label": label, "confidence": 0.9, "authoritative": True},
             },
         })
+    corpus_digest = canonical_digest(sorted(({
+        "case_id": row["record_id"],
+        "signal_sha256": row["signal_sha256"],
+    } for row in records), key=lambda item: item["case_id"]))
     return {
         "schema_version": "cascade.classification-input.v1alpha1",
         "dataset": {
             "name": "synthetic",
             "revision": "v1",
+            "holdout_digest": corpus_digest,
             "adjudication": {
                 "status": "complete",
                 "method": "independent-double-review",
                 "independent": True,
                 "reviewers": 2,
+                "corpus_digest": corpus_digest,
             },
         },
         "run": {
@@ -118,12 +126,51 @@ def test_incomplete_adjudication_cannot_claim_decision_grade():
     assert report["evidence"]["status"] == "mechanics_only"
 
 
+def test_mismatched_holdout_digest_cannot_claim_decision_grade():
+    source = document()
+    source["dataset"]["holdout_digest"] = "sha256:" + "f" * 64
+    report = evaluate_classifiers(source)
+    assert report["evidence"]["status"] == "mechanics_only"
+    assert report["evidence"]["corpus_binding"] is False
+
+
+def test_missing_record_signal_digest_cannot_claim_decision_grade():
+    source = document()
+    del source["records"][0]["signal_sha256"]
+    report = evaluate_classifiers(source)
+    assert report["evidence"]["status"] == "mechanics_only"
+    assert report["evidence"]["computed_corpus_digest"] is None
+
+
+def test_malformed_declared_corpus_digest_fails_closed():
+    source = document()
+    source["dataset"]["adjudication"]["corpus_digest"] = "not-a-digest"
+    with pytest.raises(ValueError, match="SHA-256"):
+        evaluate_classifiers(source)
+
+
 def test_missing_run_metadata_cannot_claim_decision_grade():
     source = document()
     del source["run"]["image_digest"]
     report = evaluate_classifiers(source)
     assert report["evidence"]["status"] == "mechanics_only"
     assert report["evidence"]["missing_run_fields"] == ["image_digest"]
+
+
+def test_malformed_run_identity_cannot_claim_decision_grade():
+    source = document()
+    source["run"]["commit"] = "main"
+    report = evaluate_classifiers(source)
+    assert report["evidence"]["status"] == "mechanics_only"
+    assert report["evidence"]["invalid_run_fields"] == ["commit"]
+
+
+def test_model_revisions_are_required_for_decision_grade():
+    source = document()
+    source["run"]["model_revisions"] = {}
+    report = evaluate_classifiers(source)
+    assert report["evidence"]["status"] == "mechanics_only"
+    assert report["evidence"]["model_revisions_frozen"] is False
 
 
 def test_duplicate_record_ids_fail_closed():

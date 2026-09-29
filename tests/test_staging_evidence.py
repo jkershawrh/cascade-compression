@@ -4,6 +4,7 @@ from pathlib import Path
 import jsonschema
 
 from cascade_compression.evaluation import evaluate_classifiers
+from cascade_compression.holdout import canonical_digest
 from cascade_compression.staging_evidence import build_staging_evidence
 
 
@@ -22,29 +23,38 @@ def inputs():
         "window_start": "2026-09-01T00:00:00Z",
         "window_end": "2026-09-01T01:00:00Z",
     }
+    records = [
+        {
+            "record_id": f"r{index}",
+            "signal_sha256": "sha256:" + f"{index:064x}",
+            "expected": label,
+            "predictions": {"hybrid": {
+                "label": label, "confidence": 1.0,
+                "authoritative": True,
+            }},
+        }
+        for index, label in enumerate(
+            ["routine_noise", "known_pattern", "needs_attention", "real_incident"]
+            * 50
+        )
+    ]
+    corpus_digest = canonical_digest(sorted(({
+        "case_id": row["record_id"],
+        "signal_sha256": row["signal_sha256"],
+    } for row in records), key=lambda item: item["case_id"]))
     classification = evaluate_classifiers({
         "schema_version": "cascade.classification-input.v1alpha1",
         "dataset": {
             "name": "held-out", "revision": "v1",
+            "holdout_digest": corpus_digest,
             "adjudication": {
                 "status": "complete", "method": "double-review",
                 "independent": True, "reviewers": 2,
+                "corpus_digest": corpus_digest,
             },
         },
         "run": {**run, "model_revisions": {"hybrid": "model-v1"}},
-        "records": [
-            {
-                "record_id": f"r{index}", "expected": label,
-                "predictions": {"hybrid": {
-                    "label": label, "confidence": 1.0,
-                    "authoritative": True,
-                }},
-            }
-            for index, label in enumerate(
-                ["routine_noise", "known_pattern", "needs_attention", "real_incident"]
-                * 50
-            )
-        ],
+        "records": records,
     })
     manifest = {
         "schema_version": "cascade.staging-manifest.v1alpha1",
@@ -182,6 +192,17 @@ def test_artifact_from_different_commit_is_rejected():
         manifest, classification, runtime, before, after,
     )
     assert "classification_same_run" in report["failed_gates"]
+
+
+def test_malformed_manifest_identity_is_rejected():
+    manifest, classification, runtime, before, after = inputs()
+    manifest["run"]["commit"] = "main"
+    classification["run"]["commit"] = "main"
+    runtime["environment"]["git_revision"] = "main"
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "immutable_run_identity" in report["failed_gates"]
 
 
 def test_missing_supply_chain_evidence_is_incomplete():

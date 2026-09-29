@@ -27,6 +27,7 @@ def reviews(reviewer, overrides=None):
     rows = []
     for index, label in enumerate(LABELS):
         label = overrides.get(index, label)
+        authoritative = label == "known_pattern"
         rows.append({
             "case_id": f"case-{index}",
             "signal_sha256": signal_digest(index),
@@ -38,8 +39,11 @@ def reviews(reviewer, overrides=None):
             "expected_memory": label in {"needs_attention", "real_incident"},
             "reviewer_ref": reviewer,
             "reviewed_at": "2026-09-01T00:00:00Z",
-            "source": "independent_human_review",
-            "source_record_ref": None,
+            "source": (
+                "authoritative_record" if authoritative
+                else "independent_human_review"
+            ),
+            "source_record_ref": "documented-pattern-1" if authoritative else None,
             "rationale": "Observable evidence supports this label.",
             "independent_of_evaluated_arms": True,
             "evidence_ref": "sha256:" + "a" * 64,
@@ -112,4 +116,13 @@ def test_review_receipt_must_bind_to_frozen_signal_evidence():
     first[0]["signal_sha256"] = "sha256:" + "f" * 64
     second[0]["signal_sha256"] = "sha256:" + "f" * 64
     with pytest.raises(ValueError, match="frozen signal evidence"):
+        merge_independent_reviews(corpus(), first, second)
+
+
+def test_known_pattern_requires_documented_authority():
+    first = reviews("reviewer-a")
+    second = reviews("reviewer-b")
+    first[1]["source"] = "independent_human_review"
+    first[1]["source_record_ref"] = None
+    with pytest.raises(ValueError, match="known_pattern requires"):
         merge_independent_reviews(corpus(), first, second)

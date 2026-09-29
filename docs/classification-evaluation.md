@@ -24,11 +24,13 @@ The input format is `cascade.classification-input.v1alpha1`:
   "dataset": {
     "name": "held-out-v1",
     "revision": "review-2026-09",
+    "holdout_digest": "sha256:FROZEN_CORPUS_DIGEST",
     "adjudication": {
       "status": "complete",
       "method": "independent-double-review",
       "independent": true,
-      "reviewers": 2
+      "reviewers": 2,
+      "corpus_digest": "sha256:FROZEN_CORPUS_DIGEST"
     }
   },
   "run": {
@@ -46,6 +48,7 @@ The input format is `cascade.classification-input.v1alpha1`:
   "records": [
     {
       "record_id": "opaque-001",
+      "signal_sha256": "sha256:SIGNAL_DIGEST",
       "expected": "real_incident",
       "predictions": {
         "generative": {"label": "real_incident", "confidence": 0.91, "authoritative": true},
@@ -58,9 +61,12 @@ The input format is `cascade.classification-input.v1alpha1`:
 ```
 
 The output never includes record identifiers or signal payloads. Its dataset digest binds the report
-to the set of opaque identifiers and adjudicated labels. A report is marked `decision_grade` only
-when adjudication is complete, independent, performed by at least two reviewers, and the exact run
-metadata is frozen. Synthetic or incompletely adjudicated inputs remain `mechanics_only`.
+to the set of opaque identifiers and adjudicated labels. Its computed corpus digest must also match
+both the frozen holdout manifest and adjudication summary. A report is marked `decision_grade` only
+when that binding succeeds, adjudication is complete and independent with at least two reviewers,
+and the exact run metadata is frozen. Run identity requires a full Git SHA, SHA-256 image and config
+digests, a non-empty taxonomy revision and model revision map, and a timezone-aware positive
+evaluation window. Synthetic, unbound, or incompletely adjudicated inputs remain `mechanics_only`.
 
 `authoritative_dangerous_misses` counts important truth labels that an authoritative arm classified
 as suppressive. Non-authoritative semantic suggestions are still represented in the confusion
@@ -94,7 +100,8 @@ Stratification can ensure class coverage for balanced accuracy, but it changes p
 present overall accuracy on a balanced corpus as the natural production rate.
 
 The frozen corpus should then be reviewed twice, blind to evaluated model outputs, by two different
-people. Merge their receipt exports locally:
+people using the [independent adjudication rubric](adjudication-rubric.md). Merge their receipt
+exports locally:
 
 ```bash
 cascade-adjudicate \
@@ -111,7 +118,8 @@ reviewer can review only that disagreement file; pass those receipts with `--res
 files must cover the exact corpus, use distinct reviewer references, declare independence from the
 evaluated arms, and bind their signal digest to the exact frozen signal object. The merged corpus
 and disagreement file remain private. The summary contains only counts and a digest and is suitable
-for sanitized evidence review.
+for sanitized evidence review. A `known_pattern` receipt must cite an authoritative source record;
+repetition alone cannot establish that label.
 
 After adjudication, join each record's truth label to the predictions produced by the generative,
 semantic, and hybrid arms on the exact same records, then run `cascade-evaluate`. A disagreement
