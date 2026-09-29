@@ -138,3 +138,12 @@ def test_invalid_confidence_fails_closed():
     source["records"][0]["predictions"]["hybrid"]["confidence"] = 1.1
     with pytest.raises(ValueError, match="between 0 and 1"):
         evaluate_classifiers(source)
+
+
+def test_calibration_reports_missing_confidence_coverage():
+    source = document()
+    del source["records"][0]["predictions"]["hybrid"]["confidence"]
+    calibration = evaluate_classifiers(source)["arms"]["hybrid"]["calibration"]
+    assert calibration["samples"] == 3
+    assert calibration["eligible_predictions"] == 4
+    assert calibration["coverage"] == 0.75

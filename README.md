@@ -113,6 +113,11 @@ python -m uvicorn cascade_compression.service:app --port 8090
 a generative endpoint; Cascade still applies margin and severity gates, and service errors produce
 explicit failures rather than silent drops.
 The generated protocol client is pinned by the `semantic-classifier` optional dependency group.
+
+For held-out calibration runs, set `CASCADE_GENERATIVE_STRUCTURED=1`. The generative backend then
+requests strict label-plus-confidence JSON and records the exact effective prompt revision. Keep it
+disabled for compatibility until the configured endpoint has passed the structured-output smoke
+test; malformed or out-of-range responses fail explicitly.
 Loopback development may use plaintext gRPC. Remote endpoints require `CASCADE_SC_TLS=1`; optional
 `CASCADE_SC_TLS_CA`, `CASCADE_SC_TLS_CERT`, and `CASCADE_SC_TLS_KEY` configure private CAs or mTLS.
 

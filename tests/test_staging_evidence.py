@@ -157,6 +157,15 @@ def test_unfrozen_model_revision_blocks_success():
     assert "classification_models_frozen" in report["failed_gates"]
 
 
+def test_sparse_confidence_values_cannot_pass_calibration_gate():
+    manifest, classification, runtime, before, after = inputs()
+    classification["arms"]["hybrid"]["calibration"]["coverage"] = 0.25
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "classification_oss_rc_a_profile" in report["failed_gates"]
+
+
 def test_stale_outbox_blocks_staging_success():
     manifest, classification, runtime, before, after = inputs()
     manifest["ledger"]["outbox"].update({"status": "stalled", "pending": 50})

@@ -44,9 +44,13 @@ def _dataset_digest(rows: Iterable[Dict[str, Any]]) -> str:
     return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def _calibration(observations: List[tuple], bins: int = 10) -> dict:
+def _calibration(observations: List[tuple], classified: int,
+                 bins: int = 10) -> dict:
     if not observations:
-        return {"status": "not_measured", "samples": 0}
+        return {
+            "status": "not_measured", "samples": 0,
+            "eligible_predictions": classified, "coverage": 0.0,
+        }
     buckets = [[] for _ in range(bins)]
     for confidence, correct in observations:
         index = min(int(confidence * bins), bins - 1)
@@ -71,6 +75,8 @@ def _calibration(observations: List[tuple], bins: int = 10) -> dict:
     return {
         "status": "measured",
         "samples": total,
+        "eligible_predictions": classified,
+        "coverage": _round(total / classified) if classified else 0.0,
         "top_label_brier": _round(brier / total),
         "expected_calibration_error": _round(ece),
         "bins": populated,
@@ -178,7 +184,7 @@ def _evaluate_arm(rows: List[dict], arm: str) -> dict:
         ),
         "per_label": per_label,
         "confusion": confusion,
-        "calibration": _calibration(calibration),
+        "calibration": _calibration(calibration, classified),
     }
 
 

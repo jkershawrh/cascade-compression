@@ -32,6 +32,14 @@ SUPPRESSIVE_LABELS = frozenset({"routine_noise", "known_pattern"})
 SERIALIZER_REVISION = "cascade-classifier-text-v2"
 VALID_MODES = frozenset({"generative", "compare", "semantic", "hybrid"})
 
+STRUCTURED_CONFIDENCE_INSTRUCTION = """
+Return compact JSON only with keys label and confidence. label must be exactly one of
+routine_noise, known_pattern, needs_attention, real_incident. confidence must be a number from 0
+to 1 representing your confidence that the selected label is correct. routine_noise is expected
+normal behavior; known_pattern requires a familiar documented interpretation; needs_attention is
+unusual or ambiguous and should be investigated; real_incident is an active harmful condition.
+""".strip()
+
 # Signal normalization patterns — collapse variable tokens to placeholders so
 # near-duplicate signals become exact cache hits on the SC.  Order matters:
 # UUID before generic hex, specific patterns before general numeric.
@@ -132,14 +140,19 @@ class GenerativeClassifierBackend:
     name = "generative"
 
     def __init__(self, *, url: str, key: str, micro_model: str,
-                 macro_model: str, system_prompt: str):
+                 macro_model: str, system_prompt: str,
+                 structured_confidence: bool = False):
         self.url = url
         self.key = key
         self.micro_model = micro_model
         self.macro_model = macro_model
-        self.system_prompt = system_prompt
+        self.structured_confidence = structured_confidence
+        self.system_prompt = (
+            f"{system_prompt.strip()}\n\n{STRUCTURED_CONFIDENCE_INSTRUCTION}"
+            if structured_confidence else system_prompt
+        )
         self.prompt_revision = hashlib.sha256(
-            system_prompt.encode("utf-8")
+            self.system_prompt.encode("utf-8")
         ).hexdigest()
 
     def classify(self, signal: Dict[str, Any], text: str,
@@ -149,11 +162,12 @@ class GenerativeClassifierBackend:
         started = time.monotonic()
         try:
             answer = self._complete(client, model, text)
-            label = normalize_label(answer)
+            label, confidence = self._parse_answer(answer)
             if not label:
                 return self._failure(started, "malformed_label", answer[:120], model)
             return ClassificationResult(
                 label=label, backend=self.name, model_revision=model,
+                confidence=confidence,
                 prompt_revision=self.prompt_revision,
                 latency_ms=(time.monotonic() - started) * 1000,
             )
@@ -161,10 +175,11 @@ class GenerativeClassifierBackend:
             if model != self.macro_model:
                 try:
                     answer = self._complete(client, self.macro_model, text)
-                    label = normalize_label(answer)
+                    label, confidence = self._parse_answer(answer)
                     if label:
                         return ClassificationResult(
                             label=label, backend=self.name,
+                            confidence=confidence,
                             model_revision=self.macro_model,
                             prompt_revision=self.prompt_revision,
                             latency_ms=(time.monotonic() - started) * 1000,
@@ -183,10 +198,32 @@ class GenerativeClassifierBackend:
             {"role": "user", "content": text},
         ]
         if client is not None:
-            return llm_complete(client, self.url, self.key, model, messages)
+            return llm_complete(
+                client, self.url, self.key, model, messages,
+                max_tokens=40 if self.structured_confidence else 5,
+            )
         import httpx
         with httpx.Client(timeout=60) as owned_client:
-            return llm_complete(owned_client, self.url, self.key, model, messages)
+            return llm_complete(
+                owned_client, self.url, self.key, model, messages,
+                max_tokens=40 if self.structured_confidence else 5,
+            )
+
+    def _parse_answer(self, answer: str) -> tuple[str, Optional[float]]:
+        if not self.structured_confidence:
+            return normalize_label(answer), None
+        text = (answer or "").strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.I)
+        try:
+            payload = json.loads(text)
+            label = normalize_label(str(payload.get("label") or ""))
+            confidence = float(payload.get("confidence"))
+        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
+            return "", None
+        if not 0.0 <= confidence <= 1.0:
+            return "", None
+        return label, confidence
 
     def _failure(self, started: float, code: str, error: str,
                  model: str) -> ClassificationResult:
@@ -775,6 +812,10 @@ def classifier_from_environment(*, url: str, key: str, micro_model: str,
     generative = GenerativeClassifierBackend(
         url=url, key=key, micro_model=micro_model, macro_model=macro_model,
         system_prompt=system_prompt,
+        structured_confidence=(
+            os.getenv("CASCADE_GENERATIVE_STRUCTURED", "").strip().lower()
+            in {"1", "true", "yes"}
+        ),
     )
     semantic = None
     config_error = ""

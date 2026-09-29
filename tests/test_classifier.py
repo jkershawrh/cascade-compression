@@ -11,6 +11,7 @@ from cascade_compression.classifier import (
     CascadeClassifier,
     ClassificationResult,
     ComparisonRecorder,
+    GenerativeClassifierBackend,
     RankedLabel,
     classifier_from_environment,
     load_taxonomy_metadata,
@@ -88,6 +89,39 @@ def test_default_mode_preserves_generative_behavior(monkeypatch):
     assert instance.mode == "generative"
     assert instance.semantic is None
     assert instance.config_error == ""
+
+
+def test_structured_generative_mode_exposes_calibratable_confidence(monkeypatch):
+    backend = GenerativeClassifierBackend(
+        url="", key="", micro_model="small", macro_model="large",
+        system_prompt="Classify.", structured_confidence=True,
+    )
+    monkeypatch.setattr(
+        backend, "_complete",
+        lambda client, model, text: (
+            '{"label":"needs_attention","confidence":0.82}'
+        ),
+    )
+    classified = backend.classify(signal(), "service_health medium")
+    assert classified.label == "needs_attention"
+    assert classified.confidence == 0.82
+    assert "confidence" in backend.system_prompt
+
+
+def test_structured_generative_mode_rejects_unbounded_confidence(monkeypatch):
+    backend = GenerativeClassifierBackend(
+        url="", key="", micro_model="small", macro_model="large",
+        system_prompt="Classify.", structured_confidence=True,
+    )
+    monkeypatch.setattr(
+        backend, "_complete",
+        lambda client, model, text: (
+            '{"label":"routine_noise","confidence":1.2}'
+        ),
+    )
+    assert backend.classify(
+        signal(), "service_health medium"
+    ).error_code == "malformed_label"
 
 
 def test_hybrid_accepts_high_margin_semantic_result():

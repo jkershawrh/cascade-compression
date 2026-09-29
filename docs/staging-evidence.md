@@ -26,7 +26,8 @@ The command returns zero only for `staging_success`. It requires:
 - the fixed `oss-rc-a-v1` quality profile: at least 200 held-out records, at least 25 examples of
   every label, at least 50 important examples, at least 25 authoritative suppressions, 95%
   coverage, 0.85 balanced accuracy, 0.80 macro F1, 0.98 authoritative-suppression precision, and
-  calibration error no greater than 0.10;
+  confidence values for at least 95% of classified records with calibration error no greater than
+  0.10;
 - zero authoritative dangerous misses;
 - measured calibration;
 - a CPU allocation and commit-bound runtime benchmark with no errors;

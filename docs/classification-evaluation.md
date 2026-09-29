@@ -6,6 +6,12 @@ JSON containing record identifiers, truth labels, and predictions, then emits a 
 report with a corpus digest, confusion matrices, per-label precision/recall/F1, dangerous misses,
 coverage, top-label calibration, and pairwise agreement.
 
+Calibration reports both its error and its coverage. An arm with confidence values on only a small
+subset cannot satisfy the release gate; `oss-rc-a-v1` requires confidence coverage of at least 95%.
+Use `CASCADE_GENERATIVE_STRUCTURED=1` during the held-out run to request a bounded confidence value
+from the generative backend. Self-reported confidence is not assumed to be reliable; the reported
+ECE and Brier score measure how well it matches observed correctness.
+
 ```bash
 cascade-evaluate private-held-out.json --output evaluation-report.json
 ```

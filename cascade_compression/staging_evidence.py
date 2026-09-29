@@ -19,6 +19,7 @@ OSS_RC_A_PROFILE = {
     "minimum_balanced_accuracy": 0.85,
     "minimum_macro_f1": 0.80,
     "minimum_authoritative_suppression_precision": 0.98,
+    "minimum_calibration_coverage": 0.95,
     "maximum_expected_calibration_error": 0.10,
 }
 
@@ -109,6 +110,8 @@ def build_staging_evidence(
         and float(suppression_precision)
         >= a_profile["minimum_authoritative_suppression_precision"]
         and calibration.get("status") == "measured"
+        and float(calibration.get("coverage") or 0)
+        >= a_profile["minimum_calibration_coverage"]
         and float(calibration.get("expected_calibration_error", 2))
         <= a_profile["maximum_expected_calibration_error"]
     )
@@ -207,6 +210,7 @@ def build_staging_evidence(
                 "expected_calibration_error": calibration.get(
                     "expected_calibration_error"
                 ),
+                "calibration_coverage": calibration.get("coverage"),
             },
         }),
         _gate(
