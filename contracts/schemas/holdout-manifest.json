@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cascade-compression.org/contracts/cascade.holdout-manifest/1.0.0-alpha.1",
+  "title": "Cascade Holdout Manifest",
+  "type": "object",
+  "required": ["schema_version", "dataset", "frozen_at", "selection", "candidate_digest", "holdout_digest", "blinding", "contains_raw_records"],
+  "properties": {
+    "schema_version": {"const": "cascade.holdout-manifest.v1alpha1"},
+    "dataset": {
+      "type": "object",
+      "required": ["name", "revision"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "revision": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "frozen_at": {"type": "string", "format": "date-time"},
+    "selection": {
+      "type": "object",
+      "required": ["algorithm", "seed_digest", "stratification_basis", "candidate_records", "selected_records", "strata"],
+      "properties": {
+        "algorithm": {"const": "sha256-rank-v1"},
+        "seed_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "stratification_basis": {"type": "string", "minLength": 1},
+        "candidate_records": {"type": "integer", "minimum": 1},
+        "selected_records": {"type": "integer", "minimum": 1},
+        "strata": {"type": "object", "minProperties": 1}
+      },
+      "additionalProperties": false
+    },
+    "candidate_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "holdout_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "blinding": {
+      "type": "object",
+      "required": ["evaluated_predictions_removed", "ground_truth_removed", "sampling_strata_removed", "candidate_case_ids_replaced"],
+      "additionalProperties": {"const": true}
+    },
+    "contains_raw_records": {"const": false}
+  },
+  "additionalProperties": false
+}

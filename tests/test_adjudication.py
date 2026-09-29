@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import jsonschema
@@ -28,7 +29,7 @@ def reviews(reviewer, overrides=None):
         label = overrides.get(index, label)
         rows.append({
             "case_id": f"case-{index}",
-            "signal_sha256": "sha256:" + str(index) * 64,
+            "signal_sha256": signal_digest(index),
             "actionability": (
                 "actionable" if label in {"needs_attention", "real_incident"}
                 else "suppressible"
@@ -44,6 +45,14 @@ def reviews(reviewer, overrides=None):
             "evidence_ref": "sha256:" + "a" * 64,
         })
     return rows
+
+
+def signal_digest(index):
+    encoded = json.dumps(
+        {"signal_type": "example", "content": {"index": index}},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    )
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def test_two_complete_independent_reviews_form_ground_truth():
@@ -95,3 +104,12 @@ def test_same_reviewer_cannot_supply_both_reviews():
         merge_independent_reviews(
             corpus(), reviews("same"), reviews("same"),
         )
+
+
+def test_review_receipt_must_bind_to_frozen_signal_evidence():
+    first = reviews("reviewer-a")
+    second = reviews("reviewer-b")
+    first[0]["signal_sha256"] = "sha256:" + "f" * 64
+    second[0]["signal_sha256"] = "sha256:" + "f" * 64
+    with pytest.raises(ValueError, match="frozen signal evidence"):
+        merge_independent_reviews(corpus(), first, second)

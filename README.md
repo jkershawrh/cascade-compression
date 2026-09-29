@@ -118,6 +118,8 @@ For held-out calibration runs, set `CASCADE_GENERATIVE_STRUCTURED=1`. The genera
 requests strict label-plus-confidence JSON and records the exact effective prompt revision. Keep it
 disabled for compatibility until the configured endpoint has passed the structured-output smoke
 test; malformed or out-of-range responses fail explicitly.
+Use `cascade-freeze-holdout` to create a deterministic, stratified, model-blind review corpus, then
+`cascade-adjudicate` to require two independent reviews before reporting decision-grade accuracy.
 Loopback development may use plaintext gRPC. Remote endpoints require `CASCADE_SC_TLS=1`; optional
 `CASCADE_SC_TLS_CA`, `CASCADE_SC_TLS_CERT`, and `CASCADE_SC_TLS_KEY` configure private CAs or mTLS.
 

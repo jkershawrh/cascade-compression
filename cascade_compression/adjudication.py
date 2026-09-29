@@ -113,6 +113,15 @@ def merge_independent_reviews(
     label_counts = Counter()
     for case_id, case in cases.items():
         left, right = first[case_id], second[case_id]
+        signal = case.get("signal")
+        if not isinstance(signal, dict) or not signal:
+            raise ValueError("corpus case is missing its signal evidence")
+        corpus_signal_digest = _digest(signal)
+        declared_digest = case.get("signal_sha256")
+        if declared_digest and declared_digest != corpus_signal_digest:
+            raise ValueError("corpus signal digest does not match its signal evidence")
+        if left["signal_sha256"] != corpus_signal_digest:
+            raise ValueError("review receipt does not match the frozen signal evidence")
         if left["signal_sha256"] != right["signal_sha256"]:
             raise ValueError("review files refer to different signal evidence")
         agreed = all(left[field] == right[field] for field in REVIEW_FIELDS)

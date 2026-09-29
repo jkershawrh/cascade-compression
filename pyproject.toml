@@ -61,6 +61,7 @@ cascade-run = "cascade_compression.cli:run"
 cascade-replay = "cascade_compression.cli:replay"
 cascade-value-export = "cascade_compression.value_evidence_cli:main"
 cascade-evaluate = "cascade_compression.evaluation_cli:main"
+cascade-freeze-holdout = "cascade_compression.holdout_cli:main"
 cascade-stage-evidence = "cascade_compression.staging_evidence_cli:main"
 cascade-adjudicate = "cascade_compression.adjudication_cli:main"
 

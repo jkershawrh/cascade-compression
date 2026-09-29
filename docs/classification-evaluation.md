@@ -69,7 +69,31 @@ as not being accuracy.
 
 ## Independent review merge
 
-The private corpus should be reviewed twice, blind to evaluated model outputs, by two different
+Freeze the private review corpus before running the evaluated arms. Each candidate JSONL record
+contains a stable `case_id`, a `sampling_stratum`, and a `signal` object. The freezer ranks records
+deterministically within every stratum, replaces candidate case identifiers, and removes strata,
+expected labels, and predictions from reviewer material:
+
+```bash
+cascade-freeze-holdout \
+  --candidates private-candidates.jsonl \
+  --quota source-a=75 --quota source-b=75 --quota source-c=75 --quota source-d=75 \
+  --seed "$PRIVATE_HOLDOUT_SEED" \
+  --dataset-name held-out-v1 --dataset-revision review-1 \
+  --stratification-basis "source family and time window" \
+  --output-corpus private-blinded-corpus.jsonl \
+  --output-manifest holdout-manifest.json
+```
+
+The quota set must cover every candidate stratum, and undersized strata fail closed. Signals that
+contain nested ground-truth or model-output fields are rejected instead of exposing them to
+reviewers. The manifest aliases stratum names and contains selection counts and digests but no raw
+records. Keep the seed and blinded corpus private; still review all free-text manifest metadata
+before publishing it.
+Stratification can ensure class coverage for balanced accuracy, but it changes prevalence; do not
+present overall accuracy on a balanced corpus as the natural production rate.
+
+The frozen corpus should then be reviewed twice, blind to evaluated model outputs, by two different
 people. Merge their receipt exports locally:
 
 ```bash
@@ -85,9 +109,9 @@ cascade-adjudicate \
 The command fails closed with exit code 2 while any disagreement remains. A third independent
 reviewer can review only that disagreement file; pass those receipts with `--resolution`. Review
 files must cover the exact corpus, use distinct reviewer references, declare independence from the
-evaluated arms, and agree on the signal digest. The merged corpus and disagreement file remain
-private. The summary contains only counts and a digest and is suitable for sanitized evidence
-review.
+evaluated arms, and bind their signal digest to the exact frozen signal object. The merged corpus
+and disagreement file remain private. The summary contains only counts and a digest and is suitable
+for sanitized evidence review.
 
 After adjudication, join each record's truth label to the predictions produced by the generative,
 semantic, and hybrid arms on the exact same records, then run `cascade-evaluate`. A disagreement

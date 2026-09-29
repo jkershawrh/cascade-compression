@@ -37,6 +37,10 @@ classifier-ground-truth-*.jsonl
 classifier-review-*.jsonl
 classifier-evidence*.jsonl
 classifier-comparison*.jsonl
+private-candidates*.jsonl
+private-blinded-corpus*.jsonl
+private-adjudicated-corpus*.jsonl
+private-disagreements*.jsonl
 !tests/fixtures/value_evidence/
 !tests/fixtures/value_evidence/*.json
 
