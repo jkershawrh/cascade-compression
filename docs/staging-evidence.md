@@ -23,6 +23,8 @@ deleting pending rows is not accepted as a recovery policy.
 The command returns zero only for `staging_success`. It requires:
 
 - a decision-grade held-out classification report on the same run;
+- a complete same-corpus generative, semantic, and hybrid comparison, with the hybrid arm selected
+  for the release decision, frozen revisions for all three arms, and at least 95% coverage per arm;
 - the fixed `oss-rc-a-v1` quality profile: at least 200 held-out records, at least 25 examples of
   every label, at least 50 important examples, at least 25 authoritative suppressions, 95%
   coverage, 0.85 balanced accuracy, 0.80 macro F1, 0.98 authoritative-suppression precision, and

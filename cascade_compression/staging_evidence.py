@@ -24,6 +24,8 @@ OSS_RC_A_PROFILE = {
     "maximum_expected_calibration_error": 0.10,
 }
 
+REQUIRED_CLASSIFICATION_ARMS = frozenset({"generative", "semantic", "hybrid"})
+
 OSS_RC_RUNTIME_PROFILE = {
     "minimum_iterations": 500,
     "minimum_samples": 500,
@@ -118,7 +120,8 @@ def build_staging_evidence(
         positive_window = False
 
     classification_arm = str(manifest.get("classification_arm") or "hybrid")
-    arm = (classification.get("arms") or {}).get(classification_arm)
+    classification_arms = classification.get("arms") or {}
+    arm = classification_arms.get(classification_arm)
     if arm is None:
         raise ValueError(f"classification arm not found: {classification_arm}")
     classification_run = classification.get("run") or {}
@@ -129,6 +132,33 @@ def build_staging_evidence(
     model_revisions = manifest.get("model_revisions") or {}
     classification_models = classification.get("model_revisions") or {}
     models_frozen = bool(model_revisions) and classification_models == model_revisions
+    pairwise = classification.get("pairwise_agreement") or {}
+    required_pairs = {
+        "generative__hybrid", "generative__semantic", "hybrid__semantic",
+    }
+    comparison_records = int(arm.get("records") or 0)
+    minimum_pairwise_compared = math.ceil(
+        comparison_records * OSS_RC_A_PROFILE["minimum_coverage"]
+    )
+    comparison_complete = (
+        classification_arm == "hybrid"
+        and REQUIRED_CLASSIFICATION_ARMS <= set(classification_arms)
+        and REQUIRED_CLASSIFICATION_ARMS <= set(classification_models)
+        and required_pairs <= set(pairwise)
+        and all(
+            int(classification_arms[name].get("records") or 0)
+            == int(arm.get("records") or 0)
+            and float(classification_arms[name].get("coverage") or 0)
+            >= OSS_RC_A_PROFILE["minimum_coverage"]
+            for name in REQUIRED_CLASSIFICATION_ARMS
+        )
+        and all(
+            int(pairwise[name].get("compared") or 0)
+            >= minimum_pairwise_compared
+            and pairwise[name].get("is_accuracy") is False
+            for name in required_pairs
+        )
+    )
 
     calibration = arm.get("calibration") or {}
     suppression_precision = arm.get("authoritative_suppression_precision")
@@ -326,6 +356,14 @@ def build_staging_evidence(
         _gate("classification_models_frozen", models_frozen, {
             "declared": model_revisions,
             "evaluated": classification_models,
+        }),
+        _gate("classification_three_arm_comparison", comparison_complete, {
+            "selected_arm": classification_arm,
+            "required_arms": sorted(REQUIRED_CLASSIFICATION_ARMS),
+            "observed_arms": sorted(classification_arms),
+            "required_pairs": sorted(required_pairs),
+            "observed_pairs": sorted(pairwise),
+            "minimum_pairwise_compared": minimum_pairwise_compared,
         }),
         _gate(
             "classification_decision_grade",

@@ -28,10 +28,20 @@ def inputs():
             "record_id": f"r{index}",
             "signal_sha256": "sha256:" + f"{index:064x}",
             "expected": label,
-            "predictions": {"hybrid": {
-                "label": label, "confidence": 1.0,
-                "authoritative": True,
-            }},
+            "predictions": {
+                "generative": {
+                    "label": label, "confidence": 1.0,
+                    "authoritative": True,
+                },
+                "semantic": {
+                    "label": label, "confidence": 1.0,
+                    "authoritative": False,
+                },
+                "hybrid": {
+                    "label": label, "confidence": 1.0,
+                    "authoritative": True,
+                },
+            },
         }
         for index, label in enumerate(
             ["routine_noise", "known_pattern", "needs_attention", "real_incident"]
@@ -53,14 +63,22 @@ def inputs():
                 "corpus_digest": corpus_digest,
             },
         },
-        "run": {**run, "model_revisions": {"hybrid": "model-v1"}},
+        "run": {**run, "model_revisions": {
+            "generative": "generative-v1",
+            "semantic": "semantic-v1",
+            "hybrid": "hybrid-v1",
+        }},
         "records": records,
     })
     manifest = {
         "schema_version": "cascade.staging-manifest.v1alpha1",
         "run": run,
         "classification_arm": "hybrid",
-        "model_revisions": {"hybrid": "model-v1"},
+        "model_revisions": {
+            "generative": "generative-v1",
+            "semantic": "semantic-v1",
+            "hybrid": "hybrid-v1",
+        },
         "runtime_run_id": "runtime-run-1",
         "audit_window": {
             "stats_before_at": "2026-08-31T23:59:00Z",
@@ -191,6 +209,17 @@ def test_classifier_agreement_cannot_replace_decision_grade_truth():
         manifest, classification, runtime, before, after,
     )
     assert "classification_decision_grade" in report["failed_gates"]
+
+
+def test_missing_comparison_arm_cannot_pass_a_profile():
+    manifest, classification, runtime, before, after = inputs()
+    classification["arms"].pop("semantic")
+    classification["model_revisions"].pop("semantic")
+    manifest["model_revisions"].pop("semantic")
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "classification_three_arm_comparison" in report["failed_gates"]
 
 
 def test_small_perfect_corpus_cannot_pass_a_profile():
