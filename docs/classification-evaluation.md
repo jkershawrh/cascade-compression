@@ -123,7 +123,24 @@ and disagreement file remain private. The summary contains only counts and a dig
 for sanitized evidence review. A `known_pattern` receipt must cite an authoritative source record;
 repetition alone cannot establish that label.
 
-After adjudication, join each record's truth label to the predictions produced by the generative,
-semantic, and hybrid arms on the exact same records, then run `cascade-evaluate`. A disagreement
-queue selected because models differed is useful for error analysis but is not, by itself, a
-representative holdout; use a separately frozen stratified sample for the release gate.
+After adjudication, run every arm over the exact corpus with the bounded-concurrency runner. It
+requires structured generative confidence, derives immutable revision digests from the backends
+that actually answered, writes a private prediction input without signal payloads, and emits the
+sanitized report:
+
+```bash
+CASCADE_GENERATIVE_STRUCTURED=1 CASCADE_SC_ADDRESS=classifier.example:443 \
+  cascade-classification-run \
+  --corpus private-adjudicated-corpus.jsonl \
+  --holdout-manifest holdout-manifest.json \
+  --adjudication-summary adjudication-summary.json \
+  --commit FULL_GIT_SHA --image-digest sha256:IMAGE_DIGEST \
+  --config-digest sha256:CONFIG_DIGEST --taxonomy-revision taxonomy-v1 \
+  --window-start 2026-09-01T00:00:00Z --window-end 2026-09-01T02:00:00Z \
+  --workers 4 --output-private classification-run-private.json \
+  --output-report classification-evaluation.json
+```
+
+The LLM URL/key/model and llm-d-sc TLS settings use the same environment variables as the service.
+A disagreement queue selected because models differed is useful for error analysis but is not, by
+itself, a representative holdout; use a separately frozen stratified sample for the release gate.

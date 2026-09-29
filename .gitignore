@@ -37,6 +37,7 @@ classifier-ground-truth-*.jsonl
 classifier-review-*.jsonl
 classifier-evidence*.jsonl
 classifier-comparison*.jsonl
+classification-run*.json
 private-candidates*.jsonl
 private-blinded-corpus*.jsonl
 private-adjudicated-corpus*.jsonl

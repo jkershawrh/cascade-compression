@@ -800,10 +800,13 @@ def load_taxonomy_metadata(path: str) -> tuple[str, str]:
 
 
 def classifier_from_environment(*, url: str, key: str, micro_model: str,
-                                macro_model: str, system_prompt: str) -> CascadeClassifier:
+                                macro_model: str, system_prompt: str,
+                                mode_override: str = "") -> CascadeClassifier:
     # Preserve the original OSS behavior unless the operator explicitly opts
     # into semantic comparison or authority.
-    mode = os.getenv("CASCADE_CLASSIFIER_MODE", "generative").strip().lower()
+    mode = (
+        mode_override or os.getenv("CASCADE_CLASSIFIER_MODE", "generative")
+    ).strip().lower()
     recorder = ComparisonRecorder(
         int(os.getenv("CASCADE_CLASSIFIER_EVENTS_MAX", "5000")),
         os.getenv("CASCADE_CLASSIFIER_EVIDENCE_FILE", ""),
