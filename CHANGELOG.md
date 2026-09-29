@@ -27,6 +27,10 @@ All notable changes are documented here. This project follows Semantic Versionin
 - Preserve request-local survivor metadata in the API response.
 - Expose process-scoped original-signal classifier outcomes so queue,
   completion, failure, and drop counts can be reconciled during evaluation.
+- Add a public evidence register and machine-checked evidence classifications for historical
+  benchmark snapshots and calculator assumptions.
+- Enforce private-path, environment-endpoint, credential-shape, and local-home-path boundaries on
+  every tracked file before candidate or release publication.
 
 ## 0.2.0rc1 - 2026-09-11
 

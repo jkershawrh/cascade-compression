@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 import re
 import cascade_compression
 
@@ -53,3 +54,25 @@ def test_workflow_actions_and_runner_are_pinned():
         action_refs = re.findall(r"uses:\s+[^\s@]+@([^\s#]+)", text)
         assert action_refs
         assert all(re.fullmatch(r"[0-9a-f]{40}", ref) for ref in action_refs)
+
+
+def test_contextual_data_cannot_masquerade_as_release_evidence():
+    json_artifacts = (
+        "config/corpora.json",
+        "data/benchmark_matrix.json",
+        "data/hardware_profiles.json",
+        "data/model_profiles.json",
+        "data/workload_profiles.json",
+    )
+    for filename in json_artifacts:
+        payload = json.loads((ROOT / filename).read_text())
+        evidence = payload.get("evidence")
+        assert isinstance(evidence, dict), filename
+        assert evidence.get("release_evidence") is False, filename
+        assert evidence.get("raw_sources_in_repository") is False, filename
+        assert evidence.get("class"), filename
+        assert evidence.get("limitations"), filename
+
+    register = (ROOT / "docs" / "evidence-register.md").read_text()
+    for filename in json_artifacts:
+        assert filename in register

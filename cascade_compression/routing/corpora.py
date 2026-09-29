@@ -86,6 +86,7 @@ class RoutingCorpora(BaseModel):
     """Top-level compiled corpora with strategy-aware lookup."""
 
     version: str = "1.0.0"
+    evidence: Dict[str, Any] = Field(default_factory=dict)
     compiled_at: str = ""
     cluster: str = "xeon-6-bench"
     hardware: str = "Intel Xeon 6 / 128 cores / 256 GB"

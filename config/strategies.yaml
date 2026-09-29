@@ -1,6 +1,8 @@
 # Rubric-graded strategy assignments
 # Each strategy defines optimization flags and expected rubric grades
 # based on the benchmark corpora results.
+# These historical grades demonstrate routing behavior; they are not current
+# release, staging, or production outcome claims. See docs/evidence-register.md.
 
 fraud-triage:
   display_name: "FSI Fraud Triage"

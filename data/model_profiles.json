@@ -1,5 +1,11 @@
 {
-  "_note": "Throughput numbers are ESTIMATED — replace with RHAIIS 3.5 benchmark data when available. These represent single-stream inference on the specified hardware.",
+  "_note": "Model roster for calculator scenarios. Any throughput supplied by a consuming scenario is estimated unless accompanied by a current benchmark artifact.",
+  "evidence": {
+    "class": "scenario_assumptions",
+    "release_evidence": false,
+    "raw_sources_in_repository": false,
+    "limitations": "Model roles and optimization flags are routing inputs, not measured Cascade effectiveness or release evidence."
+  },
   "models": [
     {
       "id": "granite-2b",

@@ -72,6 +72,13 @@ class TestRubricScorecard:
         assert sc.overall_grade == "red"
 
 
+def test_bundled_corpora_is_explicitly_context_only():
+    corpora = load_corpora()
+    assert corpora.evidence["release_evidence"] is False
+    assert corpora.evidence["raw_sources_in_repository"] is False
+    assert corpora.evidence["limitations"]
+
+
 # ---------------------------------------------------------------------------
 # CorporaEntry serialization
 # ---------------------------------------------------------------------------

@@ -1,6 +1,8 @@
 # Per-industry vertical definitions
 # task_overrides map deepfield task_types to the actual benchmark task IDs
 # that exist in the compiled corpora (from intel-tco-calculator benchmarks).
+# Quality-gap numbers are historical experiment context, not current release
+# evidence or production accuracy. See docs/evidence-register.md.
 
 basic:
   display_name: General / Basic

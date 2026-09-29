@@ -78,6 +78,8 @@ For an OSS release-candidate staging claim, bind that report to the exact runtim
 ledger capacity, clean-clone, package/container, and supply-chain checks with
 `cascade-stage-evidence`. The command fails closed unless the fixed `oss-rc-a-v1` quality profile
 and every operational gate pass. See the [staging evidence guide](docs/staging-evidence.md).
+The [public evidence register](docs/evidence-register.md) distinguishes verified mechanics,
+historical routing data, synthetic fixtures, scenario assumptions, and candidate-specific proof.
 
 ### Advisory triage evaluation
 

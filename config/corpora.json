@@ -1,5 +1,11 @@
 {
   "version": "1.0.0",
+  "evidence": {
+    "class": "historical_sanitized_routing_snapshot",
+    "release_evidence": false,
+    "raw_sources_in_repository": false,
+    "limitations": "Suitable for demonstrating routing mechanics. It is not current Cascade RC classification, runtime, compression, safety, or staging evidence."
+  },
   "compiled_at": "2026-08-01T06:10:20.180898+00:00",
   "cluster": "bench-cluster",
   "hardware": "Intel Xeon 6767P",

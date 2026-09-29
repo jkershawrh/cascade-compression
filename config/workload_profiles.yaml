@@ -4,6 +4,8 @@
 # The workload type determines which inference strategy and model
 # assignments to use — the signals themselves are infrastructure signals
 # that LOOK DIFFERENT depending on what the cluster is running.
+# These are illustrative routing profiles, not observed customer workloads or
+# release evidence. See docs/evidence-register.md.
 
 fraud-triage:
   display_name: FSI Fraud Triage

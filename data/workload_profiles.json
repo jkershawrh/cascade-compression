@@ -1,4 +1,10 @@
 {
+  "evidence": {
+    "class": "synthetic_scenario_assumptions",
+    "release_evidence": false,
+    "raw_sources_in_repository": false,
+    "limitations": "Volumes, signal distributions, token counts, and latency requirements are illustrative calculator inputs, not customer observations or production forecasts."
+  },
   "profiles": [
     {
       "id": "dispute-resolution",

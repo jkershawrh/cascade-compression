@@ -1,5 +1,13 @@
 {
-  "_note": "Throughput measured on benchmark-host (Intel Xeon 6767P, 128c). Source: 14 benchmark files. 24 models.",
+  "_note": "Historical sanitized routing/TCO snapshot: 24 CPU model entries, 15 with measured task rows compiled from 14 source files. Raw source files are not published here.",
+  "evidence": {
+    "class": "mixed_historical_measurements_and_scenario_assumptions",
+    "release_evidence": false,
+    "raw_sources_in_repository": false,
+    "measured_scope": "CPU task rows explicitly carrying benchmark data in the Xeon profile.",
+    "assumption_scope": "Hardware acquisition cost, power, GPU throughput, cloud pricing, and unbenchmarked model rows are calculator scenario defaults, not measurements.",
+    "limitations": "Do not use this file to substantiate Cascade RC classification, runtime, compression, safety, production-value, or current vendor-pricing claims."
+  },
   "profiles": [
     {
       "id": "xeon6-6780e",

@@ -1,4 +1,11 @@
 {
+  "evidence": {
+    "class": "historical_sanitized_snapshot",
+    "release_evidence": false,
+    "raw_sources_in_repository": false,
+    "scope": "Legacy model-routing experiments only; not Cascade classification, runtime, or staging proof.",
+    "limitations": "Task quality values use experiment-specific oracles and are not independently adjudicated production accuracy. Reproduce release claims with the current public harnesses and staging evidence gate."
+  },
   "matrix": [
     {
       "model": "bitnet-2b",

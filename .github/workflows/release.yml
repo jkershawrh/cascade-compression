@@ -18,6 +18,8 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.11"
+      - name: Enforce the public/private repository boundary
+        run: python3 scripts/check_public_boundary.py
       - name: Verify tag and package version
         run: |
           python - <<'PY'
