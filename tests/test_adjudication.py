@@ -111,6 +111,14 @@ def test_third_reviewer_can_resolve_only_the_disagreement():
     assert resolved["ground_truth"]["provenance"]["reviewers"] == 3
 
 
+def test_resolution_cannot_cover_an_agreed_case():
+    with pytest.raises(ValueError, match="only disputed cases"):
+        merge_independent_reviews(
+            corpus(), reviews("reviewer-a"), reviews("reviewer-b"),
+            [reviews("reviewer-c")[0]],
+        )
+
+
 def test_same_reviewer_cannot_supply_both_reviews():
     with pytest.raises(ValueError, match="different reviewers"):
         merge_independent_reviews(

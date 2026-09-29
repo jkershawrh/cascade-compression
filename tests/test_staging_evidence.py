@@ -61,6 +61,8 @@ def inputs():
                 "status": "complete", "method": "double-review",
                 "independent": True, "reviewers": 2,
                 "corpus_digest": corpus_digest,
+                "review_evidence_digest": "sha256:" + "d" * 64,
+                "summary_digest": "sha256:" + "e" * 64,
             },
         },
         "run": {**run, "model_revisions": {

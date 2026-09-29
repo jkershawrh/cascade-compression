@@ -81,9 +81,10 @@ def inputs():
         "holdout_digest": digest,
     }
     summary = {
-        "schema_version": "cascade.adjudication-summary.v1alpha1",
+        "schema_version": "cascade.adjudication-summary.v1alpha2",
         "status": "complete", "unresolved": 0, "records": 4,
         "independent_reviewers": 2, "corpus_digest": digest,
+        "review_evidence_digest": "sha256:" + "d" * 64,
     }
     now = datetime.now(timezone.utc)
     run = {

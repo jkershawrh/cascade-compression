@@ -30,7 +30,9 @@ The input format is `cascade.classification-input.v1alpha1`:
       "method": "independent-double-review",
       "independent": true,
       "reviewers": 2,
-      "corpus_digest": "sha256:FROZEN_CORPUS_DIGEST"
+      "corpus_digest": "sha256:FROZEN_CORPUS_DIGEST",
+      "review_evidence_digest": "sha256:PRIVATE_REVIEW_EVIDENCE_DIGEST",
+      "summary_digest": "sha256:ADJUDICATION_SUMMARY_DIGEST"
     }
   },
   "run": {
@@ -42,7 +44,8 @@ The input format is `cascade.classification-input.v1alpha1`:
     "window_end": "2026-09-01T01:00:00Z",
     "model_revisions": {
       "generative": "model-revision",
-      "semantic": "taxonomy-and-encoder-revision"
+      "semantic": "taxonomy-and-encoder-revision",
+      "hybrid": "policy-and-backend-revision"
     }
   },
   "records": [
@@ -60,13 +63,15 @@ The input format is `cascade.classification-input.v1alpha1`:
 }
 ```
 
-The output never includes record identifiers or signal payloads. Its dataset digest binds the report
-to the set of opaque identifiers and adjudicated labels. Its computed corpus digest must also match
-both the frozen holdout manifest and adjudication summary. A report is marked `decision_grade` only
-when that binding succeeds, adjudication is complete and independent with at least two reviewers,
-and the exact run metadata is frozen. Run identity requires a full Git SHA, SHA-256 image and config
-digests, a non-empty taxonomy revision and model revision map, and a timezone-aware positive
-evaluation window. Synthetic, unbound, or incompletely adjudicated inputs remain `mechanics_only`.
+The `cascade.classification-evaluation.v1alpha2` output never includes record identifiers or signal
+payloads. Its dataset digest binds the report to the set of opaque identifiers and adjudicated
+labels. Its computed corpus digest must also match both the frozen holdout manifest and adjudication
+summary. A report is marked `decision_grade` only when that binding succeeds, adjudication is
+complete and independent with at least two reviewers, the report commits to both the private review
+evidence and complete adjudication summary, and the exact run metadata is frozen. Run identity
+requires a full Git SHA, SHA-256 image and config digests, a non-empty taxonomy revision and model
+revision map, and a timezone-aware positive evaluation window. Synthetic, unbound, or incompletely
+adjudicated inputs remain `mechanics_only`.
 
 `authoritative_dangerous_misses` counts important truth labels that an authoritative arm classified
 as suppressive. Non-authoritative semantic suggestions are still represented in the confusion
@@ -119,11 +124,12 @@ The command fails closed with exit code 2 while any disagreement remains. A thir
 reviewer can review only that disagreement file; pass those receipts with `--resolution`. Review
 files must cover the exact corpus, use distinct reviewer references, declare independence from the
 evaluated arms, and bind their signal digest to the exact frozen signal object. The merged corpus
-and disagreement file remain private. Adjudication recomputes each receipt's evidence digest and
-requires a timezone-aware review timestamp, so edited or incomplete receipts fail closed. The
-summary contains only counts and a digest and is suitable for sanitized evidence review. A
-`known_pattern` receipt must cite an authoritative source record; repetition alone cannot establish
-that label.
+and disagreement file remain private. The `cascade.adjudication-summary.v1alpha2` summary commits
+to the exact private receipt set with `review_evidence_digest`. Adjudication recomputes each
+receipt's evidence digest and requires a timezone-aware review timestamp, so edited or incomplete
+receipts fail closed. The summary contains only counts and digests and is suitable for sanitized
+evidence review. A `known_pattern` receipt must cite an authoritative source record; repetition
+alone cannot establish that label.
 
 After adjudication, run every arm over the exact corpus with the bounded-concurrency runner. It
 requires structured generative confidence, derives immutable revision digests from the backends

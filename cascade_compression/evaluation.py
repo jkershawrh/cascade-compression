@@ -287,12 +287,18 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
     computed_corpus_digest = _corpus_digest(rows) if signal_digests_complete else None
     holdout_digest = dataset.get("holdout_digest")
     adjudication_corpus_digest = adjudication.get("corpus_digest")
+    review_evidence_digest = adjudication.get("review_evidence_digest")
+    adjudication_summary_digest = adjudication.get("summary_digest")
     for label, digest in (
         ("holdout_digest", holdout_digest),
         ("adjudication corpus_digest", adjudication_corpus_digest),
     ):
         if digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", str(digest)):
             raise ValueError(f"{label} must be a SHA-256 digest")
+    adjudication_provenance_bound = all(
+        re.fullmatch(r"sha256:[0-9a-f]{64}", str(digest or ""))
+        for digest in (review_evidence_digest, adjudication_summary_digest)
+    )
     corpus_binding = bool(
         computed_corpus_digest
         and computed_corpus_digest == holdout_digest
@@ -314,12 +320,13 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
         and adjudication.get("independent") is True
         and int(adjudication.get("reviewers") or 0) >= 2
         and corpus_binding
+        and adjudication_provenance_bound
         and not missing_run_fields
         and not invalid_run_fields
         and model_revisions_frozen
     )
     return {
-        "schema_version": "cascade.classification-evaluation.v1alpha1",
+        "schema_version": "cascade.classification-evaluation.v1alpha2",
         "dataset": {
             "name": str(dataset.get("name") or "unnamed"),
             "revision": str(dataset.get("revision") or "unversioned"),
@@ -335,6 +342,8 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
                     str(adjudication_corpus_digest)
                     if adjudication_corpus_digest else None
                 ),
+                "review_evidence_digest": review_evidence_digest,
+                "summary_digest": adjudication_summary_digest,
             },
         },
         "run": {field: run.get(field) for field in REQUIRED_RUN_FIELDS},
@@ -346,13 +355,14 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
             "ground_truth_required": True,
             "same_corpus": True,
             "corpus_binding": corpus_binding,
+            "adjudication_provenance_bound": adjudication_provenance_bound,
             "computed_corpus_digest": computed_corpus_digest,
             "missing_run_fields": missing_run_fields,
             "invalid_run_fields": invalid_run_fields,
             "model_revisions_frozen": model_revisions_frozen,
             "contains_raw_records": False,
             "limitations": [] if decision_grade else [
-                "Decision-grade status requires complete independent adjudication by at least two reviewers, exact holdout/adjudication corpus binding, and frozen run metadata."
+                "Decision-grade status requires complete independent adjudication by at least two reviewers, exact holdout/adjudication corpus binding, cryptographically bound review provenance, and frozen run metadata."
             ],
         },
     }

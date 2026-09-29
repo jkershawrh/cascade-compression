@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -30,12 +31,17 @@ def _validate_corpus(corpus: Iterable[dict], holdout: dict,
                      adjudication: dict) -> List[dict]:
     if holdout.get("schema_version") != "cascade.holdout-manifest.v1alpha1":
         raise ValueError("unsupported holdout manifest")
-    if adjudication.get("schema_version") != "cascade.adjudication-summary.v1alpha1":
+    if adjudication.get("schema_version") != "cascade.adjudication-summary.v1alpha2":
         raise ValueError("unsupported adjudication summary")
     if adjudication.get("status") != "complete" or adjudication.get("unresolved") != 0:
         raise ValueError("adjudication is not complete")
     if int(adjudication.get("independent_reviewers") or 0) < 2:
         raise ValueError("adjudication requires two independent reviewers")
+    if not re.fullmatch(
+        r"sha256:[0-9a-f]{64}",
+        str(adjudication.get("review_evidence_digest") or ""),
+    ):
+        raise ValueError("adjudication review evidence is not cryptographically bound")
 
     rows = list(corpus)
     if not rows:
@@ -226,6 +232,10 @@ def run_classification_experiment(
                 "independent": True,
                 "reviewers": int(adjudication["independent_reviewers"]),
                 "corpus_digest": adjudication["corpus_digest"],
+                "review_evidence_digest": adjudication[
+                    "review_evidence_digest"
+                ],
+                "summary_digest": canonical_digest(adjudication),
             },
         },
         "run": output_run,

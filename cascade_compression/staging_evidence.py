@@ -119,7 +119,7 @@ def build_staging_evidence(
     """Bind sanitized artifacts and apply explicit release-proof gates."""
     if manifest.get("schema_version") != "cascade.staging-manifest.v1alpha2":
         raise ValueError("unsupported staging manifest version")
-    if classification.get("schema_version") != "cascade.classification-evaluation.v1alpha1":
+    if classification.get("schema_version") != "cascade.classification-evaluation.v1alpha2":
         raise ValueError("classification artifact has an unsupported version")
     if runtime.get("schema_version") != 1:
         raise ValueError("runtime artifact has an unsupported version")
@@ -209,6 +209,7 @@ def build_staging_evidence(
     classification_evidence = classification.get("evidence") or {}
     classification_consistent = (
         classification_evidence.get("corpus_binding") is True
+        and classification_evidence.get("adjudication_provenance_bound") is True
         and classification_evidence.get("contains_raw_records") is False
         and classification_evidence.get("model_revisions_frozen") is True
         and int((classification.get("dataset") or {}).get("records") or 0)
@@ -450,6 +451,9 @@ def build_staging_evidence(
             classification_consistent,
             {
                 "corpus_binding": classification_evidence.get("corpus_binding"),
+                "adjudication_provenance_bound": classification_evidence.get(
+                    "adjudication_provenance_bound"
+                ),
                 "contains_raw_records": classification_evidence.get(
                     "contains_raw_records"
                 ),

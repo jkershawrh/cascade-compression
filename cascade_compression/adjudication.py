@@ -118,13 +118,32 @@ def merge_independent_reviews(
     }
     if resolution_reviewers & (first_reviewers | second_reviewers):
         raise ValueError("resolution reviewer must be independent of both reviewers")
+    disagreement_ids = {
+        case_id for case_id in cases
+        if any(
+            first[case_id][field] != second[case_id][field]
+            for field in REVIEW_FIELDS
+        )
+    }
+    if not set(resolutions) <= disagreement_ids:
+        raise ValueError("resolution review may cover only disputed cases")
 
     merged = []
     unresolved = []
     disagreements = 0
     label_counts = Counter()
+    review_evidence = []
     for case_id, case in cases.items():
         left, right = first[case_id], second[case_id]
+        review_evidence.append({
+            "case_id": case_id,
+            "first": left["evidence_ref"],
+            "second": right["evidence_ref"],
+            "resolution": (
+                resolutions[case_id]["evidence_ref"]
+                if case_id in resolutions else None
+            ),
+        })
         signal = case.get("signal")
         if not isinstance(signal, dict) or not signal:
             raise ValueError("corpus case is missing its signal evidence")
@@ -172,12 +191,15 @@ def merge_independent_reviews(
         })
 
     summary = {
-        "schema_version": "cascade.adjudication-summary.v1alpha1",
+        "schema_version": "cascade.adjudication-summary.v1alpha2",
         "status": "complete" if not unresolved else "incomplete",
         "corpus_digest": _digest([
             {"case_id": case_id, "signal_sha256": first[case_id]["signal_sha256"]}
             for case_id in sorted(cases)
         ]),
+        "review_evidence_digest": _digest(sorted(
+            review_evidence, key=lambda item: item["case_id"],
+        )),
         "records": len(cases),
         "adjudicated": len(merged),
         "disagreements": disagreements,
