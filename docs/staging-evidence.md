@@ -14,13 +14,14 @@ cascade-stage-evidence \
   --output staging-evidence.json
 ```
 
-The manifest uses `cascade.staging-manifest.v1alpha3` and declares the exact commit, image digest,
+The manifest uses `cascade.staging-manifest.v1alpha4` and declares the exact commit, image digest,
 configuration digest, taxonomy revision, frozen model revisions, runtime run ID, an audit snapshot
 window that brackets the run, the complete candidate manifest downloaded from the manual staging
 workflow, release verification, and ledger health. The candidate manifest must identify the same
 commit and immutable image digest, predate the test window, and attest both target architectures,
-SBOM, and provenance. The staging manifest must also include a healthy, capacity-monitored ledger
-outbox using the fixed `immutable-relay-and-archive-v1` policy. The outbox must have no pending,
+container SBOM/provenance, package SBOM/provenance, and exact wheel/source/SBOM hashes. The staging
+manifest must also include a healthy, capacity-monitored ledger outbox using the fixed
+`immutable-relay-and-archive-v1` policy. The outbox must have no pending,
 in-flight, or failed rows; no undelivered row may have been deleted; archival must be verified; the
 relay must succeed inside the measured audit window; and a non-destructive recovery drill must have
 completed within the previous 90 days.

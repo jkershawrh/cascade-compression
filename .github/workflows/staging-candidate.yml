@@ -9,6 +9,10 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
@@ -32,6 +36,23 @@ jobs:
           cd /tmp
           "$GITHUB_WORKSPACE/.wheel-venv/bin/python" \
             "$GITHUB_WORKSPACE/scripts/release_smoke.py"
+      - name: Generate candidate package SBOM
+        uses: anchore/sbom-action@v0
+        with:
+          path: dist
+          format: spdx-json
+          output-file: dist/cascade-compression-candidate-${{ github.sha }}.spdx.json
+          upload-artifact: false
+      - name: Attest candidate package artifacts
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: "dist/*"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cascade-staging-package-${{ github.sha }}
+          path: dist/*
+          retention-days: 90
+          if-no-files-found: error
 
   container:
     needs: verify
@@ -72,6 +93,10 @@ jobs:
           subject-name: ghcr.io/${{ github.repository }}
           subject-digest: ${{ steps.push.outputs.digest }}
           push-to-registry: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: cascade-staging-package-${{ github.sha }}
+          path: candidate-package
       - name: Write immutable candidate manifest
         env:
           CANDIDATE_COMMIT: ${{ github.sha }}
@@ -84,10 +109,26 @@ jobs:
           python - <<'PY'
           import json
           import os
+          import hashlib
+          from pathlib import Path
           from datetime import datetime, timezone
 
+          package_artifacts = []
+          for path in sorted(Path("candidate-package").iterdir()):
+              if not path.is_file():
+                  continue
+              payload = path.read_bytes()
+              package_artifacts.append({
+                  "name": path.name,
+                  "sha256": "sha256:" + hashlib.sha256(payload).hexdigest(),
+                  "bytes": len(payload),
+              })
+          assert any(item["name"].endswith(".whl") for item in package_artifacts)
+          assert any(item["name"].endswith(".tar.gz") for item in package_artifacts)
+          assert any(item["name"].endswith(".spdx.json") for item in package_artifacts)
+
           manifest = {
-              "schema_version": "cascade.staging-candidate.v1alpha1",
+              "schema_version": "cascade.staging-candidate.v1alpha2",
               "repository": os.environ["CANDIDATE_REPOSITORY"],
               "commit": os.environ["CANDIDATE_COMMIT"],
               "image": os.environ["CANDIDATE_IMAGE"],
@@ -96,8 +137,11 @@ jobs:
               "workflow_run_attempt": int(os.environ["CANDIDATE_RUN_ATTEMPT"]),
               "generated_at": datetime.now(timezone.utc).isoformat(),
               "multi_arch": ["linux/amd64", "linux/arm64"],
-              "sbom": True,
-              "provenance": True,
+              "container_sbom": True,
+              "container_provenance": True,
+              "package_sbom": True,
+              "package_provenance": True,
+              "package_artifacts": package_artifacts,
           }
           with open("staging-candidate-manifest.json", "w", encoding="utf-8") as handle:
               json.dump(manifest, handle, indent=2, sort_keys=True)

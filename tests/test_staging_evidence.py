@@ -73,10 +73,10 @@ def inputs():
         "records": records,
     })
     manifest = {
-        "schema_version": "cascade.staging-manifest.v1alpha3",
+        "schema_version": "cascade.staging-manifest.v1alpha4",
         "run": run,
         "candidate": {
-            "schema_version": "cascade.staging-candidate.v1alpha1",
+            "schema_version": "cascade.staging-candidate.v1alpha2",
             "repository": "example/cascade-compression",
             "commit": COMMIT,
             "image": "ghcr.io/example/cascade-compression",
@@ -85,8 +85,18 @@ def inputs():
             "workflow_run_attempt": 1,
             "generated_at": "2026-08-31T23:30:00Z",
             "multi_arch": ["linux/amd64", "linux/arm64"],
-            "sbom": True,
-            "provenance": True,
+            "container_sbom": True,
+            "container_provenance": True,
+            "package_sbom": True,
+            "package_provenance": True,
+            "package_artifacts": [
+                {"name": "cascade.whl", "sha256": "sha256:" + "1" * 64,
+                 "bytes": 100},
+                {"name": "cascade.tar.gz", "sha256": "sha256:" + "2" * 64,
+                 "bytes": 100},
+                {"name": "cascade.spdx.json", "sha256": "sha256:" + "3" * 64,
+                 "bytes": 100},
+            ],
         },
         "classification_arm": "hybrid",
         "model_revisions": {
@@ -335,6 +345,16 @@ def test_artifact_from_different_commit_is_rejected():
 def test_candidate_manifest_must_match_tested_image():
     manifest, classification, runtime, before, after = inputs()
     manifest["candidate"]["image_digest"] = "sha256:" + "d" * 64
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "candidate_artifact_bound" in report["failed_gates"]
+
+
+def test_candidate_requires_bound_package_supply_chain():
+    manifest, classification, runtime, before, after = inputs()
+    manifest["candidate"]["package_provenance"] = False
+    manifest["candidate"]["package_artifacts"] = []
     report = build_staging_evidence(
         manifest, classification, runtime, before, after,
     )

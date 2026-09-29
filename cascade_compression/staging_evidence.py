@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, Optional
 
@@ -120,7 +121,7 @@ def build_staging_evidence(
     stats_after: Dict[str, Any],
 ) -> dict:
     """Bind sanitized artifacts and apply explicit release-proof gates."""
-    if manifest.get("schema_version") != "cascade.staging-manifest.v1alpha3":
+    if manifest.get("schema_version") != "cascade.staging-manifest.v1alpha4":
         raise ValueError("unsupported staging manifest version")
     if classification.get("schema_version") != "cascade.classification-evaluation.v1alpha2":
         raise ValueError("classification artifact has an unsupported version")
@@ -154,15 +155,38 @@ def build_staging_evidence(
     candidate = manifest.get("candidate") or {}
     candidate_bound = (
         candidate.get("schema_version")
-        == "cascade.staging-candidate.v1alpha1"
+        == "cascade.staging-candidate.v1alpha2"
         and bool(candidate.get("repository"))
         and bool(candidate.get("image"))
         and candidate.get("commit") == run.get("commit")
         and candidate.get("image_digest") == run.get("image_digest")
         and _positive_int(candidate.get("workflow_run_id"))
         and _positive_int(candidate.get("workflow_run_attempt"))
-        and candidate.get("sbom") is True
-        and candidate.get("provenance") is True
+        and candidate.get("container_sbom") is True
+        and candidate.get("container_provenance") is True
+        and candidate.get("package_sbom") is True
+        and candidate.get("package_provenance") is True
+        and len(candidate.get("package_artifacts") or []) >= 3
+        and all(
+            bool(item.get("name"))
+            and re.fullmatch(
+                r"sha256:[0-9a-f]{64}", str(item.get("sha256") or ""),
+            )
+            and int(item.get("bytes") or 0) > 0
+            for item in (candidate.get("package_artifacts") or [])
+        )
+        and any(
+            str(item.get("name") or "").endswith(".whl")
+            for item in (candidate.get("package_artifacts") or [])
+        )
+        and any(
+            str(item.get("name") or "").endswith(".tar.gz")
+            for item in (candidate.get("package_artifacts") or [])
+        )
+        and any(
+            str(item.get("name") or "").endswith(".spdx.json")
+            for item in (candidate.get("package_artifacts") or [])
+        )
         and {"linux/amd64", "linux/arm64"}
         <= set(candidate.get("multi_arch") or [])
     )
@@ -441,8 +465,11 @@ def build_staging_evidence(
             "workflow_run_attempt": candidate.get("workflow_run_attempt"),
             "candidate_precedes_run": candidate_precedes_run,
             "multi_arch": candidate.get("multi_arch"),
-            "sbom": candidate.get("sbom"),
-            "provenance": candidate.get("provenance"),
+            "container_sbom": candidate.get("container_sbom"),
+            "container_provenance": candidate.get("container_provenance"),
+            "package_sbom": candidate.get("package_sbom"),
+            "package_provenance": candidate.get("package_provenance"),
+            "package_artifacts": len(candidate.get("package_artifacts") or []),
         }),
         _gate("classification_same_run", run_matches, {
             "arm": classification_arm,

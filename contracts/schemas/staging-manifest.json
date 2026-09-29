@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cascade-compression.org/contracts/cascade.staging-manifest/1.0.0-alpha.3",
+  "$id": "https://cascade-compression.org/contracts/cascade.staging-manifest/1.0.0-alpha.4",
   "title": "Cascade Staging Manifest",
   "type": "object",
   "required": ["schema_version", "run", "candidate", "classification_arm", "model_revisions", "runtime_run_id", "audit_window", "ledger", "verification"],
   "properties": {
-    "schema_version": {"const": "cascade.staging-manifest.v1alpha3"},
+    "schema_version": {"const": "cascade.staging-manifest.v1alpha4"},
     "run": {
       "type": "object",
       "required": ["commit", "image_digest", "config_digest", "taxonomy_revision", "window_start", "window_end"],
@@ -21,9 +21,9 @@
     },
     "candidate": {
       "type": "object",
-      "required": ["schema_version", "repository", "commit", "image", "image_digest", "workflow_run_id", "workflow_run_attempt", "generated_at", "multi_arch", "sbom", "provenance"],
+      "required": ["schema_version", "repository", "commit", "image", "image_digest", "workflow_run_id", "workflow_run_attempt", "generated_at", "multi_arch", "container_sbom", "container_provenance", "package_sbom", "package_provenance", "package_artifacts"],
       "properties": {
-        "schema_version": {"const": "cascade.staging-candidate.v1alpha1"},
+        "schema_version": {"const": "cascade.staging-candidate.v1alpha2"},
         "repository": {"type": "string", "minLength": 1},
         "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
         "image": {"type": "string", "minLength": 1},
@@ -37,8 +37,25 @@
           "minItems": 2,
           "uniqueItems": true
         },
-        "sbom": {"const": true},
-        "provenance": {"const": true}
+        "container_sbom": {"const": true},
+        "container_provenance": {"const": true},
+        "package_sbom": {"const": true},
+        "package_provenance": {"const": true},
+        "package_artifacts": {
+          "type": "array",
+          "minItems": 3,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "required": ["name", "sha256", "bytes"],
+            "properties": {
+              "name": {"type": "string", "minLength": 1},
+              "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+              "bytes": {"type": "integer", "minimum": 1}
+            },
+            "additionalProperties": false
+          }
+        }
       },
       "additionalProperties": false
     },
