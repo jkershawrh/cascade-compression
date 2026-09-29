@@ -1,0 +1,114 @@
+name: Staging evidence
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_commit:
+        description: Full Git SHA of the tested staging candidate
+        required: true
+        type: string
+      evidence_base64:
+        description: Base64-encoded sanitized staging-evidence JSON
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.candidate_commit }}
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.11"
+      - run: uv sync --extra dev --locked
+      - name: Decode bounded sanitized evidence
+        env:
+          EVIDENCE_BASE64: ${{ inputs.evidence_base64 }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          encoded = os.environ["EVIDENCE_BASE64"]
+          if len(encoded) > 65535:
+              raise SystemExit("encoded staging evidence exceeds workflow input limit")
+          payload = base64.b64decode(encoded, validate=True)
+          if not payload or len(payload) > 49152:
+              raise SystemExit("decoded staging evidence is empty or too large")
+          Path("staging-evidence.json").write_bytes(payload)
+          PY
+      - name: Validate sanitized evidence and locate candidate run
+        id: preflight
+        env:
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+        run: |
+          uv run python scripts/verify_staging_handoff.py \
+            --evidence staging-evidence.json \
+            --expected-commit "$CANDIDATE_COMMIT" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --output handoff-summary.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          summary = json.load(open("handoff-summary.json", encoding="utf-8"))
+          print(f"candidate_run_id={summary['candidate_workflow_run_id']}")
+          PY
+      - name: Download exact candidate manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+          CANDIDATE_RUN_ID: ${{ steps.preflight.outputs.candidate_run_id }}
+        run: |
+          gh run download "$CANDIDATE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "cascade-staging-candidate-$CANDIDATE_COMMIT" \
+            --dir candidate
+          gh run download "$CANDIDATE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "cascade-staging-package-$CANDIDATE_COMMIT" \
+            --dir candidate-package
+      - name: Verify candidate provenance and complete handoff binding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_COMMIT: ${{ inputs.candidate_commit }}
+        run: |
+          gh attestation verify candidate/staging-candidate-manifest.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/staging-candidate.yml" \
+            --source-digest "$CANDIDATE_COMMIT"
+          for artifact in candidate-package/*; do
+            gh attestation verify "$artifact" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/staging-candidate.yml" \
+              --source-digest "$CANDIDATE_COMMIT"
+          done
+          uv run python scripts/verify_staging_handoff.py \
+            --evidence staging-evidence.json \
+            --candidate-manifest candidate/staging-candidate-manifest.json \
+            --candidate-package candidate-package \
+            --expected-commit "$CANDIDATE_COMMIT" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --output handoff-summary.json
+      - name: Attest sanitized staging evidence
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: staging-evidence.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cascade-staging-evidence-${{ inputs.candidate_commit }}
+          path: |
+            staging-evidence.json
+            candidate/staging-candidate-manifest.json
+            handoff-summary.json
+          retention-days: 90
+          if-no-files-found: error

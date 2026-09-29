@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections import Counter, defaultdict
 from copy import deepcopy
@@ -29,6 +30,26 @@ UNSAFE_SUPPRESSIVE_PHRASES = (
     "service outage",
     "terminated unexpectedly",
 )
+COMPARISON_GATES = frozenset({
+    "same_holdout",
+    "all_labels_supported",
+    "no_accuracy_regression",
+    "no_coverage_regression",
+    "zero_authoritative_false_suppressions",
+    "no_per_label_recall_regression",
+})
+
+
+def _parse_time(value: str) -> datetime:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("timestamp must include a timezone")
+    return parsed
+
+
+def _canonical_digest(document: Dict[str, Any]) -> str:
+    payload = json.dumps(document, sort_keys=True, separators=(",", ":"))
+    return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def validate_taxonomy(taxonomy: Dict[str, Any]) -> None:
@@ -58,7 +79,16 @@ def validate_taxonomy(taxonomy: Dict[str, Any]) -> None:
                 )
             seen[normalized] = label
 
-    top_k = int(taxonomy.get("top_k", 1))
+            if label in SUPPRESSIVE_LABELS and any(
+                phrase in normalized for phrase in UNSAFE_SUPPRESSIVE_PHRASES
+            ):
+                raise ValueError(
+                    f"{label} contains incident language: {value}"
+                )
+
+    top_k = taxonomy.get("top_k", 1)
+    if type(top_k) is not int:
+        raise ValueError("top_k must be an integer")
     if top_k < 1 or minimum is None or top_k > minimum:
         raise ValueError("top_k must be between 1 and the smallest anchor group")
 
@@ -181,13 +211,22 @@ def build_candidate_taxonomy(
 ) -> dict:
     """Create a versioned candidate. The result is never active by itself."""
     validate_taxonomy(current)
+    if type(max_per_label) is not int or max_per_label < 1:
+        raise ValueError("max_per_label must be a positive integer")
+    created = created_at or datetime.now(timezone.utc).isoformat()
+    _parse_time(created)
     candidate = deepcopy(current)
     additions = {}
     for label in candidate["labels"]:
         room = max(0, max_per_label - len(candidate["anchors"][label]))
-        values = list(accepted.get(label, []))[:room]
+        proposed = accepted.get(label, [])
+        if not isinstance(proposed, list):
+            raise ValueError(f"accepted anchors for {label} must be a list")
+        values = proposed[:room]
         candidate["anchors"][label].extend(values)
         additions[label] = values
+    if not any(additions.values()):
+        raise ValueError("candidate must contain at least one anchor addition")
 
     canonical = json.dumps(
         {"parent": current.get("taxonomy_revision", ""), "additions": additions},
@@ -202,13 +241,13 @@ def build_candidate_taxonomy(
         f"cascade-classification-anchors-v{next_version}-candidate-{digest}"
     )
     candidate["top_k"] = min(
-        int(candidate.get("top_k", 1)),
+        candidate.get("top_k", 1),
         min(len(values) for values in candidate["anchors"].values()),
     )
     candidate["lifecycle"] = {
         "status": "candidate",
         "parent_revision": old_revision,
-        "created_at": created_at or datetime.now(timezone.utc).isoformat(),
+        "created_at": created,
         "proposal_digest": digest,
         "additions": additions,
         "requires_held_out_evaluation": True,
@@ -224,10 +263,18 @@ def build_candidate_taxonomy(
 def evaluate_holdout(
     rows: Iterable[Dict[str, Any]],
     *,
+    taxonomy_revision: str,
     normal_margin: float = 0.20,
     suppress_margin: float = 0.40,
 ) -> dict:
     """Evaluate predictions against adjudicated held-out labels."""
+    if not isinstance(taxonomy_revision, str) or not taxonomy_revision.strip():
+        raise ValueError("taxonomy_revision is required")
+    if not all(
+        type(value) in (int, float) and math.isfinite(value) and 0 <= value <= 1
+        for value in (normal_margin, suppress_margin)
+    ):
+        raise ValueError("authority margins must be finite numbers from zero to one")
     materialized = list(rows)
     confusion = {
         expected: {predicted: 0 for predicted in sorted(CASCADE_LABELS)}
@@ -250,10 +297,14 @@ def evaluate_holdout(
             raise ValueError(f"duplicate holdout record_id: {record_id}")
         seen_record_ids.add(record_id)
         if expected not in CASCADE_LABELS or predicted not in CASCADE_LABELS:
-            continue
+            raise ValueError(f"invalid holdout label for record {record_id}")
         holdout_identity.append({"record_id": record_id, "expected": expected})
         valid += 1
-        margin = float(row.get("margin") or 0.0)
+        margin = row.get("margin")
+        if type(margin) not in (int, float) or not math.isfinite(margin):
+            raise ValueError(f"invalid margin for record {record_id}")
+        if not 0 <= margin <= 1:
+            raise ValueError(f"margin outside zero-to-one range for record {record_id}")
         threshold = suppress_margin if predicted in SUPPRESSIVE_LABELS else normal_margin
         has_authority = margin >= threshold
         authoritative += int(has_authority)
@@ -272,6 +323,8 @@ def evaluate_holdout(
         separators=(",", ":"),
     ).encode("utf-8")).hexdigest()
     return {
+        "schema_version": "cascade.anchor-evaluation.v1alpha1",
+        "taxonomy_revision": taxonomy_revision,
         "records": valid,
         "holdout_digest": holdout_digest,
         "accuracy": round(sum(correct.values()) / valid, 4) if valid else 0.0,
@@ -289,6 +342,12 @@ def evaluate_holdout(
 
 def compare_evaluations(current: dict, candidate: dict) -> dict:
     """Apply conservative activation gates to two held-out evaluations."""
+    if current.get("schema_version") != "cascade.anchor-evaluation.v1alpha1":
+        raise ValueError("unsupported current anchor evaluation")
+    if candidate.get("schema_version") != "cascade.anchor-evaluation.v1alpha1":
+        raise ValueError("unsupported candidate anchor evaluation")
+    if not current.get("taxonomy_revision") or not candidate.get("taxonomy_revision"):
+        raise ValueError("both evaluations require taxonomy revisions")
     if not current.get("records") or current.get("records") != candidate.get("records"):
         raise ValueError("current and candidate must evaluate the same non-empty holdout")
     if (
@@ -303,7 +362,16 @@ def compare_evaluations(current: dict, candidate: dict) -> dict:
         if old is not None and (new is None or new < old):
             recall_regressions.append(label)
 
+    same_holdout = current["holdout_digest"] == candidate["holdout_digest"]
+    all_labels_supported = (
+        set(current.get("support", {})) == set(CASCADE_LABELS)
+        and set(candidate.get("support", {})) == set(CASCADE_LABELS)
+        and all(current["support"][label] > 0 for label in CASCADE_LABELS)
+        and all(candidate["support"][label] > 0 for label in CASCADE_LABELS)
+    )
     gates = {
+        "same_holdout": same_holdout,
+        "all_labels_supported": all_labels_supported,
         "no_accuracy_regression": candidate["accuracy"] >= current["accuracy"],
         "no_coverage_regression": (
             candidate["authority_coverage"] >= current["authority_coverage"]
@@ -313,7 +381,13 @@ def compare_evaluations(current: dict, candidate: dict) -> dict:
         ),
         "no_per_label_recall_regression": not recall_regressions,
     }
-    return {
+    comparison = {
+        "schema_version": "cascade.anchor-comparison.v1alpha1",
+        "current_revision": current["taxonomy_revision"],
+        "candidate_revision": candidate["taxonomy_revision"],
+        "holdout_digest": current["holdout_digest"],
+        "current_evaluation_digest": _canonical_digest(current),
+        "candidate_evaluation_digest": _canonical_digest(candidate),
         "eligible_for_approval": all(gates.values()),
         "gates": gates,
         "recall_regressions": recall_regressions,
@@ -322,6 +396,8 @@ def compare_evaluations(current: dict, candidate: dict) -> dict:
             candidate["authority_coverage"] - current["authority_coverage"], 4
         ),
     }
+    comparison["comparison_digest"] = _canonical_digest(comparison)
+    return comparison
 
 
 def approve_candidate(
@@ -336,10 +412,27 @@ def approve_candidate(
     lifecycle = candidate.get("lifecycle", {})
     if lifecycle.get("status") != "candidate":
         raise ValueError("only a candidate taxonomy can be approved")
-    if not comparison.get("eligible_for_approval"):
+    if comparison.get("schema_version") != "cascade.anchor-comparison.v1alpha1":
+        raise ValueError("unsupported anchor comparison")
+    gates = comparison.get("gates")
+    if not isinstance(gates, dict) or set(gates) != COMPARISON_GATES:
+        raise ValueError("comparison does not contain the complete approval gates")
+    digest_input = dict(comparison)
+    claimed_digest = digest_input.pop("comparison_digest", None)
+    if claimed_digest != _canonical_digest(digest_input):
+        raise ValueError("comparison digest is invalid")
+    if comparison.get("candidate_revision") != candidate.get("taxonomy_revision"):
+        raise ValueError("comparison is not bound to this candidate revision")
+    if comparison.get("current_revision") != lifecycle.get("parent_revision"):
+        raise ValueError("comparison is not bound to the parent revision")
+    if comparison.get("eligible_for_approval") is not True or not all(
+        value is True for value in gates.values()
+    ):
         raise ValueError("candidate did not pass held-out evaluation gates")
-    if not approved_by.strip():
+    if not isinstance(approved_by, str) or not approved_by.strip():
         raise ValueError("approved_by is required")
+    approval_time = approved_at or datetime.now(timezone.utc).isoformat()
+    _parse_time(approval_time)
 
     approved = deepcopy(candidate)
     approved["taxonomy_revision"] = approved["taxonomy_revision"].replace(
@@ -348,7 +441,7 @@ def approve_candidate(
     approved["lifecycle"].update({
         "status": "approved",
         "approved_by": approved_by.strip(),
-        "approved_at": approved_at or datetime.now(timezone.utc).isoformat(),
+        "approved_at": approval_time,
         "evaluation": comparison,
         "activation_required": True,
     })

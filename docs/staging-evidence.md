@@ -64,6 +64,11 @@ signal payloads, credentials, cluster names, routes, and deployment manifests. I
 private evidence should remain in ignored or external evidence storage; only the sanitized output
 is eligible for publication after review.
 
+The output contract is `cascade.staging-evidence.v1alpha2`. Its candidate summary includes the
+candidate workflow run, image digest, and candidate-manifest digest needed to carry the exact tested
+artifacts into release. Submit a successful sanitized output to the manual **Staging evidence**
+workflow as described in `RELEASING.md`; a release tag has no path around that attested handoff.
+
 After downloading the candidate manifest from its workflow run, verify its attestation before
 embedding it in the staging manifest:
 

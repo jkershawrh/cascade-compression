@@ -51,6 +51,8 @@ class PromotionEvent:
     reason: str
     batch_id: Optional[str] = None
     human_approved: bool = False
+    human_approved_by: Optional[str] = None
+    human_approved_at: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -66,6 +68,8 @@ class PromotionEvent:
                 "false_negative_rate": round(self.false_negative_rate, 4),
                 "false_negative_count": self.false_negative_count,
                 "human_approved": self.human_approved,
+                "human_approved_by": self.human_approved_by,
+                "human_approved_at": self.human_approved_at,
                 "batch_id": self.batch_id,
             },
             "reason": self.reason,
@@ -78,6 +82,11 @@ class AgentMetrics:
     name: str = ""
     tier: str = "draft"
     samples_tested: int = 0
+    true_positive_count: int = 0
+    false_positive_count: int = 0
+    true_negative_count: int = 0
+    false_negative_count: int = 0
+    classified_count: int = 0
     accuracy: float = 0.0
     false_positive_rate: float = 0.0
     false_negative_rate: float = 0.0
@@ -85,6 +94,8 @@ class AgentMetrics:
     rubric_status: str = "red"
     human_reviewed: bool = False
     human_approved: bool = False
+    human_approved_by: Optional[str] = None
+    human_approved_at: Optional[str] = None
     promoted_at: Optional[datetime] = None
     promotion_history: List[Dict[str, Any]] = field(default_factory=list)
     demotion_history: List[Dict[str, Any]] = field(default_factory=list)
@@ -211,10 +222,22 @@ class PromotionEngine:
 
         total = len(signals)
         agent.samples_tested += total
-        agent.accuracy = (tp + tn) / total if total > 0 else 0.0
-        agent.false_positive_rate = fp / (fp + tn) if (fp + tn) > 0 else 0.0
-        agent.false_negative_rate = fn / (fn + tp) if (fn + tp) > 0 else 0.0
-        agent.coverage = classified / total if total > 0 else 0.0
+        agent.true_positive_count += tp
+        agent.false_positive_count += fp
+        agent.true_negative_count += tn
+        agent.false_negative_count += fn
+        agent.classified_count += classified
+        correct = agent.true_positive_count + agent.true_negative_count
+        negatives = agent.false_positive_count + agent.true_negative_count
+        positives = agent.false_negative_count + agent.true_positive_count
+        agent.accuracy = correct / agent.samples_tested
+        agent.false_positive_rate = (
+            agent.false_positive_count / negatives if negatives else 0.0
+        )
+        agent.false_negative_rate = (
+            agent.false_negative_count / positives if positives else 0.0
+        )
+        agent.coverage = agent.classified_count / agent.samples_tested
         agent.last_batch_fn_count = fn
 
         if agent.false_negative_rate > 0.20:
@@ -260,8 +283,15 @@ class PromotionEngine:
         agent.deactivated = True
         agent.deactivated_at = now
         agent.samples_tested = 0
+        agent.true_positive_count = 0
+        agent.false_positive_count = 0
+        agent.true_negative_count = 0
+        agent.false_negative_count = 0
+        agent.classified_count = 0
         agent.rubric_status = "red"
         agent.human_approved = False
+        agent.human_approved_by = None
+        agent.human_approved_at = None
 
         log.warning("Agent '%s' DEMOTED: %s → draft (%s)", agent.name, from_tier, reason)
         return agent
@@ -272,9 +302,25 @@ class PromotionEngine:
             return agent
 
         if agent.tier == "pending_approval":
-            if agent.human_approved:
+            nano_requirements = self.thresholds.get("nano", {})
+            approval_bound = (
+                agent.human_approved is True
+                and bool(agent.human_approved_by)
+                and bool(agent.human_approved_at)
+            )
+            if approval_bound and self._meets_requirements(
+                agent, nano_requirements,
+            ):
                 self._do_promote(agent, "pending_approval", "nano",
                                  reason="human approved for activation")
+            elif approval_bound:
+                agent.human_approved = False
+                agent.human_approved_by = None
+                agent.human_approved_at = None
+                log.warning(
+                    "Agent '%s' approval invalidated by regressed evidence",
+                    agent.name,
+                )
             return agent
 
         current_idx = TIER_ORDER.index(agent.tier) if agent.tier in TIER_ORDER else 0
@@ -294,6 +340,30 @@ class PromotionEngine:
 
         return agent
 
+    def approve(
+        self,
+        agent: AgentMetrics,
+        *,
+        approved_by: str,
+        approved_at: Optional[str] = None,
+    ) -> AgentMetrics:
+        """Record a named, time-bound approval for an inactive candidate."""
+        if agent.tier != "pending_approval":
+            raise ValueError("only a pending_approval agent can be approved")
+        if not isinstance(approved_by, str) or not approved_by.strip():
+            raise ValueError("approved_by is required")
+        timestamp = approved_at or datetime.now(timezone.utc).isoformat()
+        try:
+            parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        except (AttributeError, ValueError) as exc:
+            raise ValueError("approved_at must be an ISO-8601 timestamp") from exc
+        if parsed.tzinfo is None:
+            raise ValueError("approved_at must include a timezone")
+        agent.human_approved = True
+        agent.human_approved_by = approved_by.strip()
+        agent.human_approved_at = parsed.isoformat()
+        return agent
+
     def _do_promote(self, agent: AgentMetrics, from_tier: str, to_tier: str, reason: str) -> None:
         now = datetime.now(timezone.utc)
         event = PromotionEvent(
@@ -309,6 +379,8 @@ class PromotionEngine:
             false_negative_count=agent.last_batch_fn_count,
             reason=reason,
             human_approved=agent.human_approved,
+            human_approved_by=agent.human_approved_by,
+            human_approved_at=agent.human_approved_at,
         )
         self._pending_events.append(event)
 

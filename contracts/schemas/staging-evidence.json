@@ -1,15 +1,28 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cascade-compression.org/contracts/cascade.staging-evidence/1.0.0-alpha.1",
+  "$id": "https://cascade-compression.org/contracts/cascade.staging-evidence/1.0.0-alpha.2",
   "title": "Cascade Staging Evidence",
   "type": "object",
-  "required": ["schema_version", "status", "run", "classification", "runtime", "audit", "artifact_digests", "gates", "failed_gates", "contains_raw_records"],
+  "required": ["schema_version", "status", "run", "candidate", "classification", "runtime", "audit", "artifact_digests", "gates", "failed_gates", "contains_raw_records"],
   "properties": {
-    "schema_version": {"const": "cascade.staging-evidence.v1alpha1"},
+    "schema_version": {"const": "cascade.staging-evidence.v1alpha2"},
     "status": {"enum": ["incomplete", "staging_success"]},
     "run": {
       "type": "object",
       "required": ["commit", "image_digest", "config_digest", "taxonomy_revision", "window_start", "window_end"]
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["repository", "image", "image_digest", "workflow_run_id", "workflow_run_attempt", "manifest_digest"],
+      "properties": {
+        "repository": {"type": "string", "minLength": 1},
+        "image": {"type": "string", "minLength": 1},
+        "image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "workflow_run_id": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+        "workflow_run_attempt": {"type": "integer", "minimum": 1},
+        "manifest_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      },
+      "additionalProperties": false
     },
     "classification": {
       "type": "object",

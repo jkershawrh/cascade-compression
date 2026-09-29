@@ -99,7 +99,7 @@ def test_taxonomy_rejects_cross_label_duplicate_anchor(taxonomy):
         validate_taxonomy(taxonomy)
 
 
-def holdout(predictions):
+def holdout(predictions, taxonomy_revision="cascade-classification-anchors-v1"):
     expected = [
         "routine_noise", "known_pattern", "needs_attention", "real_incident"
     ]
@@ -111,7 +111,7 @@ def holdout(predictions):
             "margin": 0.60,
         }
         for index, (truth, prediction) in enumerate(zip(expected, predictions))
-    ])
+    ], taxonomy_revision=taxonomy_revision)
 
 
 def test_holdout_evaluation_detects_authoritative_false_suppression():
@@ -125,10 +125,10 @@ def test_holdout_evaluation_detects_authoritative_false_suppression():
 def test_comparison_requires_zero_false_suppression_and_no_regression():
     current = holdout([
         "routine_noise", "known_pattern", "needs_attention", "real_incident"
-    ])
+    ], "current-v1")
     unsafe = holdout([
         "routine_noise", "known_pattern", "routine_noise", "real_incident"
-    ])
+    ], "candidate-v2")
     comparison = compare_evaluations(current, unsafe)
     assert not comparison["eligible_for_approval"]
     assert not comparison["gates"]["zero_authoritative_false_suppressions"]
@@ -138,11 +138,11 @@ def test_comparison_rejects_different_holdouts_with_equal_counts():
     current = evaluate_holdout([{
         "record_id": "record-a", "expected": "routine_noise",
         "predicted": "routine_noise", "margin": 0.60,
-    }])
+    }], taxonomy_revision="current-v1")
     candidate = evaluate_holdout([{
         "record_id": "record-b", "expected": "routine_noise",
         "predicted": "routine_noise", "margin": 0.60,
-    }])
+    }], taxonomy_revision="candidate-v2")
     with pytest.raises(ValueError, match="same holdout records"):
         compare_evaluations(current, candidate)
 
@@ -152,10 +152,13 @@ def test_approval_is_explicit_and_activation_remains_separate(taxonomy):
         taxonomy,
         {"needs_attention": ["A novel deviation needs human investigation"]},
     )
-    evaluation = holdout([
+    current_evaluation = holdout([
         "routine_noise", "known_pattern", "needs_attention", "real_incident"
-    ])
-    comparison = compare_evaluations(evaluation, evaluation)
+    ], taxonomy["taxonomy_revision"])
+    candidate_evaluation = holdout([
+        "routine_noise", "known_pattern", "needs_attention", "real_incident"
+    ], candidate["taxonomy_revision"])
+    comparison = compare_evaluations(current_evaluation, candidate_evaluation)
     approved = approve_candidate(
         candidate,
         comparison,
@@ -168,10 +171,52 @@ def test_approval_is_explicit_and_activation_remains_separate(taxonomy):
 
 
 def test_failed_candidate_cannot_be_approved(taxonomy):
-    candidate = build_candidate_taxonomy(taxonomy, {})
+    candidate = build_candidate_taxonomy(
+        taxonomy,
+        {"needs_attention": ["A novel deviation needs human investigation"]},
+    )
+    current_evaluation = holdout([
+        "routine_noise", "known_pattern", "needs_attention", "real_incident"
+    ], taxonomy["taxonomy_revision"])
+    candidate_evaluation = holdout([
+        "routine_noise", "known_pattern", "routine_noise", "real_incident"
+    ], candidate["taxonomy_revision"])
+    comparison = compare_evaluations(current_evaluation, candidate_evaluation)
     with pytest.raises(ValueError, match="did not pass"):
         approve_candidate(
             candidate,
-            {"eligible_for_approval": False},
+            comparison,
             approved_by="reviewer",
         )
+
+
+def test_approval_rejects_comparison_from_another_candidate(taxonomy):
+    candidate = build_candidate_taxonomy(
+        taxonomy,
+        {"needs_attention": ["A novel deviation needs human investigation"]},
+    )
+    current_evaluation = holdout([
+        "routine_noise", "known_pattern", "needs_attention", "real_incident"
+    ], taxonomy["taxonomy_revision"])
+    other_evaluation = holdout([
+        "routine_noise", "known_pattern", "needs_attention", "real_incident"
+    ], "different-candidate")
+    comparison = compare_evaluations(current_evaluation, other_evaluation)
+    with pytest.raises(ValueError, match="not bound to this candidate"):
+        approve_candidate(candidate, comparison, approved_by="reviewer")
+
+
+def test_candidate_rejects_unsafe_suppressive_anchor(taxonomy):
+    with pytest.raises(ValueError, match="incident language"):
+        build_candidate_taxonomy(
+            taxonomy,
+            {"routine_noise": ["Active incident that can be safely ignored"]},
+        )
+
+
+def test_holdout_rejects_malformed_metrics():
+    with pytest.raises(ValueError, match="invalid margin"):
+        evaluate_holdout([{
+            "record_id": "r1", "expected": "routine_noise",
+            "predicted": "routine_noise", "margin": True,
+        }], taxonomy_revision="taxonomy-v1")

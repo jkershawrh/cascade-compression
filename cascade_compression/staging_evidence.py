@@ -940,9 +940,17 @@ def build_staging_evidence(
     ]
     failed = [gate["name"] for gate in gates if not gate["passed"]]
     return {
-        "schema_version": "cascade.staging-evidence.v1alpha1",
+        "schema_version": "cascade.staging-evidence.v1alpha2",
         "status": "staging_success" if not failed else "incomplete",
         "run": {field: run.get(field) for field in REQUIRED_RUN_FIELDS},
+        "candidate": {
+            "repository": candidate.get("repository"),
+            "image": candidate.get("image"),
+            "image_digest": candidate.get("image_digest"),
+            "workflow_run_id": candidate.get("workflow_run_id"),
+            "workflow_run_attempt": candidate.get("workflow_run_attempt"),
+            "manifest_digest": _digest(candidate),
+        },
         "classification": {
             "arm": classification_arm,
             "quality_profile": "oss-rc-a-v1",

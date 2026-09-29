@@ -120,6 +120,20 @@ class TestZeroFNInvariant:
         agent = engine.check_promotion(agent)
         assert agent.tier == "candidate"
 
+    def test_later_clean_batch_cannot_erase_earlier_false_negative(
+        self, engine, cpu_rule, baseline,
+    ):
+        agent = AgentMetrics(name="test", tier="candidate")
+        engine.validate(agent, cpu_rule, make_sneaky_signals(49, 1), baseline)
+        engine.validate(agent, cpu_rule, make_clean_signals(100, 100), baseline)
+
+        engine.check_promotion(agent)
+
+        assert agent.samples_tested == 250
+        assert agent.false_negative_count == 1
+        assert agent.false_negative_rate > 0
+        assert agent.tier == "candidate"
+
     def test_199_safe_1_real_incident(self, engine, cpu_rule, baseline):
         """The adversarial scenario: agent looks perfect on 199, drops the 200th."""
         agent = promote_to_nano(engine, cpu_rule, baseline)
@@ -287,9 +301,34 @@ class TestHumanGate:
         agent = AgentMetrics(name="cpu_critical", tier="pending_approval")
         agent.accuracy = 0.95
         agent.samples_tested = 300
-        agent.human_approved = True
+        agent.false_positive_rate = 0.01
+        agent.false_negative_rate = 0.0
+        gated_engine.approve(agent, approved_by="reviewer-a")
         agent = gated_engine.check_promotion(agent)
         assert agent.tier == "nano"
+
+    def test_human_approval_cannot_override_regressed_evidence(
+        self, gated_engine,
+    ):
+        agent = AgentMetrics(
+            name="cpu_critical", tier="pending_approval",
+            accuracy=0.95, samples_tested=300,
+            false_positive_rate=0.01, false_negative_rate=0.05,
+        )
+        gated_engine.approve(agent, approved_by="reviewer-a")
+        gated_engine.check_promotion(agent)
+        assert agent.tier == "pending_approval"
+        assert agent.human_approved is False
+
+    def test_approval_requires_named_reviewer_and_timezone(self, gated_engine):
+        agent = AgentMetrics(name="test", tier="pending_approval")
+        with pytest.raises(ValueError, match="approved_by"):
+            gated_engine.approve(agent, approved_by="")
+        with pytest.raises(ValueError, match="timezone"):
+            gated_engine.approve(
+                agent, approved_by="reviewer-a",
+                approved_at="2026-09-01T00:00:00",
+            )
 
     def test_no_gate_skips_pending_approval(self, engine, cpu_rule, baseline):
         """Without human_gate_enabled, candidate goes straight to nano."""
@@ -317,12 +356,19 @@ class TestHumanGate:
         agent = AgentMetrics(name="cpu_critical", tier="pending_approval")
         agent.accuracy = 0.95
         agent.samples_tested = 300
-        agent.human_approved = True
+        agent.false_positive_rate = 0.01
+        agent.false_negative_rate = 0.0
+        gated_engine.approve(
+            agent, approved_by="reviewer-a",
+            approved_at="2026-09-01T00:00:00Z",
+        )
         agent = gated_engine.check_promotion(agent)
         events = gated_engine.drain_events()
         assert len(events) == 1
         assert events[0].to_tier == "nano"
         assert events[0].human_approved is True
+        assert events[0].human_approved_by == "reviewer-a"
+        assert events[0].human_approved_at == "2026-09-01T00:00:00+00:00"
 
 
 class TestLedgerSchema:

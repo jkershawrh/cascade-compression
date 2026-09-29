@@ -51,8 +51,14 @@ accepted, rejected = validate_anchor_proposals(
 )
 candidate = build_candidate_taxonomy(current_taxonomy, accepted)
 
-current_result = evaluate_holdout(current_predictions)
-candidate_result = evaluate_holdout(candidate_predictions)
+current_result = evaluate_holdout(
+    current_predictions,
+    taxonomy_revision=current_taxonomy["taxonomy_revision"],
+)
+candidate_result = evaluate_holdout(
+    candidate_predictions,
+    taxonomy_revision=candidate["taxonomy_revision"],
+)
 comparison = compare_evaluations(current_result, candidate_result)
 
 approved = approve_candidate(
@@ -65,13 +71,17 @@ approved = approve_candidate(
 The prediction rows supplied to `evaluate_holdout` contain a stable `record_id`, `expected`,
 `predicted`, and `margin`. Cascade hashes the record IDs and expected labels so current and
 candidate evaluations cannot accidentally use different holdouts. `expected` must come from an
-adjudicated set, not from whichever classifier is currently authoritative.
+adjudicated set, not from whichever classifier is currently authoritative. Each evaluation names
+the exact taxonomy revision; the comparison binds both evaluation digests, the parent revision,
+the candidate revision, and the holdout digest. Approval rejects a comparison produced for any
+other candidate or parent.
 
 ## Required gates
 
 A candidate is eligible for approval only when all of these are true on the same non-empty
 holdout:
 
+- every classification label has ground-truth support;
 - overall accuracy does not regress;
 - semantic authority coverage does not regress;
 - no label with ground-truth support loses recall;

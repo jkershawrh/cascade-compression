@@ -44,6 +44,13 @@ All notable changes are documented here. This project follows Semantic Versionin
 - Correct macro-F1 so supported but never-predicted classes contribute zero, close prediction
   metadata validation, and require independent review to finish before model evaluation; these
   semantics are published as `cascade.classification-evaluation.v1alpha4`.
+- Harden learned-agent promotion with cumulative validation evidence, attributable time-bound
+  approvals, activation-time threshold rechecks, fail-closed TTL handling, and type/context-scoped
+  demotion. Restored counts and contextual suppressors must re-qualify before activation.
+- Bind anchor candidates, evaluations, comparisons, and approvals to exact taxonomy revisions,
+  holdout and evaluation digests, complete label support, and strict authority-margin types.
+- Add an attested staging-evidence handoff that binds successful soak evidence to the exact tested
+  candidate package and image; tagged releases promote those immutable artifacts without rebuilding.
 
 ## 0.2.0rc1 - 2026-09-11
 

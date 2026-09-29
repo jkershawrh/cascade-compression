@@ -98,21 +98,48 @@ def test_contextual_data_cannot_masquerade_as_release_evidence():
 def test_release_publication_is_gated_by_verified_package_and_container():
     workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text())
     jobs = workflow["jobs"]
-    assert jobs["container"]["needs"] == "verify"
-    assert set(jobs["release"]["needs"]) == {"verify", "container"}
+    assert set(jobs["container"]["needs"]) == {"verify", "evidence"}
+    assert jobs["evidence"]["needs"] == "verify"
+    assert set(jobs["release"]["needs"]) == {
+        "verify", "evidence", "container",
+    }
 
     verify_steps = str(jobs["verify"]["steps"])
+    evidence_steps = str(jobs["evidence"]["steps"])
     container_steps = str(jobs["container"]["steps"])
     release_steps = str(jobs["release"]["steps"])
-    container_push = next(step for step in jobs["container"]["steps"] if step.get("id") == "push")
     assert "Verify tag and package version" in verify_steps
     assert "check_public_boundary.py" in verify_steps
-    assert container_push["with"]["push"] is True
+    assert "verify_staging_handoff.py" in evidence_steps
+    assert "cascade-staging-package-$GITHUB_SHA" in evidence_steps
+    assert "--candidate-package candidate-package" in evidence_steps
+    assert "staging-evidence.yml" in evidence_steps
+    assert "staging-candidate.yml" in evidence_steps
+    assert "release-evidence/candidate/staging-candidate-manifest.json" in evidence_steps
+    assert "--source-digest \"$GITHUB_SHA\"" in evidence_steps
+    assert "bundle-from-oci" in evidence_steps
+    assert "docker/build-push-action" not in container_steps
+    assert "imagetools create" in container_steps
+    assert "Manifest.Digest" in container_steps
     assert "release-container-manifest.json" in container_steps
     assert "gh release create" not in verify_steps
     assert "gh release create" not in container_steps
     assert "gh release create" in release_steps
     assert "release-artifact-manifest.json" in release_steps
+    assert "staging-evidence.json" in release_steps
+    assert "cascade-release-package-${{ github.sha }}" in evidence_steps
+
+
+def test_staging_evidence_handoff_is_attested_and_commit_bound():
+    workflow = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "staging-evidence.yml").read_text()
+    )
+    steps = str(workflow["jobs"]["verify"]["steps"])
+    assert "verify_staging_handoff.py" in steps
+    assert "staging-candidate.yml" in steps
+    assert "source-digest" in steps
+    assert "Attest sanitized staging evidence" in steps
+    assert "cascade-staging-evidence-${{ inputs.candidate_commit }}" in steps
 
 
 def test_candidate_manifest_is_attested_before_upload():

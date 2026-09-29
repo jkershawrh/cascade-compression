@@ -120,7 +120,10 @@ class TestShadowSampling:
         bridge._activated_patterns = {"event_noise": "dominant_type"}
         metrics = AgentMetrics(
             name="noise_agent", tier="nano",
-            config={"signal_type": "event_noise"},
+            config={
+                "signal_type": "event_noise",
+                "pattern_type": "dominant_type",
+            },
         )
         bridge._agent_metrics["noise_agent"] = metrics
 
@@ -128,6 +131,34 @@ class TestShadowSampling:
 
         assert metrics.tier == "draft"
         assert metrics.deactivated is True
+        assert "event_noise" not in bridge._activated_types
+
+    def test_feedback_demotes_type_agent_not_context_agent(self, bridge):
+        bridge._activated_types = {"event_noise"}
+        bridge._activated_patterns = {"event_noise": "dominant_type"}
+        context = AgentMetrics(
+            name="context", tier="nano",
+            config={
+                "signal_type": "event_noise",
+                "pattern_type": "contextual_noise",
+                "context_value": "namespace-a",
+            },
+        )
+        type_agent = AgentMetrics(
+            name="type", tier="nano",
+            config={
+                "signal_type": "event_noise",
+                "pattern_type": "dominant_type",
+            },
+        )
+        bridge._agent_metrics = {"context": context, "type": type_agent}
+
+        bridge.record_feedback(
+            "event_noise", was_suppressed=True, is_important=True,
+        )
+
+        assert type_agent.tier == "draft"
+        assert context.tier == "nano"
         assert "event_noise" not in bridge._activated_types
 
     def test_noise_classification_helper(self):
@@ -147,7 +178,10 @@ class TestTimeBoundedActivation:
         }
         metrics = AgentMetrics(
             name="noise_agent", tier="nano",
-            config={"signal_type": "event_noise"},
+            config={
+                "signal_type": "event_noise",
+                "pattern_type": "dominant_type",
+            },
         )
         bridge._agent_metrics["noise_agent"] = metrics
 
@@ -164,7 +198,10 @@ class TestTimeBoundedActivation:
         bridge._activation_timestamps = {"event_noise": expired_time}
         metrics = AgentMetrics(
             name="noise_agent", tier="nano",
-            config={"signal_type": "event_noise"},
+            config={
+                "signal_type": "event_noise",
+                "pattern_type": "dominant_type",
+            },
         )
         bridge._agent_metrics["noise_agent"] = metrics
 
@@ -184,7 +221,10 @@ class TestTimeBoundedActivation:
         bridge._activation_timestamps = {"event_noise": expired_time}
         metrics = AgentMetrics(
             name="noise_agent", tier="nano",
-            config={"signal_type": "event_noise"},
+            config={
+                "signal_type": "event_noise",
+                "pattern_type": "dominant_type",
+            },
         )
         bridge._agent_metrics["noise_agent"] = metrics
 
@@ -203,7 +243,10 @@ class TestTimeBoundedActivation:
         bridge._activation_timestamps = {"event_noise": old_time}
         metrics = AgentMetrics(
             name="noise_agent", tier="nano",
-            config={"signal_type": "event_noise"},
+            config={
+                "signal_type": "event_noise",
+                "pattern_type": "dominant_type",
+            },
         )
         bridge._agent_metrics["noise_agent"] = metrics
 
@@ -211,6 +254,26 @@ class TestTimeBoundedActivation:
 
         assert metrics.tier == "nano"
         assert "event_noise" in bridge._activated_types
+
+    def test_malformed_activation_timestamp_fails_closed(self, bridge):
+        bridge._activation_ttl_hours = 72
+        bridge._activated_types = {"event_noise"}
+        bridge._activated_patterns = {"event_noise": "dominant_type"}
+        bridge._activation_timestamps = {"event_noise": "not-a-timestamp"}
+        metrics = AgentMetrics(
+            name="noise_agent", tier="nano",
+            config={
+                "signal_type": "event_noise",
+                "pattern_type": "dominant_type",
+            },
+        )
+        bridge._agent_metrics["noise_agent"] = metrics
+
+        bridge._check_activation_ttl()
+
+        assert metrics.tier == "draft"
+        assert "event_noise" not in bridge._activated_types
+        assert "event_noise" not in bridge._activation_timestamps
 
     def test_expired_agent_can_requalify(self, bridge):
         """After TTL expiry, agent is at draft + reactivated — can climb again."""
@@ -221,19 +284,57 @@ class TestTimeBoundedActivation:
         bridge._activation_timestamps = {"event_noise": expired_time}
         metrics = AgentMetrics(
             name="noise_agent", tier="nano",
-            config={"signal_type": "event_noise"},
+            config={
+                "signal_type": "event_noise",
+                "pattern_type": "dominant_type",
+            },
         )
         bridge._agent_metrics["noise_agent"] = metrics
+        bridge._llm_noise_counts["event_noise"] = 500
 
         bridge._check_activation_ttl()
 
         assert metrics.tier == "draft"
         assert metrics.deactivated is False
         assert metrics.samples_tested == 0
+        assert bridge._llm_noise_counts["event_noise"] == 0
         # Agent is ready to climb again via normal promotion path
         engine = bridge.promotion
         result = engine.check_promotion(metrics)
         assert result.tier == "draft"  # no samples yet, stays at draft
+        bridge._discover_and_promote()
+        assert result.tier == "draft"  # historical counts cannot re-promote it
+
+    def test_type_ttl_demotes_type_agent_not_context_agent(self, bridge):
+        bridge._activation_ttl_hours = 1
+        bridge._activated_types = {"event_noise"}
+        bridge._activated_patterns = {"event_noise": "dominant_type"}
+        bridge._activation_timestamps = {
+            "event_noise": (
+                datetime.now(timezone.utc) - timedelta(hours=2)
+            ).isoformat(),
+        }
+        context = AgentMetrics(
+            name="context", tier="nano",
+            config={
+                "signal_type": "event_noise",
+                "pattern_type": "contextual_noise",
+                "context_value": "namespace-a",
+            },
+        )
+        type_agent = AgentMetrics(
+            name="type", tier="nano",
+            config={
+                "signal_type": "event_noise",
+                "pattern_type": "dominant_type",
+            },
+        )
+        bridge._agent_metrics = {"context": context, "type": type_agent}
+
+        bridge._check_activation_ttl()
+
+        assert type_agent.tier == "draft"
+        assert context.tier == "nano"
 
 
 class TestStatsExposure:
@@ -245,6 +346,103 @@ class TestStatsExposure:
         assert "activation_ttl_hours" in stats
         assert stats["shadow_sample_rate"] == 1.0
         assert stats["activation_ttl_hours"] == 72
+
+    def test_promotion_events_remain_local_without_external_ledger(self, bridge):
+        agent = AgentMetrics(
+            name="local-agent", tier="draft", samples_tested=60,
+            accuracy=1.0, false_positive_rate=0.0,
+            false_negative_rate=0.0,
+        )
+        bridge.promotion.check_promotion(agent)
+
+        bridge._flush_promotion_events()
+
+        assert bridge.get_promotion_log()[-1]["event"] == "promotion"
+        assert bridge.get_promotion_log()[-1]["agent"] == "local-agent"
+
+
+class TestRestoredAndContextualSafety:
+    def test_historical_counts_do_not_auto_activate(self, bridge):
+        bridge._llm_noise_counts["historical_noise"] = 1000
+        bridge._llm_important_counts["historical_noise"] = 0
+
+        bridge._promote_orphaned_noise_types()
+
+        assert "historical_noise" not in bridge._activated_types
+        assert bridge.get_promotion_log()[-1]["status"] == (
+            "awaiting_fresh_qualification"
+        )
+
+    def test_context_with_known_important_signal_does_not_activate(self, bridge):
+        bridge._llm_context_noise["mixed_type:namespace-a"] = 199
+        bridge._llm_context_important["mixed_type:namespace-a"] = 1
+
+        bridge._discover_contextual_noise()
+
+        assert "namespace-a" not in bridge._activated_contexts["mixed_type"]
+
+    def test_human_gate_blocks_automatic_context_activation(self, bridge):
+        bridge._human_gate = True
+        bridge._llm_context_noise["noise_type:namespace-a"] = 200
+        bridge._llm_context_important["noise_type:namespace-a"] = 0
+
+        bridge._discover_contextual_noise()
+
+        assert "namespace-a" not in bridge._activated_contexts["noise_type"]
+
+    def test_context_activates_through_promotion_engine(self, bridge):
+        bridge._llm_context_noise["noise_type:namespace-a"] = 200
+        bridge._llm_context_important["noise_type:namespace-a"] = 0
+
+        bridge._discover_contextual_noise()
+
+        assert "namespace-a" in bridge._activated_contexts["noise_type"]
+        metrics = next(
+            item for item in bridge._agent_metrics.values()
+            if item.config.get("pattern_type") == "contextual_noise"
+        )
+        assert metrics.tier == "nano"
+        assert metrics.false_negative_rate == 0
+        assert "noise_type:namespace-a" in bridge._context_activation_timestamps
+        transitions = [
+            (event.from_tier, event.to_tier)
+            for event in bridge.promotion.events
+        ]
+        assert ("draft", "candidate") in transitions
+        assert ("candidate", "nano") in transitions
+
+    def test_contextual_activation_expires(self, bridge):
+        bridge._activation_ttl_hours = 1
+        bridge._llm_context_noise["noise_type:namespace-a"] = 200
+        bridge._discover_contextual_noise()
+        bridge._context_activation_timestamps["noise_type:namespace-a"] = (
+            datetime.now(timezone.utc) - timedelta(hours=2)
+        ).isoformat()
+
+        bridge._check_activation_ttl()
+
+        assert "namespace-a" not in bridge._activated_contexts["noise_type"]
+        metrics = next(
+            item for item in bridge._agent_metrics.values()
+            if item.config.get("pattern_type") == "contextual_noise"
+        )
+        assert metrics.tier == "draft"
+        assert bridge._llm_context_noise["noise_type:namespace-a"] == 0
+
+    def test_external_feedback_demotes_contextual_suppressors(self, bridge):
+        bridge._llm_context_noise["noise_type:namespace-a"] = 200
+        bridge._discover_contextual_noise()
+
+        bridge.record_feedback(
+            "noise_type", was_suppressed=True, is_important=True,
+        )
+
+        assert not bridge._activated_contexts["noise_type"]
+        metrics = next(
+            item for item in bridge._agent_metrics.values()
+            if item.config.get("pattern_type") == "contextual_noise"
+        )
+        assert metrics.tier == "draft"
 
 
 class TestStateRoundTrip:

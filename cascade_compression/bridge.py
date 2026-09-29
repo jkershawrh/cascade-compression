@@ -6,6 +6,7 @@ collector, and optionally forwards survivors to an LLM for classification.
 """
 
 import json
+import hashlib
 import logging
 import os
 import random
@@ -231,6 +232,7 @@ class CascadeBridge:
         self._activated_types: set = set()
         self._activated_patterns: Dict[str, str] = {}
         self._activated_contexts: Dict[str, set] = defaultdict(set)
+        self._context_activation_timestamps: Dict[str, str] = {}
 
         self.corpus_analyzer = CorpusAnalyzer(
             min_frequency=0.05, min_repeat_count=10,
@@ -746,7 +748,12 @@ class CascadeBridge:
 
         for name, agent_metrics in self._agent_metrics.items():
             sig_type = agent_metrics.config.get("signal_type", "")
-            if not sig_type or sig_type in self._activated_types:
+            pattern_type = agent_metrics.config.get("pattern_type", "")
+            if (
+                not sig_type
+                or pattern_type not in {"repeat_flood", "dominant_type"}
+                or sig_type in self._activated_types
+            ):
                 continue
 
             noise = self._llm_noise_counts.get(sig_type, 0)
@@ -829,8 +836,8 @@ class CascadeBridge:
         When a type has mixed importance overall (can't be promoted),
         check if specific contexts within it are pure noise.
         """
-        _CTX_MIN_SAMPLES = 100
-        _CTX_MAX_IMPORTANT_RATE = 0.02
+        _CTX_MIN_SAMPLES = _PROMOTION_MIN_SAMPLES
+        _CTX_MAX_IMPORTANT = 0
 
         # Classification workers update these maps concurrently.  Iterate over
         # a snapshot so bounded-map pruning cannot invalidate the iterator.
@@ -852,11 +859,50 @@ class CascadeBridge:
             if total < _CTX_MIN_SAMPLES:
                 continue
             important_rate = important / total
-            if important_rate > _CTX_MAX_IMPORTANT_RATE:
+            if important > _CTX_MAX_IMPORTANT:
+                continue
+            if self._human_gate:
+                # Contextual activation does not yet have a separately scoped
+                # approval object. A configured human gate therefore keeps it
+                # inactive rather than silently bypassing approval.
+                continue
+
+            identity = f"{sig_type}:{ctx_value}"
+            agent_name = (
+                "contextual_noise_"
+                + hashlib.sha256(identity.encode("utf-8")).hexdigest()[:12]
+            )
+            metrics = self._agent_metrics.get(agent_name)
+            if metrics is None:
+                metrics = AgentMetrics(
+                    name=agent_name,
+                    config={
+                        "signal_type": sig_type,
+                        "pattern_type": "contextual_noise",
+                        "context_key": self._contextual_suppressor._context_key,
+                        "context_value": ctx_value,
+                    },
+                )
+                self._agent_metrics[agent_name] = metrics
+            metrics.samples_tested = total
+            metrics.accuracy = noise_count / total
+            metrics.false_positive_rate = important_rate
+            metrics.false_negative_rate = important_rate
+            metrics.coverage = 1.0
+            metrics.rubric_status = "green"
+            while metrics.tier in {"draft", "candidate"}:
+                previous = metrics.tier
+                self.promotion.check_promotion(metrics)
+                if metrics.tier == previous:
+                    break
+            if metrics.tier != "nano":
                 continue
 
             self._contextual_suppressor.add_noise_context(sig_type, ctx_value)
             self._activated_contexts[sig_type].add(ctx_value)
+            self._context_activation_timestamps[identity] = datetime.now(
+                timezone.utc
+            ).isoformat()
             self._promotion_log.append({
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "event": "contextual_activated",
@@ -875,26 +921,42 @@ class CascadeBridge:
 
     def _check_activation_ttl(self):
         """Suspend agents whose activation has expired."""
-        if not self._activation_timestamps or self._activation_ttl_hours <= 0:
+        if (
+            not self._activation_timestamps
+            and not self._context_activation_timestamps
+        ) or self._activation_ttl_hours <= 0:
             return
 
         now = datetime.now(timezone.utc)
-        expired = []
+        expired = {}
         for sig_type, ts_str in list(self._activation_timestamps.items()):
             try:
-                activated_at = datetime.fromisoformat(ts_str)
+                activated_at = datetime.fromisoformat(
+                    ts_str.replace("Z", "+00:00")
+                )
+                if activated_at.tzinfo is None:
+                    raise ValueError("activation timestamp lacks timezone")
                 age_hours = (now - activated_at).total_seconds() / 3600
                 if age_hours >= self._activation_ttl_hours:
-                    expired.append(sig_type)
-            except (ValueError, TypeError):
-                continue
+                    expired[sig_type] = "ttl_expired"
+            except (AttributeError, ValueError, TypeError):
+                expired[sig_type] = "invalid_activation_timestamp"
 
-        for sig_type in expired:
+        for sig_type, expiry_reason in expired.items():
             for name, metrics in self._agent_metrics.items():
-                if metrics.config.get("signal_type") == sig_type and metrics.tier in {"nano", "micro", "macro"}:
+                if (
+                    metrics.config.get("signal_type") == sig_type
+                    and metrics.config.get("pattern_type")
+                    in {"repeat_flood", "dominant_type"}
+                    and metrics.tier in {"nano", "micro", "macro"}
+                ):
                     self.promotion.demote(
                         metrics,
-                        reason=f"activation TTL expired ({self._activation_ttl_hours}h)",
+                        reason=(
+                            f"activation TTL expired ({self._activation_ttl_hours}h)"
+                            if expiry_reason == "ttl_expired"
+                            else "activation timestamp was invalid"
+                        ),
                     )
                     self.promotion.reactivate(metrics)
                     metrics.samples_tested = 0
@@ -904,11 +966,57 @@ class CascadeBridge:
                         "meta_agent_demoted", "high",
                         f"Agent '{name}' TTL expired for {sig_type}",
                         agent=name, related_type=sig_type,
-                        reason="ttl_expired",
+                        reason=expiry_reason,
                     )
                     break
             self._deactivate_agent(sig_type)
             self._activation_timestamps.pop(sig_type, None)
+            self._llm_noise_counts[sig_type] = 0
+            self._llm_important_counts[sig_type] = 0
+
+        expired_contexts = {}
+        for identity, ts_str in list(self._context_activation_timestamps.items()):
+            try:
+                activated_at = datetime.fromisoformat(
+                    ts_str.replace("Z", "+00:00")
+                )
+                if activated_at.tzinfo is None:
+                    raise ValueError("activation timestamp lacks timezone")
+                age_hours = (now - activated_at).total_seconds() / 3600
+                if age_hours >= self._activation_ttl_hours:
+                    expired_contexts[identity] = "ttl_expired"
+            except (AttributeError, ValueError, TypeError):
+                expired_contexts[identity] = "invalid_activation_timestamp"
+
+        for identity, expiry_reason in expired_contexts.items():
+            sig_type, ctx_value = identity.split(":", 1)
+            self._contextual_suppressor.remove_noise_context(sig_type, ctx_value)
+            self._activated_contexts[sig_type].discard(ctx_value)
+            self._context_activation_timestamps.pop(identity, None)
+            self._llm_context_noise[identity] = 0
+            self._llm_context_important[identity] = 0
+            for metrics in self._agent_metrics.values():
+                if (
+                    metrics.config.get("pattern_type") == "contextual_noise"
+                    and metrics.config.get("signal_type") == sig_type
+                    and metrics.config.get("context_value") == ctx_value
+                    and metrics.tier in {"nano", "micro", "macro"}
+                ):
+                    self.promotion.demote(
+                        metrics,
+                        reason=(
+                            f"context activation TTL expired ({self._activation_ttl_hours}h)"
+                            if expiry_reason == "ttl_expired"
+                            else "context activation timestamp was invalid"
+                        ),
+                    )
+                    self.promotion.reactivate(metrics)
+                    break
+            self._emit_meta(
+                "meta_agent_demoted", "high",
+                f"Contextual agent expired for {sig_type}",
+                related_type=sig_type, reason=expiry_reason,
+            )
 
     def _classify_one(self, sig, client):
         return self.classifier.classify(sig, client)
@@ -1223,6 +1331,28 @@ class CascadeBridge:
                                     and ns in self._activated_contexts.get(sig["signal_type"], set())):
                                 self._contextual_suppressor.remove_noise_context(sig["signal_type"], ns)
                                 self._activated_contexts[sig["signal_type"]].discard(ns)
+                                identity = f"{sig['signal_type']}:{ns}"
+                                self._context_activation_timestamps.pop(identity, None)
+                                self._llm_context_noise[identity] = 0
+                                self._llm_context_important[identity] = 0
+                                for metrics in self._agent_metrics.values():
+                                    if (
+                                        metrics.config.get("pattern_type")
+                                        == "contextual_noise"
+                                        and metrics.config.get("signal_type")
+                                        == sig["signal_type"]
+                                        and metrics.config.get("context_value") == ns
+                                        and metrics.tier in {
+                                            "nano", "micro", "macro",
+                                        }
+                                    ):
+                                        metrics.last_batch_fn_count = 1
+                                        self.promotion.demote(
+                                            metrics,
+                                            reason="FN caught by shadow validation",
+                                        )
+                                        self._flush_promotion_events()
+                                        break
                                 log.warning(
                                     "SHADOW: contextual FN — %s in %s=%s is important "
                                     "(classified '%s'), context demoted",
@@ -1400,7 +1530,7 @@ class CascadeBridge:
 
     def _flush_promotion_events(self):
         events = self.promotion.drain_events()
-        if not events or not self._ledger_url:
+        if not events:
             return
         for event in events:
             self._promotion_log.append({
@@ -1410,7 +1540,10 @@ class CascadeBridge:
                 "from_tier": event.from_tier,
                 "to_tier": event.to_tier,
                 "reason": event.reason,
+                "evidence": event.to_dict()["evidence"],
             })
+            if not self._ledger_url:
+                continue
             if self._ledger_receipt_store:
                 from .integrations.ledger import build_promotion_entry
                 self._enqueue_ledger_entry(
@@ -1780,10 +1913,10 @@ class CascadeBridge:
 
                 self._llm_context_noise = defaultdict(int, state.get("llm_context_noise", {}))
                 self._llm_context_important = defaultdict(int, state.get("llm_context_important", {}))
-                for sig_type, contexts in state.get("activated_contexts", {}).items():
-                    for ctx in contexts:
-                        self._contextual_suppressor.add_noise_context(sig_type, ctx)
-                        self._activated_contexts[sig_type].add(ctx)
+                if state.get("activated_contexts"):
+                    log.warning(
+                        "Persisted contextual suppressors require fresh qualification"
+                    )
             else:
                 # Legacy state did not preserve the suppressor kind. Revalidate it
                 # instead of restoring a type with broader suppression semantics.
@@ -1802,36 +1935,32 @@ class CascadeBridge:
             log.warning("Failed to restore state: %s", e)
 
     def _promote_orphaned_noise_types(self):
-        """Activate noise types with strong historical LLM evidence on restore.
+        """Keep historical-only evidence inactive until normal re-qualification.
 
-        Uses a 2% important-rate threshold (vs zero-tolerance for live promotion)
-        because historical data accumulates borderline classifications over time.
-        A type with 40K noise and 369 important (0.9%) is safe to suppress.
+        Restored counts are useful discovery evidence, but they do not carry the
+        complete promotion provenance, approval state, or current holdout safety
+        needed to activate a suppressor.
         """
         for sig_type, noise_count in self._llm_noise_counts.items():
             if sig_type in self._activated_types:
                 continue
             important = self._llm_important_counts.get(sig_type, 0)
             total = noise_count + important
-            important_rate = important / total if total > 0 else 1.0
-            if total < _PROMOTION_MIN_SAMPLES or important_rate > 0.02:
+            if total < _PROMOTION_MIN_SAMPLES:
                 continue
-            self._noise_suppressor.add_noise_type(sig_type)
-            self._activated_types.add(sig_type)
-            self._activated_patterns[sig_type] = "dominant_type"
-            self._activation_timestamps[sig_type] = datetime.now(timezone.utc).isoformat()
             self._promotion_log.append({
                 "timestamp": datetime.now(timezone.utc).isoformat(),
-                "event": "activated",
+                "event": "historical_evidence_restored",
                 "agent": f"restored_{sig_type}",
-                "tier": "nano",
-                "status": "validated_from_history",
+                "tier": "draft",
+                "status": "awaiting_fresh_qualification",
                 "samples": total,
                 "important": important,
-                "important_rate": round(important_rate, 4),
             })
-            log.info("RESTORED ACTIVATION: %s (%d noise, %d important, %.1f%% rate)",
-                     sig_type, noise_count, important, important_rate * 100)
+            log.info(
+                "RESTORED EVIDENCE: %s remains inactive (%d noise, %d important)",
+                sig_type, noise_count, important,
+            )
 
     def close(self) -> None:
         """Stop retry timers and executors without discarding durable work."""
@@ -2162,13 +2291,20 @@ class CascadeBridge:
             if signal_type in self._activated_types:
                 for name, metrics in self._agent_metrics.items():
                     sig = metrics.config.get("signal_type", "")
-                    if sig == signal_type and metrics.tier in {"nano", "micro", "macro"}:
+                    if (
+                        sig == signal_type
+                        and metrics.config.get("pattern_type")
+                        in {"repeat_flood", "dominant_type"}
+                        and metrics.tier in {"nano", "micro", "macro"}
+                    ):
                         metrics.last_batch_fn_count = 1
                         self.promotion.demote(
                             metrics,
                             reason=f"FN confirmed by external feedback: {signal_type}",
                         )
                         self._deactivate_agent(signal_type)
+                        self._llm_noise_counts[signal_type] = 0
+                        self._llm_important_counts[signal_type] = 0
                         self._flush_promotion_events()
                         log.warning("Agent '%s' demoted via feedback: %s was important",
                                     name, signal_type)
@@ -2179,6 +2315,40 @@ class CascadeBridge:
                             reason="fn_confirmed",
                         )
                         break
+
+            active_contexts = set(self._activated_contexts.get(signal_type, set()))
+            if active_contexts:
+                for ctx_value in active_contexts:
+                    self._contextual_suppressor.remove_noise_context(
+                        signal_type, ctx_value,
+                    )
+                    self._context_activation_timestamps.pop(
+                        f"{signal_type}:{ctx_value}", None,
+                    )
+                    self._llm_context_noise[f"{signal_type}:{ctx_value}"] = 0
+                    self._llm_context_important[f"{signal_type}:{ctx_value}"] = 0
+                self._activated_contexts[signal_type].clear()
+                for metrics in self._agent_metrics.values():
+                    if (
+                        metrics.config.get("pattern_type") == "contextual_noise"
+                        and metrics.config.get("signal_type") == signal_type
+                        and metrics.tier in {"nano", "micro", "macro"}
+                    ):
+                        metrics.last_batch_fn_count = 1
+                        self.promotion.demote(
+                            metrics,
+                            reason=(
+                                "FN confirmed by external feedback for contextual "
+                                f"suppression: {signal_type}"
+                            ),
+                        )
+                self._flush_promotion_events()
+                self._emit_meta(
+                    "meta_agent_demoted", "high",
+                    f"Contextual suppressors demoted: FN confirmed for {signal_type}",
+                    related_type=signal_type,
+                    reason="fn_confirmed",
+                )
 
     def get_llm_results(self, limit: int = 20) -> list:
         return self._llm_results[-limit:]

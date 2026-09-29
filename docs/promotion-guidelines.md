@@ -25,7 +25,9 @@ Default thresholds are:
 | Macro | 1,000 | 0.85 | 0.05 | 0 | Yes |
 
 Nano is the first active tier. When `CASCADE_HUMAN_GATE` is enabled, a qualifying candidate pauses
-at `pending_approval` before nano activation. Thresholds are policy defaults, not statistical proof.
+at `pending_approval` before nano activation. Approval records a reviewer reference and timestamp,
+and the engine re-checks the complete nano thresholds at activation time. Regressed evidence
+invalidates the approval. Thresholds are policy defaults, not statistical proof.
 
 ## Discovery
 
@@ -52,6 +54,11 @@ Activation requires the promotion thresholds plus the bridge's zero-known-import
 model answer is evidence, not ground truth, so decision-grade evaluation also requires independent
 held-out adjudication. Production feedback coverage must be measured separately.
 
+Restored historical counts remain inactive until fresh qualification; restart recovery cannot turn
+orphaned counts into an active suppressor. Contextual patterns also require zero known important
+examples. When the human gate is enabled, automatic contextual activation remains disabled until a
+separately scoped approval mechanism is available.
+
 ## Active rule types
 
 - `RepeatFloodSuppressor` handles a validated repeating signal type after its repeat threshold.
@@ -74,6 +81,7 @@ An active learned rule is deactivated when:
 A confirmed miss demotes the rule directly to draft and resets its qualifying sample count. TTL
 expiry also demotes it and makes it eligible to begin re-qualification. Demotion is automatic;
 reactivation is never an automatic restoration of the previous active tier.
+Missing, malformed, or timezone-free activation timestamps fail closed by deactivating the rule.
 
 These controls detect known mistakes. They cannot detect an error that is never sampled, labeled,
 or returned through feedback.

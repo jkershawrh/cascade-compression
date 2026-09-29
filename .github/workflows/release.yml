@@ -12,8 +12,6 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
@@ -53,37 +51,127 @@ jobs:
           cd /tmp
           "$GITHUB_WORKSPACE/.wheel-venv/bin/python" \
             "$GITHUB_WORKSPACE/scripts/release_smoke.py"
-      - name: Generate package SBOM
-        uses: anchore/sbom-action@3ad7283483fc7af8ff2b4ea19663c2d5ca935e26 # v0.24.2
+  evidence:
+    needs: verify
+    runs-on: ubuntu-24.04
+    permissions:
+      actions: read
+      attestations: read
+      contents: read
+      packages: read
+    outputs:
+      image: ${{ steps.handoff.outputs.image }}
+      digest: ${{ steps.handoff.outputs.image_digest }}
+      candidate_run_id: ${{ steps.handoff.outputs.candidate_run_id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
-          path: dist
-          format: spdx-json
-          output-file: dist/cascade-compression-${{ github.ref_name }}.spdx.json
-          upload-artifact: false
-      - name: Attest release artifacts
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+          python-version: "3.11"
+      - run: uv sync --extra dev --locked
+      - name: Download attested staging handoff for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_NAME: cascade-staging-evidence-${{ github.sha }}
+        run: |
+          artifact_id=$(gh api \
+            "/repos/$GITHUB_REPOSITORY/actions/artifacts?name=$EVIDENCE_NAME" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id')
+          if [[ -z "$artifact_id" || "$artifact_id" == "null" ]]; then
+            echo "No unexpired staging-evidence artifact exists for $GITHUB_SHA" >&2
+            exit 1
+          fi
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" \
+            > staging-evidence.zip
+          mkdir release-evidence
+          unzip -q staging-evidence.zip -d release-evidence
+      - name: Verify evidence provenance and candidate binding
+        id: handoff
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify release-evidence/staging-evidence.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/staging-evidence.yml"
+          gh attestation verify \
+            release-evidence/candidate/staging-candidate-manifest.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/staging-candidate.yml" \
+            --source-digest "$GITHUB_SHA"
+          uv run python scripts/verify_staging_handoff.py \
+            --evidence release-evidence/staging-evidence.json \
+            --candidate-manifest release-evidence/candidate/staging-candidate-manifest.json \
+            --expected-commit "$GITHUB_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --output release-evidence/handoff-summary.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          summary = json.load(open("release-evidence/handoff-summary.json", encoding="utf-8"))
+          print(f"image={summary['image']}")
+          print(f"image_digest={summary['image_digest']}")
+          print(f"candidate_run_id={summary['candidate_workflow_run_id']}")
+          PY
+      - name: Download and verify exact tested package artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_RUN_ID: ${{ steps.handoff.outputs.candidate_run_id }}
+        run: |
+          gh run download "$CANDIDATE_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --name "cascade-staging-package-$GITHUB_SHA" \
+            --dir candidate-package
+          for artifact in candidate-package/*; do
+            gh attestation verify "$artifact" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/staging-candidate.yml" \
+              --source-digest "$GITHUB_SHA"
+          done
+          uv run python scripts/verify_staging_handoff.py \
+            --evidence release-evidence/staging-evidence.json \
+            --candidate-manifest release-evidence/candidate/staging-candidate-manifest.json \
+            --candidate-package candidate-package \
+            --expected-commit "$GITHUB_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --output release-evidence/handoff-summary.json
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
-          subject-path: "dist/*"
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify tested candidate image provenance
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_IMAGE: ${{ steps.handoff.outputs.image }}
+          CANDIDATE_DIGEST: ${{ steps.handoff.outputs.image_digest }}
+        run: |
+          gh attestation verify "oci://$CANDIDATE_IMAGE@$CANDIDATE_DIGEST" \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/staging-candidate.yml" \
+            --source-digest "$GITHUB_SHA" \
+            --bundle-from-oci
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cascade-release-evidence-${{ github.sha }}
+          path: release-evidence/
+          retention-days: 90
+          if-no-files-found: error
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cascade-release-package-${{ github.sha }}
-          path: dist/*
+          path: candidate-package/
           retention-days: 90
           if-no-files-found: error
 
   container:
-    needs: verify
+    needs: [verify, evidence]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: write
-      id-token: write
-      attestations: write
     outputs:
-      digest: ${{ steps.push.outputs.digest }}
+      digest: ${{ needs.evidence.outputs.digest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
       - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
@@ -98,27 +186,35 @@ jobs:
             type=ref,event=tag
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}},enable=${{ !contains(github.ref_name, 'rc') && !contains(github.ref_name, 'a') && !contains(github.ref_name, 'b') }}
-      - id: push
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
-        with:
-          context: .
-          file: Containerfile
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.metadata.outputs.tags }}
-          labels: ${{ steps.metadata.outputs.labels }}
-          provenance: mode=max
-          sbom: true
-      - name: Attest container provenance
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-name: ghcr.io/${{ github.repository }}
-          subject-digest: ${{ steps.push.outputs.digest }}
-          push-to-registry: true
+      - name: Promote the exact tested candidate digest
+        env:
+          CANDIDATE_IMAGE: ${{ needs.evidence.outputs.image }}
+          CANDIDATE_DIGEST: ${{ needs.evidence.outputs.digest }}
+          RELEASE_TAGS: ${{ steps.metadata.outputs.tags }}
+        run: |
+          args=()
+          while IFS= read -r tag; do
+            if [[ -n "$tag" ]]; then
+              args+=(--tag "$tag")
+            fi
+          done <<< "$RELEASE_TAGS"
+          if [[ ${#args[@]} -eq 0 ]]; then
+            echo "No release tags were generated" >&2
+            exit 1
+          fi
+          docker buildx imagetools create \
+            "${args[@]}" "$CANDIDATE_IMAGE@$CANDIDATE_DIGEST"
+          while IFS= read -r tag; do
+            if [[ -n "$tag" ]]; then
+              observed=$(docker buildx imagetools inspect "$tag" \
+                --format '{{.Manifest.Digest}}')
+              test "$observed" = "$CANDIDATE_DIGEST"
+            fi
+          done <<< "$RELEASE_TAGS"
       - name: Write immutable container manifest
         env:
           RELEASE_COMMIT: ${{ github.sha }}
-          RELEASE_DIGEST: ${{ steps.push.outputs.digest }}
+          RELEASE_DIGEST: ${{ needs.evidence.outputs.digest }}
           RELEASE_REPOSITORY: ${{ github.repository }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
@@ -151,7 +247,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: [verify, container]
+    needs: [verify, evidence, container]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -166,6 +262,10 @@ jobs:
         with:
           name: cascade-release-container-${{ github.sha }}
           path: release-container
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: cascade-release-evidence-${{ github.sha }}
+          path: release-evidence
       - name: Write release artifact manifest
         env:
           RELEASE_COMMIT: ${{ github.sha }}
@@ -181,8 +281,11 @@ jobs:
           from pathlib import Path
 
           artifacts = []
-          for directory in (Path("release-package"), Path("release-container")):
-              for path in sorted(directory.iterdir()):
+          for directory in (
+              Path("release-package"), Path("release-container"),
+              Path("release-evidence"),
+          ):
+              for path in sorted(directory.rglob("*")):
                   if path.is_file():
                       payload = path.read_bytes()
                       artifacts.append({
@@ -194,6 +297,8 @@ jobs:
           assert any(item["name"].endswith(".tar.gz") for item in artifacts)
           assert any(item["name"].endswith(".spdx.json") for item in artifacts)
           assert any(item["name"] == "release-container-manifest.json" for item in artifacts)
+          assert any(item["name"] == "staging-evidence.json" for item in artifacts)
+          assert any(item["name"] == "staging-candidate-manifest.json" for item in artifacts)
 
           manifest = {
               "schema_version": "cascade.release-artifacts.v1alpha1",
@@ -220,6 +325,9 @@ jobs:
             "$GITHUB_REF_NAME"
             release-package/*
             release-container/release-container-manifest.json
+            release-evidence/staging-evidence.json
+            release-evidence/candidate/staging-candidate-manifest.json
+            release-evidence/handoff-summary.json
             release-artifact-manifest.json
             --generate-notes
             --verify-tag

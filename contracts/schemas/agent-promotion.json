@@ -56,6 +56,15 @@
           "type": "boolean",
           "description": "Whether a human approved this transition"
         },
+        "human_approved_by": {
+          "type": ["string", "null"],
+          "description": "Stable reviewer reference for a human-approved transition"
+        },
+        "human_approved_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timezone-aware timestamp of human approval"
+        },
         "batch_id": {
           "type": ["string", "null"],
           "description": "Correlation ID of the validation batch"
