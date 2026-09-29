@@ -119,9 +119,11 @@ The command fails closed with exit code 2 while any disagreement remains. A thir
 reviewer can review only that disagreement file; pass those receipts with `--resolution`. Review
 files must cover the exact corpus, use distinct reviewer references, declare independence from the
 evaluated arms, and bind their signal digest to the exact frozen signal object. The merged corpus
-and disagreement file remain private. The summary contains only counts and a digest and is suitable
-for sanitized evidence review. A `known_pattern` receipt must cite an authoritative source record;
-repetition alone cannot establish that label.
+and disagreement file remain private. Adjudication recomputes each receipt's evidence digest and
+requires a timezone-aware review timestamp, so edited or incomplete receipts fail closed. The
+summary contains only counts and a digest and is suitable for sanitized evidence review. A
+`known_pattern` receipt must cite an authoritative source record; repetition alone cannot establish
+that label.
 
 After adjudication, run every arm over the exact corpus with the bounded-concurrency runner. It
 requires structured generative confidence, derives immutable revision digests from the backends

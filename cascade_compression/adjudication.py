@@ -50,9 +50,13 @@ def _validate_receipt(receipt: dict) -> None:
     if not receipt.get("reviewer_ref") or not receipt.get("reviewed_at"):
         raise ValueError("review receipt is missing reviewer or timestamp")
     try:
-        datetime.fromisoformat(str(receipt["reviewed_at"]).replace("Z", "+00:00"))
+        reviewed_at = datetime.fromisoformat(
+            str(receipt["reviewed_at"]).replace("Z", "+00:00")
+        )
     except ValueError as exc:
         raise ValueError("review receipt has an invalid timestamp") from exc
+    if reviewed_at.tzinfo is None:
+        raise ValueError("review receipt timestamp must include a timezone")
     if receipt.get("source") not in {
         "independent_human_review", "authoritative_record",
     }:
@@ -70,10 +74,14 @@ def _validate_receipt(receipt: dict) -> None:
     signal_digest = str(receipt.get("signal_sha256") or "")
     if not re.fullmatch(r"sha256:[0-9a-f]{64}", signal_digest):
         raise ValueError("review receipt is missing a signal digest")
-    if not re.fullmatch(
-        r"sha256:[0-9a-f]{64}", str(receipt.get("evidence_ref") or "")
-    ):
+    evidence_ref = str(receipt.get("evidence_ref") or "")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", evidence_ref):
         raise ValueError("review receipt is missing an evidence digest")
+    evidence = {
+        key: value for key, value in receipt.items() if key != "evidence_ref"
+    }
+    if _digest(evidence) != evidence_ref:
+        raise ValueError("review receipt evidence digest does not match its contents")
 
 
 def merge_independent_reviews(

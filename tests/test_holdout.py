@@ -5,7 +5,7 @@ import pytest
 
 from cascade_compression.adjudication import merge_independent_reviews
 from cascade_compression.contracts import contract_schema
-from cascade_compression.holdout import freeze_stratified_holdout
+from cascade_compression.holdout import canonical_digest, freeze_stratified_holdout
 
 
 def candidates():
@@ -109,20 +109,24 @@ def test_holdout_digest_binds_to_adjudication_summary():
     corpus, manifest = freeze()
 
     def receipts(reviewer):
-        return [{
-            "case_id": row["case_id"],
-            "signal_sha256": row["signal_sha256"],
-            "actionability": "actionable",
-            "classification": "needs_attention",
-            "expected_memory": True,
-            "reviewer_ref": reviewer,
-            "reviewed_at": "2026-09-02T00:00:00Z",
-            "source": "independent_human_review",
-            "source_record_ref": None,
-            "rationale": "The frozen evidence requires investigation.",
-            "independent_of_evaluated_arms": True,
-            "evidence_ref": "sha256:" + "a" * 64,
-        } for row in corpus]
+        result = []
+        for row in corpus:
+            receipt = {
+                "case_id": row["case_id"],
+                "signal_sha256": row["signal_sha256"],
+                "actionability": "actionable",
+                "classification": "needs_attention",
+                "expected_memory": True,
+                "reviewer_ref": reviewer,
+                "reviewed_at": "2026-09-02T00:00:00Z",
+                "source": "independent_human_review",
+                "source_record_ref": None,
+                "rationale": "The frozen evidence requires investigation.",
+                "independent_of_evaluated_arms": True,
+            }
+            receipt["evidence_ref"] = canonical_digest(receipt)
+            result.append(receipt)
+        return result
 
     _, summary, unresolved = merge_independent_reviews(
         corpus, receipts("reviewer-a"), receipts("reviewer-b"),

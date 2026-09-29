@@ -28,7 +28,7 @@ def reviews(reviewer, overrides=None):
     for index, label in enumerate(LABELS):
         label = overrides.get(index, label)
         authoritative = label == "known_pattern"
-        rows.append({
+        receipt = {
             "case_id": f"case-{index}",
             "signal_sha256": signal_digest(index),
             "actionability": (
@@ -46,8 +46,9 @@ def reviews(reviewer, overrides=None):
             "source_record_ref": "documented-pattern-1" if authoritative else None,
             "rationale": "Observable evidence supports this label.",
             "independent_of_evaluated_arms": True,
-            "evidence_ref": "sha256:" + "a" * 64,
-        })
+        }
+        receipt["evidence_ref"] = evidence_digest(receipt)
+        rows.append(receipt)
     return rows
 
 
@@ -55,6 +56,13 @@ def signal_digest(index):
     encoded = json.dumps(
         {"signal_type": "example", "content": {"index": index}},
         sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    )
+    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def evidence_digest(receipt):
+    encoded = json.dumps(
+        receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     )
     return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
@@ -115,6 +123,12 @@ def test_review_receipt_must_bind_to_frozen_signal_evidence():
     second = reviews("reviewer-b")
     first[0]["signal_sha256"] = "sha256:" + "f" * 64
     second[0]["signal_sha256"] = "sha256:" + "f" * 64
+    first[0]["evidence_ref"] = evidence_digest({
+        key: value for key, value in first[0].items() if key != "evidence_ref"
+    })
+    second[0]["evidence_ref"] = evidence_digest({
+        key: value for key, value in second[0].items() if key != "evidence_ref"
+    })
     with pytest.raises(ValueError, match="frozen signal evidence"):
         merge_independent_reviews(corpus(), first, second)
 
@@ -126,3 +140,19 @@ def test_known_pattern_requires_documented_authority():
     first[1]["source_record_ref"] = None
     with pytest.raises(ValueError, match="known_pattern requires"):
         merge_independent_reviews(corpus(), first, second)
+
+
+def test_review_receipt_evidence_digest_must_match_contents():
+    first = reviews("reviewer-a")
+    first[0]["rationale"] = "Changed after the receipt was signed."
+    with pytest.raises(ValueError, match="evidence digest does not match"):
+        merge_independent_reviews(corpus(), first, reviews("reviewer-b"))
+
+
+def test_review_receipt_timestamp_requires_timezone():
+    first = reviews("reviewer-a")
+    first[0]["reviewed_at"] = "2026-09-01T00:00:00"
+    receipt = {key: value for key, value in first[0].items() if key != "evidence_ref"}
+    first[0]["evidence_ref"] = evidence_digest(receipt)
+    with pytest.raises(ValueError, match="must include a timezone"):
+        merge_independent_reviews(corpus(), first, reviews("reviewer-b"))
