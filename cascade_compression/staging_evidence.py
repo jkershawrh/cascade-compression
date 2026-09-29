@@ -8,6 +8,7 @@ import math
 from datetime import datetime
 from typing import Any, Dict, Iterable, Optional
 
+from .classifier import CASCADE_LABELS
 from .evaluation import REQUIRED_RUN_FIELDS, run_identity_errors
 
 
@@ -98,6 +99,14 @@ def _positive_int(value: Any) -> bool:
         return int(value) > 0
     except (TypeError, ValueError):
         return False
+
+
+def _bounded_number(value: Any, minimum: float, maximum: float) -> bool:
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return False
+    return math.isfinite(numeric) and minimum <= numeric <= maximum
 
 
 def build_staging_evidence(
@@ -197,9 +206,18 @@ def build_staging_evidence(
         label: int(metrics.get("support") or 0)
         for label, metrics in per_label.items()
     }
+    classification_evidence = classification.get("evidence") or {}
+    classification_consistent = (
+        classification_evidence.get("corpus_binding") is True
+        and classification_evidence.get("contains_raw_records") is False
+        and classification_evidence.get("model_revisions_frozen") is True
+        and int((classification.get("dataset") or {}).get("records") or 0)
+        == int(arm.get("records") or 0)
+        and set(per_label_support) == set(CASCADE_LABELS)
+    )
     a_profile_passed = (
         int(arm.get("records") or 0) >= a_profile["minimum_records"]
-        and bool(per_label_support)
+        and set(per_label_support) == set(CASCADE_LABELS)
         and all(
             support >= a_profile["minimum_per_label_support"]
             for support in per_label_support.values()
@@ -208,18 +226,30 @@ def build_staging_evidence(
         >= a_profile["minimum_important_support"]
         and int(arm.get("authoritative_suppressions") or 0)
         >= a_profile["minimum_authoritative_suppressions"]
-        and float(arm.get("coverage") or 0) >= a_profile["minimum_coverage"]
-        and float(arm.get("balanced_accuracy") or 0)
-        >= a_profile["minimum_balanced_accuracy"]
-        and float(arm.get("macro_f1") or 0) >= a_profile["minimum_macro_f1"]
+        and _bounded_number(
+            arm.get("coverage"), a_profile["minimum_coverage"], 1.0,
+        )
+        and _bounded_number(
+            arm.get("balanced_accuracy"),
+            a_profile["minimum_balanced_accuracy"], 1.0,
+        )
+        and _bounded_number(
+            arm.get("macro_f1"), a_profile["minimum_macro_f1"], 1.0,
+        )
         and suppression_precision is not None
-        and float(suppression_precision)
-        >= a_profile["minimum_authoritative_suppression_precision"]
+        and _bounded_number(
+            suppression_precision,
+            a_profile["minimum_authoritative_suppression_precision"], 1.0,
+        )
         and calibration.get("status") == "measured"
-        and float(calibration.get("coverage") or 0)
-        >= a_profile["minimum_calibration_coverage"]
-        and float(calibration.get("expected_calibration_error", 2))
-        <= a_profile["maximum_expected_calibration_error"]
+        and _bounded_number(
+            calibration.get("coverage"),
+            a_profile["minimum_calibration_coverage"], 1.0,
+        )
+        and _bounded_number(
+            calibration.get("expected_calibration_error"), 0.0,
+            a_profile["maximum_expected_calibration_error"],
+        )
     )
 
     runtime_environment = runtime.get("environment") or {}
@@ -412,8 +442,26 @@ def build_staging_evidence(
         }),
         _gate(
             "classification_decision_grade",
-            (classification.get("evidence") or {}).get("status") == "decision_grade",
-            (classification.get("evidence") or {}).get("status"),
+            classification_evidence.get("status") == "decision_grade",
+            classification_evidence.get("status"),
+        ),
+        _gate(
+            "classification_artifact_consistent",
+            classification_consistent,
+            {
+                "corpus_binding": classification_evidence.get("corpus_binding"),
+                "contains_raw_records": classification_evidence.get(
+                    "contains_raw_records"
+                ),
+                "model_revisions_frozen": classification_evidence.get(
+                    "model_revisions_frozen"
+                ),
+                "dataset_records": (classification.get("dataset") or {}).get(
+                    "records"
+                ),
+                "arm_records": arm.get("records"),
+                "labels": sorted(per_label_support),
+            },
         ),
         _gate("zero_authoritative_dangerous_misses", (
             int(arm.get("authoritative_dangerous_misses") or 0) == 0
@@ -566,6 +614,7 @@ def build_staging_evidence(
             "outbox_pending": outbox.get("pending"),
         },
         "artifact_digests": {
+            "manifest": _digest(manifest),
             "candidate": _digest(candidate),
             "classification": _digest(classification),
             "runtime": _digest(runtime),

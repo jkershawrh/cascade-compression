@@ -245,6 +245,24 @@ def test_small_perfect_corpus_cannot_pass_a_profile():
     assert "classification_oss_rc_a_profile" in report["failed_gates"]
 
 
+def test_tampered_classification_binding_cannot_pass():
+    manifest, classification, runtime, before, after = inputs()
+    classification["evidence"]["corpus_binding"] = False
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "classification_artifact_consistent" in report["failed_gates"]
+
+
+def test_non_finite_quality_metric_cannot_pass():
+    manifest, classification, runtime, before, after = inputs()
+    classification["arms"]["hybrid"]["balanced_accuracy"] = float("inf")
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "classification_oss_rc_a_profile" in report["failed_gates"]
+
+
 def test_unfrozen_model_revision_blocks_success():
     manifest, classification, runtime, before, after = inputs()
     manifest["model_revisions"]["hybrid"] = "different-model"

@@ -46,7 +46,8 @@ The command returns zero only for `staging_success`. It requires:
 - passing tests and package/container smoke checks; and
 - successful CI with SBOM and provenance evidence.
 
-The output contains aggregate metrics and cryptographic artifact digests. It excludes raw records,
+The output contains aggregate metrics and cryptographic digests for the staging manifest, candidate
+manifest, classification report, runtime report, and both audit snapshots. It excludes raw records,
 signal payloads, credentials, cluster names, routes, and deployment manifests. Inputs containing
 private evidence should remain in ignored or external evidence storage; only the sanitized output
 is eligible for publication after review.
