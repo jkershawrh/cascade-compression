@@ -20,16 +20,19 @@ jobs:
           python-version: "3.11"
       - name: Enforce the public/private repository boundary
         run: python3 scripts/check_public_boundary.py
-      - run: uv sync --extra dev --locked
+      - run: uv sync --extra dev --extra semantic-classifier --locked
       - name: Verify container dependency lock
         run: |
-          uv export --frozen --no-dev --no-emit-project --no-header \
+          uv export --frozen --no-dev --extra semantic-classifier \
+            --no-emit-project --no-header \
             --format requirements-txt --output-file /tmp/requirements-container.lock
           diff -u requirements-container.lock /tmp/requirements-container.lock
           uv export --frozen --only-group build --no-emit-project --no-header \
             --format requirements-txt --output-file /tmp/requirements-build.lock
           diff -u requirements-build.lock /tmp/requirements-build.lock
       - run: make test-all PYTHON="uv run python"
+      - name: Prove the generated gRPC client is importable
+        run: uv run python scripts/semantic_adapter_smoke.py
       - run: uv build
       - name: Smoke-test installed wheel
         run: |

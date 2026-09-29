@@ -23,7 +23,9 @@ COPY requirements-container.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements-container.lock
 
 COPY --chown=1001:0 --from=builder /tmp/wheels/*.whl /tmp/wheels/
+COPY --chown=1001:0 scripts/semantic_adapter_smoke.py scripts/semantic_adapter_smoke.py
 RUN pip install --no-cache-dir --no-deps /tmp/wheels/*.whl
+RUN python scripts/semantic_adapter_smoke.py
 
 EXPOSE 8090
 

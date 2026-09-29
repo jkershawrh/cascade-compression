@@ -35,9 +35,19 @@ PyPI publishing is intentionally disabled until a project-owned trusted publishe
 
 The container base is pinned to a multi-architecture manifest digest, and
 `requirements-container.lock` and `requirements-build.lock` are hash-locked exports of the
-production and build dependencies in `uv.lock`. A multi-stage build keeps build tooling out of the
-runtime image. When dependencies change, regenerate both locks with the commands encoded in CI;
-candidate and release workflows fail if either export is stale.
+production and build dependencies in `uv.lock`. The production export deliberately includes the
+`semantic-classifier` extra: the ordinary Python package keeps llm-d-sc support optional, while the
+official candidate and release images guarantee that the gRPC client is installed and importable.
+A multi-stage build keeps build tooling out of the runtime image. When dependencies change,
+regenerate both locks with the commands encoded in CI; candidate and release workflows fail if
+either export is stale.
+
+```bash
+uv export --frozen --no-dev --extra semantic-classifier --no-emit-project --no-header \
+  --format requirements-txt --output-file requirements-container.lock
+uv export --frozen --only-group build --no-emit-project --no-header \
+  --format requirements-txt --output-file requirements-build.lock
+```
 
 Never tag an RC merely because unit tests are green. A candidate without a complete independently
 adjudicated corpus, immutable runtime evidence, and healthy audit delivery remains an engineering

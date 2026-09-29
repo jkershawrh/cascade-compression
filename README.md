@@ -115,6 +115,9 @@ python -m uvicorn cascade_compression.service:app --port 8090
 a generative endpoint; Cascade still applies margin and severity gates, and service errors produce
 explicit failures rather than silent drops.
 The generated protocol client is pinned by the `semantic-classifier` optional dependency group.
+The Python package keeps that group optional. Official release-candidate and tagged-release
+containers include it and run an import smoke test during the image build, so an image advertised
+for semantic staging cannot silently omit its gRPC runtime.
 
 For held-out calibration runs, set `CASCADE_GENERATIVE_STRUCTURED=1`. The generative backend then
 requests strict label-plus-confidence JSON and records the exact effective prompt revision. Keep it

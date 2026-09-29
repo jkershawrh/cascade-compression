@@ -24,6 +24,20 @@ jobs:
       - name: Test the documented Makefile path
         run: make test-all PYTHON="uv run python"
 
+  semantic-adapter:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          python-version: "3.11"
+      - name: Install the llm-d-sc semantic adapter contract
+        run: uv sync --extra dev --extra semantic-classifier --locked
+      - name: Test with the semantic adapter installed
+        run: make test-all PYTHON="uv run python"
+      - name: Prove the generated gRPC client is importable
+        run: uv run python scripts/semantic_adapter_smoke.py
+
   package:
     runs-on: ubuntu-24.04
     steps:
@@ -33,7 +47,8 @@ jobs:
           python-version: "3.11"
       - name: Verify container dependency lock
         run: |
-          uv export --frozen --no-dev --no-emit-project --no-header \
+          uv export --frozen --no-dev --extra semantic-classifier \
+            --no-emit-project --no-header \
             --format requirements-txt --output-file /tmp/requirements-container.lock
           diff -u requirements-container.lock /tmp/requirements-container.lock
           uv export --frozen --only-group build --no-emit-project --no-header \

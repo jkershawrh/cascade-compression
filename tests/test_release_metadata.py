@@ -44,6 +44,22 @@ def test_container_inputs_are_immutable_and_hash_locked():
         lock = (ROOT / filename).read_text()
         assert "--hash=sha256:" in lock
 
+    runtime_lock = (ROOT / "requirements-container.lock").read_text()
+    assert re.search(r"^grpcio==", runtime_lock, re.MULTILINE)
+    assert re.search(r"^protobuf==", runtime_lock, re.MULTILINE)
+    assert "scripts/semantic_adapter_smoke.py" in containerfile
+
+
+def test_release_workflows_verify_the_semantic_container_lock():
+    for filename in ("ci.yml", "staging-candidate.yml", "release.yml"):
+        workflow = (ROOT / ".github" / "workflows" / filename).read_text()
+        assert "--extra semantic-classifier" in workflow
+
+    ci = yaml.safe_load((ROOT / ".github" / "workflows" / "ci.yml").read_text())
+    semantic_steps = str(ci["jobs"]["semantic-adapter"]["steps"])
+    assert "--extra semantic-classifier" in semantic_steps
+    assert "semantic_adapter_smoke.py" in semantic_steps
+
 
 def test_workflow_actions_and_runner_are_pinned():
     workflows = sorted((ROOT / ".github" / "workflows").glob("*.yml"))
