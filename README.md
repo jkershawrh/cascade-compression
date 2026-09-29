@@ -21,7 +21,7 @@ collectors.
 ## Install and test
 
 The latest stable OSS release is `0.1.0`. The governed semantic-classification and custom-anchor
-work is available for evaluation as release candidate `0.2.0rc1`; it is not the final 0.2.0
+work is available for evaluation as release candidate `0.2.0rc2`; it is not the final 0.2.0
 release. The repository is currently configured for an **incubating OSS** prerelease: its mechanics,
 build, and supply chain are tested, but it makes no staging-readiness, production-readiness,
 classification-effectiveness, or natural compression-rate claim. The Python package supports

@@ -4,6 +4,8 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## Unreleased
 
+## 0.2.0rc2 - 2026-09-29
+
 - Separate incubating OSS publication from staging qualification: prereleases may publish verified,
   attested mechanics without effectiveness claims, while the complete human-adjudicated staging
   handoff remains mandatory for any staging-ready claim.
