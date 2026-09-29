@@ -430,6 +430,41 @@ def test_tampered_classification_binding_cannot_pass():
     assert "classification_artifact_consistent" in report["failed_gates"]
 
 
+def test_review_that_does_not_precede_model_run_cannot_pass():
+    manifest, classification, runtime, before, after = inputs()
+    classification["evidence"]["review_precedes_run"] = False
+    classification["evidence"]["status"] = "decision_grade"
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert report["status"] == "incomplete"
+    assert "classification_artifact_consistent" in report["failed_gates"]
+
+
+def test_invalid_review_window_cannot_pass():
+    manifest, classification, runtime, before, after = inputs()
+    classification["evidence"]["review_window_valid"] = False
+    classification["evidence"]["status"] = "decision_grade"
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert report["status"] == "incomplete"
+    assert "classification_artifact_consistent" in report["failed_gates"]
+
+
+def test_boolean_and_string_classification_metrics_fail_closed():
+    manifest, classification, runtime, before, after = inputs()
+    arm = classification["arms"]["hybrid"]
+    arm["records"] = True
+    arm["balanced_accuracy"] = "1.0"
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert report["status"] == "incomplete"
+    assert "classification_artifact_consistent" in report["failed_gates"]
+    assert "classification_oss_rc_a_profile" in report["failed_gates"]
+
+
 def test_non_finite_quality_metric_cannot_pass():
     manifest, classification, runtime, before, after = inputs()
     classification["arms"]["hybrid"]["balanced_accuracy"] = float("inf")
@@ -514,6 +549,17 @@ def test_candidate_requires_bound_package_supply_chain():
     assert "candidate_artifact_bound" in report["failed_gates"]
 
 
+def test_candidate_numeric_booleans_fail_closed():
+    manifest, classification, runtime, before, after = inputs()
+    manifest["candidate"]["workflow_run_attempt"] = True
+    manifest["candidate"]["package_artifacts"][0]["bytes"] = True
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert report["status"] == "incomplete"
+    assert "candidate_artifact_bound" in report["failed_gates"]
+
+
 def test_candidate_manifest_itself_requires_provenance():
     manifest, classification, runtime, before, after = inputs()
     manifest["candidate"]["manifest_provenance"] = False
@@ -551,6 +597,51 @@ def test_missing_semantic_runtime_cells_cannot_pass_a_profile():
     )
     assert "runtime_oss_rc_a_profile" in report["failed_gates"]
     json.dumps(report, allow_nan=False)
+
+
+def test_runtime_numeric_strings_and_booleans_fail_closed():
+    manifest, classification, runtime, before, after = inputs()
+    runtime["config"]["iterations"] = "500"
+    runtime["results"]["nano"][0]["errors"] = False
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert report["status"] == "incomplete"
+    assert "runtime_reproducible" in report["failed_gates"]
+    assert "runtime_oss_rc_a_profile" in report["failed_gates"]
+
+
+def test_missing_runtime_oracle_fails_closed():
+    manifest, classification, runtime, before, after = inputs()
+    runtime["results"]["mixed_nano"].pop("survivor_oracle_passed")
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert report["status"] == "incomplete"
+    assert "runtime_reproducible" in report["failed_gates"]
+
+
+def test_string_audit_counters_fail_closed():
+    manifest, classification, runtime, before, after = inputs()
+    after["ledger_receipt_pending"] = "0"
+    after["ledger_receipt_utilization"] = "0.0"
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert report["status"] == "incomplete"
+    assert "audit_delivery_healthy" in report["failed_gates"]
+    assert "cascade_spool_capacity_healthy" in report["failed_gates"]
+
+
+def test_boolean_verification_counts_fail_closed():
+    manifest, classification, runtime, before, after = inputs()
+    manifest["verification"]["tests_passed"] = True
+    manifest["verification"]["tests_failed"] = False
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert report["status"] == "incomplete"
+    assert "tests_passed" in report["failed_gates"]
 
 
 def test_slow_runtime_cell_cannot_pass_a_profile():

@@ -65,7 +65,10 @@ def _parse_time(value: str) -> datetime:
 
 
 def _runtime_cells(runtime: dict) -> Iterable[dict]:
-    for section in (runtime.get("results") or {}).values():
+    results = runtime.get("results")
+    if not isinstance(results, dict):
+        return
+    for section in results.values():
         if isinstance(section, list):
             yield from (item for item in section if isinstance(item, dict))
         elif isinstance(section, dict):
@@ -79,16 +82,21 @@ def _gate(name: str, passed: bool, evidence: Any) -> dict:
 def _matching_cell(cells: Iterable[dict], **criteria: Any) -> dict:
     return next((
         cell for cell in cells
-        if all(cell.get(key) == value for key, value in criteria.items())
+        if all(
+            type(cell.get(key)) is type(value) and cell.get(key) == value
+            for key, value in criteria.items()
+        )
     ), {})
 
 
 def _p95(cell: dict) -> Optional[float]:
-    try:
-        value = float((cell.get("latency_ms") or {}).get("p95"))
-    except (TypeError, ValueError):
+    latency = cell.get("latency_ms")
+    if not isinstance(latency, dict):
         return None
-    return value if math.isfinite(value) and value >= 0 else None
+    value = latency.get("p95")
+    if not _is_number(value, minimum=0):
+        return None
+    return float(value)
 
 
 def _within_p95(cell: dict, maximum: float) -> bool:
@@ -97,41 +105,63 @@ def _within_p95(cell: dict, maximum: float) -> bool:
 
 
 def _samples_at_least(cell: dict, minimum: int) -> bool:
-    return int(cell.get("samples") or 0) >= minimum
+    return _is_int(cell.get("samples"), minimum=minimum)
 
 
-def _positive_int(value: Any) -> bool:
-    try:
-        return int(value) > 0
-    except (TypeError, ValueError):
+def _is_int(value: Any, minimum: Optional[int] = None) -> bool:
+    if type(value) is not int:
         return False
+    return minimum is None or value >= minimum
+
+
+def _int_or(value: Any, default: int = 0) -> int:
+    return value if type(value) is int else default
+
+
+def _is_number(
+    value: Any,
+    minimum: Optional[float] = None,
+    maximum: Optional[float] = None,
+) -> bool:
+    if type(value) not in (int, float) or not math.isfinite(value):
+        return False
+    if minimum is not None and value < minimum:
+        return False
+    if maximum is not None and value > maximum:
+        return False
+    return True
 
 
 def _bounded_number(value: Any, minimum: float, maximum: float) -> bool:
-    try:
-        numeric = float(value)
-    except (TypeError, ValueError):
-        return False
-    return math.isfinite(numeric) and minimum <= numeric <= maximum
+    return _is_number(value, minimum=minimum, maximum=maximum)
 
 
 def _audit_spool_capacity(snapshot: dict, prefix: str) -> tuple[bool, dict]:
     """Validate queue bounds and filesystem headroom from one /stats snapshot."""
-    try:
-        pending = int(snapshot[f"{prefix}_pending"])
-        pending_max = int(snapshot[f"{prefix}_pending_max"])
-        payload_bytes = int(snapshot[f"{prefix}_payload_bytes"])
-        bytes_max = int(snapshot[f"{prefix}_bytes_max"])
-        reported_rows = float(snapshot[f"{prefix}_utilization"])
-        reported_bytes = float(snapshot[f"{prefix}_byte_utilization"])
-        spool_bytes = int(snapshot[f"{prefix}_spool_bytes"])
-        filesystem_total = int(snapshot[f"{prefix}_filesystem_total_bytes"])
-        filesystem_free = int(snapshot[f"{prefix}_filesystem_free_bytes"])
-        reported_filesystem_used = float(
-            snapshot[f"{prefix}_filesystem_used_fraction"]
-        )
-    except (KeyError, TypeError, ValueError):
+    integer_fields = (
+        "pending", "pending_max", "payload_bytes", "bytes_max", "spool_bytes",
+        "filesystem_total_bytes", "filesystem_free_bytes",
+    )
+    numeric_fields = (
+        "utilization", "byte_utilization", "filesystem_used_fraction",
+    )
+    if not all(
+        _is_int(snapshot.get(f"{prefix}_{field}")) for field in integer_fields
+    ) or not all(
+        _is_number(snapshot.get(f"{prefix}_{field}")) for field in numeric_fields
+    ):
         return False, {"measurements_present": False}
+
+    pending = snapshot[f"{prefix}_pending"]
+    pending_max = snapshot[f"{prefix}_pending_max"]
+    payload_bytes = snapshot[f"{prefix}_payload_bytes"]
+    bytes_max = snapshot[f"{prefix}_bytes_max"]
+    reported_rows = snapshot[f"{prefix}_utilization"]
+    reported_bytes = snapshot[f"{prefix}_byte_utilization"]
+    spool_bytes = snapshot[f"{prefix}_spool_bytes"]
+    filesystem_total = snapshot[f"{prefix}_filesystem_total_bytes"]
+    filesystem_free = snapshot[f"{prefix}_filesystem_free_bytes"]
+    reported_filesystem_used = snapshot[f"{prefix}_filesystem_used_fraction"]
 
     computed_rows = pending / pending_max if pending_max > 0 else math.inf
     computed_bytes = payload_bytes / bytes_max if bytes_max > 0 else math.inf
@@ -189,6 +219,11 @@ def build_staging_evidence(
     stats_after: Dict[str, Any],
 ) -> dict:
     """Bind sanitized artifacts and apply explicit release-proof gates."""
+    if not all(
+        isinstance(document, dict)
+        for document in (manifest, classification, runtime, stats_before, stats_after)
+    ):
+        raise ValueError("staging evidence inputs must be JSON objects")
     if manifest.get("schema_version") != "cascade.staging-manifest.v1alpha5":
         raise ValueError("unsupported staging manifest version")
     if classification.get("schema_version") != "cascade.classification-evaluation.v1alpha4":
@@ -196,7 +231,8 @@ def build_staging_evidence(
     if runtime.get("schema_version") != 1:
         raise ValueError("runtime artifact has an unsupported version")
 
-    run = manifest.get("run") or {}
+    run_value = manifest.get("run")
+    run = run_value if isinstance(run_value, dict) else {}
     missing_run = [field for field in REQUIRED_RUN_FIELDS if not run.get(field)]
     invalid_run = run_identity_errors(run)
     try:
@@ -208,56 +244,84 @@ def build_staging_evidence(
         positive_window = False
 
     classification_arm = str(manifest.get("classification_arm") or "hybrid")
-    classification_arms = classification.get("arms") or {}
+    classification_arms_value = classification.get("arms")
+    classification_arms = (
+        classification_arms_value
+        if isinstance(classification_arms_value, dict) else {}
+    )
     arm = classification_arms.get(classification_arm)
     if arm is None:
         raise ValueError(f"classification arm not found: {classification_arm}")
-    classification_run = classification.get("run") or {}
+    if not isinstance(arm, dict):
+        arm = {}
+    classification_run_value = classification.get("run")
+    classification_run = (
+        classification_run_value
+        if isinstance(classification_run_value, dict) else {}
+    )
     run_matches = all(
         classification_run.get(field) == run.get(field)
         for field in REQUIRED_RUN_FIELDS
     )
-    model_revisions = manifest.get("model_revisions") or {}
-    classification_models = classification.get("model_revisions") or {}
+    model_revisions_value = manifest.get("model_revisions")
+    model_revisions = (
+        model_revisions_value if isinstance(model_revisions_value, dict) else {}
+    )
+    classification_models_value = classification.get("model_revisions")
+    classification_models = (
+        classification_models_value
+        if isinstance(classification_models_value, dict) else {}
+    )
     models_frozen = bool(model_revisions) and classification_models == model_revisions
-    candidate = manifest.get("candidate") or {}
+    candidate_value = manifest.get("candidate")
+    candidate = candidate_value if isinstance(candidate_value, dict) else {}
+    package_artifacts = candidate.get("package_artifacts")
+    multi_arch = candidate.get("multi_arch")
     candidate_bound = (
-        candidate.get("schema_version")
+        isinstance(candidate_value, dict)
+        and candidate.get("schema_version")
         == "cascade.staging-candidate.v1alpha3"
+        and isinstance(candidate.get("repository"), str)
         and bool(candidate.get("repository"))
+        and isinstance(candidate.get("image"), str)
         and bool(candidate.get("image"))
         and candidate.get("commit") == run.get("commit")
         and candidate.get("image_digest") == run.get("image_digest")
-        and _positive_int(candidate.get("workflow_run_id"))
-        and _positive_int(candidate.get("workflow_run_attempt"))
+        and bool(re.fullmatch(r"[1-9][0-9]*", candidate.get("workflow_run_id", "")))
+        and _is_int(candidate.get("workflow_run_attempt"), minimum=1)
         and candidate.get("container_sbom") is True
         and candidate.get("container_provenance") is True
         and candidate.get("package_sbom") is True
         and candidate.get("package_provenance") is True
         and candidate.get("manifest_provenance") is True
-        and len(candidate.get("package_artifacts") or []) >= 3
+        and isinstance(package_artifacts, list)
+        and len(package_artifacts) >= 3
         and all(
-            bool(item.get("name"))
+            isinstance(item, dict)
+            and isinstance(item.get("name"), str)
+            and bool(item.get("name"))
             and re.fullmatch(
                 r"sha256:[0-9a-f]{64}", str(item.get("sha256") or ""),
             )
-            and int(item.get("bytes") or 0) > 0
-            for item in (candidate.get("package_artifacts") or [])
+            and _is_int(item.get("bytes"), minimum=1)
+            for item in package_artifacts
         )
         and any(
             str(item.get("name") or "").endswith(".whl")
-            for item in (candidate.get("package_artifacts") or [])
+            for item in package_artifacts
         )
         and any(
             str(item.get("name") or "").endswith(".tar.gz")
-            for item in (candidate.get("package_artifacts") or [])
+            for item in package_artifacts
         )
         and any(
             str(item.get("name") or "").endswith(".spdx.json")
-            for item in (candidate.get("package_artifacts") or [])
+            for item in package_artifacts
         )
+        and isinstance(multi_arch, list)
+        and all(isinstance(platform, str) for platform in multi_arch)
         and {"linux/amd64", "linux/arm64"}
-        <= set(candidate.get("multi_arch") or [])
+        <= set(multi_arch)
     )
     try:
         candidate_precedes_run = (
@@ -266,11 +330,12 @@ def build_staging_evidence(
         )
     except (TypeError, ValueError):
         candidate_precedes_run = False
-    pairwise = classification.get("pairwise_agreement") or {}
+    pairwise_value = classification.get("pairwise_agreement")
+    pairwise = pairwise_value if isinstance(pairwise_value, dict) else {}
     required_pairs = {
         "generative__hybrid", "generative__semantic", "hybrid__semantic",
     }
-    comparison_records = int(arm.get("records") or 0)
+    comparison_records = _int_or(arm.get("records"), -1)
     minimum_pairwise_compared = math.ceil(
         comparison_records * OSS_RC_A_PROFILE["minimum_coverage"]
     )
@@ -280,49 +345,68 @@ def build_staging_evidence(
         and REQUIRED_CLASSIFICATION_ARMS <= set(classification_models)
         and required_pairs <= set(pairwise)
         and all(
-            int(classification_arms[name].get("records") or 0)
-            == int(arm.get("records") or 0)
-            and float(classification_arms[name].get("coverage") or 0)
-            >= OSS_RC_A_PROFILE["minimum_coverage"]
+            isinstance(classification_arms[name], dict)
+            and _is_int(classification_arms[name].get("records"), minimum=1)
+            and classification_arms[name].get("records") == arm.get("records")
+            and _is_number(
+                classification_arms[name].get("coverage"),
+                minimum=OSS_RC_A_PROFILE["minimum_coverage"], maximum=1.0,
+            )
             for name in REQUIRED_CLASSIFICATION_ARMS
         )
         and all(
-            int(pairwise[name].get("compared") or 0)
-            >= minimum_pairwise_compared
+            isinstance(pairwise[name], dict)
+            and _is_int(
+                pairwise[name].get("compared"), minimum=minimum_pairwise_compared,
+            )
             and pairwise[name].get("is_accuracy") is False
             for name in required_pairs
         )
     )
 
-    calibration = arm.get("calibration") or {}
+    calibration_value = arm.get("calibration")
+    calibration = calibration_value if isinstance(calibration_value, dict) else {}
     suppression_precision = arm.get("authoritative_suppression_precision")
     a_profile = OSS_RC_A_PROFILE
-    per_label = arm.get("per_label") or {}
+    per_label_value = arm.get("per_label")
+    per_label = per_label_value if isinstance(per_label_value, dict) else {}
     per_label_support = {
-        label: int(metrics.get("support") or 0)
-        for label, metrics in per_label.items()
+        label: _int_or(metrics.get("support"), -1)
+        for label, metrics in per_label.items() if isinstance(metrics, dict)
     }
-    classification_evidence = classification.get("evidence") or {}
+    classification_evidence_value = classification.get("evidence")
+    classification_evidence = (
+        classification_evidence_value
+        if isinstance(classification_evidence_value, dict) else {}
+    )
+    dataset_value = classification.get("dataset")
+    dataset = dataset_value if isinstance(dataset_value, dict) else {}
     classification_consistent = (
         classification_evidence.get("corpus_binding") is True
         and classification_evidence.get("adjudication_provenance_bound") is True
+        and classification_evidence.get("review_window_valid") is True
+        and classification_evidence.get("review_precedes_run") is True
         and classification_evidence.get("contains_raw_records") is False
         and classification_evidence.get("model_revisions_frozen") is True
-        and int((classification.get("dataset") or {}).get("records") or 0)
-        == int(arm.get("records") or 0)
+        and _is_int(dataset.get("records"), minimum=1)
+        and dataset.get("records") == arm.get("records")
         and set(per_label_support) == set(CASCADE_LABELS)
     )
     a_profile_passed = (
-        int(arm.get("records") or 0) >= a_profile["minimum_records"]
+        _is_int(arm.get("records"), minimum=a_profile["minimum_records"])
         and set(per_label_support) == set(CASCADE_LABELS)
         and all(
             support >= a_profile["minimum_per_label_support"]
             for support in per_label_support.values()
         )
-        and int(arm.get("important_support") or 0)
-        >= a_profile["minimum_important_support"]
-        and int(arm.get("authoritative_suppressions") or 0)
-        >= a_profile["minimum_authoritative_suppressions"]
+        and _is_int(
+            arm.get("important_support"),
+            minimum=a_profile["minimum_important_support"],
+        )
+        and _is_int(
+            arm.get("authoritative_suppressions"),
+            minimum=a_profile["minimum_authoritative_suppressions"],
+        )
         and _bounded_number(
             arm.get("coverage"), a_profile["minimum_coverage"], 1.0,
         )
@@ -349,25 +433,39 @@ def build_staging_evidence(
         )
     )
 
-    runtime_environment = runtime.get("environment") or {}
-    runtime_config = runtime.get("config") or {}
+    runtime_environment_value = runtime.get("environment")
+    runtime_environment = (
+        runtime_environment_value if isinstance(runtime_environment_value, dict) else {}
+    )
+    runtime_config_value = runtime.get("config")
+    runtime_config = (
+        runtime_config_value if isinstance(runtime_config_value, dict) else {}
+    )
     cells = list(_runtime_cells(runtime))
-    runtime_errors = sum(int(cell.get("errors") or 0) for cell in cells)
+    runtime_errors_well_formed = all(
+        _is_int(cell.get("errors"), minimum=0) for cell in cells
+    )
+    runtime_errors = sum(_int_or(cell.get("errors"), -1) for cell in cells)
     oracle_failures = sum(
         int(value is False)
         for cell in cells
         for key, value in cell.items()
         if key.endswith("_oracle_passed")
     )
-    results = runtime.get("results") or {}
-    nano_cells = results.get("nano") if isinstance(results.get("nano"), list) else []
-    http_cells = results.get("http") if isinstance(results.get("http"), list) else []
-    semantic_cells = (
-        results.get("semantic") if isinstance(results.get("semantic"), list) else []
-    )
-    recall_cells = (
-        results.get("recall") if isinstance(results.get("recall"), list) else []
-    )
+    results_value = runtime.get("results")
+    results = results_value if isinstance(results_value, dict) else {}
+    nano_cells = [
+        cell for cell in results.get("nano", []) if isinstance(cell, dict)
+    ] if isinstance(results.get("nano"), list) else []
+    http_cells = [
+        cell for cell in results.get("http", []) if isinstance(cell, dict)
+    ] if isinstance(results.get("http"), list) else []
+    semantic_cells = [
+        cell for cell in results.get("semantic", []) if isinstance(cell, dict)
+    ] if isinstance(results.get("semantic"), list) else []
+    recall_cells = [
+        cell for cell in results.get("recall", []) if isinstance(cell, dict)
+    ] if isinstance(results.get("recall"), list) else []
     nano_1 = _matching_cell(nano_cells, batch_size=1)
     http_1 = _matching_cell(http_cells, concurrency=1)
     semantic_hit_1 = _matching_cell(
@@ -378,17 +476,19 @@ def build_staging_evidence(
     )
     recall_1000 = _matching_cell(recall_cells, memory_count=1000)
     recall_10000 = _matching_cell(recall_cells, memory_count=10000)
-    mixed_nano = results.get("mixed_nano") or {}
-    mixed_http = results.get("mixed_http") or {}
+    mixed_nano_value = results.get("mixed_nano")
+    mixed_nano = mixed_nano_value if isinstance(mixed_nano_value, dict) else {}
+    mixed_http_value = results.get("mixed_http")
+    mixed_http = mixed_http_value if isinstance(mixed_http_value, dict) else {}
     http_parallel = max(
-        [int(cell.get("concurrency") or 0) for cell in http_cells], default=0,
+        [_int_or(cell.get("concurrency"), -1) for cell in http_cells], default=0,
     )
     semantic_hit_parallel = max([
-        int(cell.get("concurrency") or 0) for cell in semantic_cells
+        _int_or(cell.get("concurrency"), -1) for cell in semantic_cells
         if cell.get("workload") == "normalized_cache_hit"
     ], default=0)
     semantic_miss_parallel = max([
-        int(cell.get("concurrency") or 0) for cell in semantic_cells
+        _int_or(cell.get("concurrency"), -1) for cell in semantic_cells
         if cell.get("workload") == "unique_cache_miss"
     ], default=0)
     parallel_concurrency = min(
@@ -403,18 +503,33 @@ def build_staging_evidence(
         semantic_cells,
         workload="unique_cache_miss", concurrency=semantic_miss_parallel,
     )
+    required_oracles_passed = (
+        mixed_nano.get("survivor_oracle_passed") is True
+        and mixed_http.get("survivor_oracle_passed") is True
+        and recall_1000.get("recall_oracle_passed") is True
+        and recall_10000.get("recall_oracle_passed") is True
+    )
     runtime_profile = OSS_RC_RUNTIME_PROFILE
     runtime_profile_passed = (
-        int(runtime_config.get("iterations") or 0)
-        >= runtime_profile["minimum_iterations"]
-        and int(runtime_config.get("samples") or 0)
-        >= runtime_profile["minimum_samples"]
-        and int(runtime_config.get("warmup") or 0)
-        >= runtime_profile["minimum_warmup"]
-        and int(runtime_config.get("mixed_iterations") or 0)
-        >= runtime_profile["minimum_mixed_iterations"]
-        and int(runtime_config.get("mixed_http_samples") or 0)
-        >= runtime_profile["minimum_mixed_http_samples"]
+        _is_int(
+            runtime_config.get("iterations"),
+            minimum=runtime_profile["minimum_iterations"],
+        )
+        and _is_int(
+            runtime_config.get("samples"),
+            minimum=runtime_profile["minimum_samples"],
+        )
+        and _is_int(
+            runtime_config.get("warmup"), minimum=runtime_profile["minimum_warmup"],
+        )
+        and _is_int(
+            runtime_config.get("mixed_iterations"),
+            minimum=runtime_profile["minimum_mixed_iterations"],
+        )
+        and _is_int(
+            runtime_config.get("mixed_http_samples"),
+            minimum=runtime_profile["minimum_mixed_http_samples"],
+        )
         and parallel_concurrency >= runtime_profile["minimum_parallel_concurrency"]
         and bool(nano_1) and bool(http_1)
         and bool(semantic_hit_1) and bool(semantic_miss_1)
@@ -430,8 +545,10 @@ def build_staging_evidence(
         and _samples_at_least(
             mixed_http, runtime_profile["minimum_mixed_http_samples"],
         )
-        and float(nano_1.get("throughput_signals_per_second_per_core") or 0)
-        >= runtime_profile["minimum_nano_signals_per_second_per_core"]
+        and _is_number(
+            nano_1.get("throughput_signals_per_second_per_core"),
+            minimum=runtime_profile["minimum_nano_signals_per_second_per_core"],
+        )
         and _within_p95(nano_1, runtime_profile["maximum_nano_batch_1_p95_ms"])
         and _within_p95(http_1, runtime_profile["maximum_http_concurrency_1_p95_ms"])
         and _within_p95(mixed_http, runtime_profile["maximum_mixed_http_p95_ms"])
@@ -451,8 +568,14 @@ def build_staging_evidence(
         )
     )
 
-    verification = manifest.get("verification") or {}
-    audit_window = manifest.get("audit_window") or {}
+    verification_value = manifest.get("verification")
+    verification = (
+        verification_value if isinstance(verification_value, dict) else {}
+    )
+    audit_window_value = manifest.get("audit_window")
+    audit_window = (
+        audit_window_value if isinstance(audit_window_value, dict) else {}
+    )
     try:
         run_start = _parse_time(run["window_start"])
         run_end = _parse_time(run["window_end"])
@@ -468,8 +591,10 @@ def build_staging_evidence(
     except (KeyError, TypeError, ValueError):
         runtime_in_window = False
         audit_brackets_window = False
-    ledger = manifest.get("ledger") or {}
-    outbox = ledger.get("outbox") or {}
+    ledger_value = manifest.get("ledger")
+    ledger = ledger_value if isinstance(ledger_value, dict) else {}
+    outbox_value = ledger.get("outbox")
+    outbox = outbox_value if isinstance(outbox_value, dict) else {}
     drop_fields = (
         "ledger_writes_dropped",
         "ledger_memory_events_dropped",
@@ -477,12 +602,15 @@ def build_staging_evidence(
         "ledger_memory_rejected_total",
     )
     durable_loss_counters_present = all(
-        field in snapshot
+        _is_int(snapshot.get(field), minimum=0)
         for field in drop_fields
         for snapshot in (stats_before, stats_after)
     )
     drop_deltas = {
-        field: int(stats_after.get(field) or 0) - int(stats_before.get(field) or 0)
+        field: (
+            _int_or(stats_after.get(field), -1)
+            - _int_or(stats_before.get(field), -1)
+        )
         for field in drop_fields
     }
     audit_healthy = (
@@ -498,10 +626,18 @@ def build_staging_evidence(
         == DURABLE_QUEUE_OVERFLOW_POLICY
         and stats_after.get("ledger_memory_overflow_policy")
         == DURABLE_QUEUE_OVERFLOW_POLICY
-        and int(stats_after.get("ledger_receipt_pending") or 0) == 0
-        and int(stats_after.get("ledger_memory_pending") or 0) == 0
-        and int(stats_after.get("ledger_receipt_consecutive_failures") or 0) == 0
-        and int(stats_after.get("ledger_memory_consecutive_failures") or 0) == 0
+        and _is_int(stats_after.get("ledger_receipt_pending"), minimum=0)
+        and stats_after.get("ledger_receipt_pending") == 0
+        and _is_int(stats_after.get("ledger_memory_pending"), minimum=0)
+        and stats_after.get("ledger_memory_pending") == 0
+        and _is_int(
+            stats_after.get("ledger_receipt_consecutive_failures"), minimum=0,
+        )
+        and stats_after.get("ledger_receipt_consecutive_failures") == 0
+        and _is_int(
+            stats_after.get("ledger_memory_consecutive_failures"), minimum=0,
+        )
+        and stats_after.get("ledger_memory_consecutive_failures") == 0
         and durable_loss_counters_present
         and all(delta == 0 for delta in drop_deltas.values())
     )
@@ -540,8 +676,12 @@ def build_staging_evidence(
             spool_capacity_healthy = spool_capacity_healthy and shared_healthy
     capacity_healthy = (
         ledger.get("capacity_measured") is True
-        and 0 <= float(ledger.get("used_fraction", 2))
-        < float(ledger.get("alert_threshold", 0)) <= 1
+        and _is_number(ledger.get("used_fraction"), minimum=0, maximum=1)
+        and _is_number(
+            ledger.get("alert_threshold"), minimum=0, maximum=1,
+        )
+        and ledger.get("alert_threshold") > 0
+        and ledger.get("used_fraction") < ledger.get("alert_threshold")
     )
     try:
         relay_success = _parse_time(outbox.get("last_relay_success_at", ""))
@@ -559,12 +699,17 @@ def build_staging_evidence(
     outbox_healthy = (
         outbox.get("status") == "healthy"
         and outbox.get("policy") == OUTBOX_POLICY
-        and int(outbox.get("pending") or 0) == 0
-        and int(outbox.get("inflight") or 0) == 0
-        and int(outbox.get("failed") or 0) == 0
-        and float(outbox.get("oldest_pending_seconds") or 0) == 0
+        and _is_int(outbox.get("pending"), minimum=0)
+        and outbox.get("pending") == 0
+        and _is_int(outbox.get("inflight"), minimum=0)
+        and outbox.get("inflight") == 0
+        and _is_int(outbox.get("failed"), minimum=0)
+        and outbox.get("failed") == 0
+        and _is_number(outbox.get("oldest_pending_seconds"), minimum=0)
+        and outbox.get("oldest_pending_seconds") == 0
         and outbox.get("archive_verified") is True
-        and int(outbox.get("undelivered_deleted") or 0) == 0
+        and _is_int(outbox.get("undelivered_deleted"), minimum=0)
+        and outbox.get("undelivered_deleted") == 0
         and outbox_times_healthy
     )
 
@@ -627,6 +772,12 @@ def build_staging_evidence(
                 "adjudication_provenance_bound": classification_evidence.get(
                     "adjudication_provenance_bound"
                 ),
+                "review_window_valid": classification_evidence.get(
+                    "review_window_valid"
+                ),
+                "review_precedes_run": classification_evidence.get(
+                    "review_precedes_run"
+                ),
                 "contains_raw_records": classification_evidence.get(
                     "contains_raw_records"
                 ),
@@ -641,8 +792,9 @@ def build_staging_evidence(
             },
         ),
         _gate("zero_authoritative_dangerous_misses", (
-            int(arm.get("authoritative_dangerous_misses") or 0) == 0
-            and int(arm.get("important_support") or 0) > 0
+            _is_int(arm.get("authoritative_dangerous_misses"), minimum=0)
+            and arm.get("authoritative_dangerous_misses") == 0
+            and _is_int(arm.get("important_support"), minimum=1)
         ), {
             "dangerous_misses": arm.get("authoritative_dangerous_misses"),
             "important_support": arm.get("important_support"),
@@ -678,8 +830,10 @@ def build_staging_evidence(
             and runtime_config.get("run_id") == manifest.get("runtime_run_id")
             and runtime_in_window
             and bool(cells)
+            and runtime_errors_well_formed
             and runtime_errors == 0
             and oracle_failures == 0
+            and required_oracles_passed
         ), {
             "cpu_allocation_verified": runtime_environment.get("cpu_allocation_verified"),
             "run_id_matches": (
@@ -687,7 +841,9 @@ def build_staging_evidence(
             ),
             "generated_in_window": runtime_in_window,
             "cells": len(cells), "errors": runtime_errors,
+            "errors_well_formed": runtime_errors_well_formed,
             "oracle_failures": oracle_failures,
+            "required_oracles_passed": required_oracles_passed,
         }),
         _gate("runtime_oss_rc_a_profile", runtime_profile_passed, {
             "profile": "oss-rc-runtime-v1",
@@ -750,11 +906,16 @@ def build_staging_evidence(
         }),
         _gate("clean_clone_verified", (
             verification.get("clean_clone_passed") is True
-            and 0 < float(verification.get("clean_clone_minutes") or 0) <= 15
+            and _is_number(
+                verification.get("clean_clone_minutes"), minimum=0, maximum=15,
+            )
+            and verification.get("clean_clone_minutes") > 0
         ), verification.get("clean_clone_minutes")),
         _gate("tests_passed", (
-            int(verification.get("tests_passed") or 0) > 0
-            and int(verification.get("tests_failed") or 0) == 0
+            _is_int(verification.get("tests_passed"), minimum=1)
+            and _is_int(verification.get("tests_failed"), minimum=0)
+            and verification.get("tests_failed") == 0
+            and _is_int(verification.get("tests_skipped"), minimum=0)
         ), {
             "passed": verification.get("tests_passed"),
             "failed": verification.get("tests_failed"),

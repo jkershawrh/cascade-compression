@@ -29,7 +29,8 @@ completed within the previous 90 days.
 
 The command returns zero only for `staging_success`. It requires:
 
-- a decision-grade held-out classification report on the same run;
+- a decision-grade held-out classification report on the same run, with a valid independent-review
+  window that completed before model evaluation began;
 - a complete same-corpus generative, semantic, and hybrid comparison, with the hybrid arm selected
   for the release decision, frozen revisions for all three arms, and at least 95% coverage per arm;
 - the fixed `oss-rc-a-v1` quality profile: at least 200 held-out records, at least 25 examples of
@@ -39,7 +40,8 @@ The command returns zero only for `staging_success`. It requires:
   0.10;
 - zero authoritative dangerous misses;
 - measured calibration;
-- a CPU allocation and commit-bound runtime benchmark with no errors;
+- a CPU allocation and commit-bound runtime benchmark with no errors and all required route/recall
+  correctness oracles present and passing;
 - the fixed `oss-rc-runtime-v1` profile, including nano throughput/tail latency, HTTP request-path
   latency, mixed route oracles, llm-d-sc cache-hit and unique-miss overhead at serial and parallel
   load, and exact-precedent recall at 1K and 10K memories;
@@ -51,6 +53,10 @@ The command returns zero only for `staging_success`. It requires:
 - clean-clone completion within 15 minutes;
 - passing tests and package/container smoke checks; and
 - successful CI with SBOM and provenance evidence.
+
+Release-critical counters, sample sizes, latencies, capacities, and quality metrics must use their
+declared JSON number types. Numeric strings and booleans are rejected rather than coerced, so a
+malformed artifact cannot satisfy a gate accidentally.
 
 The output contains aggregate metrics and cryptographic digests for the staging manifest, candidate
 manifest, classification report, runtime report, and both audit snapshots. It excludes raw records,
