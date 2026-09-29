@@ -11,7 +11,12 @@ from uuid import uuid4
 import jsonschema
 import pytest
 
-from cascade_compression.integrations.ledger import build_decision_record
+from cascade_compression.integrations.ledger import (
+    build_decision_entry,
+    build_decision_record,
+    build_memory_events_entry,
+    build_promotion_entry,
+)
 
 SCHEMA_DIR = Path(__file__).parent.parent / "contracts" / "schemas"
 
@@ -214,3 +219,41 @@ class TestWriteDecisions:
     def test_no_decisions_is_silent(self):
         from cascade_compression.integrations.ledger import write_decisions
         write_decisions("http://fake:28099", "", FakeResult([]), [], "k8s")
+
+
+class TestLedgerEntryBuilders:
+    def test_decision_entry_is_built_without_network_io(self):
+        signal_id = uuid4()
+        entry = build_decision_entry(
+            FakeResult([FakeDecision(signal_id)]),
+            [FakeSignal(signal_id)],
+            "example",
+        )
+        assert entry["entry_type"] == "decision.record"
+        assert entry["source_id"] == "cascade-example"
+        assert entry["idempotency_key"]
+
+    def test_empty_decisions_do_not_create_an_entry(self):
+        assert build_decision_entry(FakeResult([]), [], "example") is None
+
+    def test_promotion_entry_is_deterministically_idempotent(self):
+        event = {
+            "agent_name": "candidate-a",
+            "event_type": "promoted",
+            "timestamp": "2026-01-01T00:00:00Z",
+        }
+        first = build_promotion_entry(event, "example")
+        second = build_promotion_entry(event, "example")
+        assert first == second
+        assert first["entry_type"] == "agent.promotion"
+
+    def test_memory_batch_entry_is_content_addressed(self):
+        events = [{"memory_id": "m1", "event_type": "formed"}]
+        first = build_memory_events_entry(events, "example")
+        second = build_memory_events_entry(events, "example")
+        assert first == second
+        assert first["correlation_id"].startswith("memory-batch-")
+
+    def test_empty_memory_batch_fails_closed(self):
+        with pytest.raises(ValueError, match="cannot be empty"):
+            build_memory_events_entry([], "example")

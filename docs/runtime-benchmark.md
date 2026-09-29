@@ -1,8 +1,9 @@
 # Reproducible Cascade runtime benchmark
 
-This synthetic benchmark separates three costs: the in-process deterministic
-nano pipeline, the HTTP ingestion path, and a direct synchronous llm-d-sc gRPC
-call. Cascade's HTTP endpoint queues survivor classification asynchronously, so
+This synthetic benchmark separates four costs: the in-process deterministic
+nano pipeline, the HTTP ingestion path, a direct synchronous llm-d-sc gRPC
+call, and exact-precedent memory recall. Cascade's HTTP endpoint queues survivor
+classification asynchronously, so
 the HTTP latency is **not** end-to-end classification latency. None of these
 measurements establishes classification accuracy, safe suppression, anchor
 quality, or production value.
@@ -33,6 +34,11 @@ python -m cascade_compression.benchmarks.cascade_runtime \
   --environment-label local-smoke \
   --mixed-only --mixed-iterations 100 --warmup 20
 ```
+
+Add `--recall-sizes 100 1000 10000` to measure memory retrieval scaling. The
+recall cell reports cold-start and steady-state tail latency and fails if the
+known stored precedent is not ranked first. This is a retrieval mechanics
+oracle, not a relevance judgment over human-authored queries.
 
 Add `--http-url http://127.0.0.1:8090 --mixed-http-samples 100` to check the
 same survivor oracle through an isolated local API service. Each HTTP sample

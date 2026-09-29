@@ -9,6 +9,7 @@ from cascade_compression import __version__
 from cascade_compression.anchor_engineering import validate_taxonomy
 from cascade_compression.classifier import normalize_label
 from cascade_compression.collectors.finance import FinanceCollector
+from cascade_compression.contracts import contract_schema
 from cascade_compression.domain_plugins import discover_domain_plugins
 from cascade_compression.plugins import discover_collector_plugins
 from cascade_compression.resources import resource_dir, resource_path
@@ -25,6 +26,9 @@ def main() -> None:
     validate_taxonomy(json.loads(taxonomy_path.read_text(encoding="utf-8")))
     assert normalize_label("needs_attention") == "needs_attention"
     assert resource_path("contracts", "manifest.json").is_file()
+    assert contract_schema("cascade.classification-evaluation").is_file()
+    assert contract_schema("cascade.staging-manifest").is_file()
+    assert contract_schema("cascade.staging-evidence").is_file()
     frontend = resource_dir("frontend")
     assert frontend is not None and (frontend / "index.html").is_file()
 

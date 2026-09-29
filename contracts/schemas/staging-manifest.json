@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cascade-compression.org/contracts/cascade.staging-manifest/1.0.0-alpha.1",
+  "title": "Cascade Staging Manifest",
+  "type": "object",
+  "required": ["schema_version", "run", "classification_arm", "model_revisions", "runtime_run_id", "audit_window", "ledger", "verification"],
+  "properties": {
+    "schema_version": {"const": "cascade.staging-manifest.v1alpha1"},
+    "run": {
+      "type": "object",
+      "required": ["commit", "image_digest", "config_digest", "taxonomy_revision", "window_start", "window_end"],
+      "properties": {
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "config_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "taxonomy_revision": {"type": "string", "minLength": 1},
+        "window_start": {"type": "string", "format": "date-time"},
+        "window_end": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "classification_arm": {"type": "string", "minLength": 1},
+    "model_revisions": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "runtime_run_id": {"type": "string", "minLength": 1},
+    "audit_window": {
+      "type": "object",
+      "required": ["stats_before_at", "stats_after_at"],
+      "properties": {
+        "stats_before_at": {"type": "string", "format": "date-time"},
+        "stats_after_at": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "ledger": {
+      "type": "object",
+      "required": ["capacity_measured", "used_fraction", "alert_threshold", "outbox"],
+      "properties": {
+        "capacity_measured": {"const": true},
+        "used_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+        "alert_threshold": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+        "outbox": {
+          "type": "object",
+          "required": ["status", "pending", "policy"],
+          "properties": {
+            "status": {"type": "string"},
+            "pending": {"type": "integer", "minimum": 0},
+            "policy": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "verification": {
+      "type": "object",
+      "required": ["clean_clone_passed", "clean_clone_minutes", "tests_passed", "tests_failed", "tests_skipped", "package_smoke", "container_smoke", "sbom", "provenance", "ci_conclusion"],
+      "properties": {
+        "clean_clone_passed": {"type": "boolean"},
+        "clean_clone_minutes": {"type": "number", "exclusiveMinimum": 0},
+        "tests_passed": {"type": "integer", "minimum": 0},
+        "tests_failed": {"type": "integer", "minimum": 0},
+        "tests_skipped": {"type": "integer", "minimum": 0},
+        "package_smoke": {"type": "boolean"},
+        "container_smoke": {"type": "boolean"},
+        "sbom": {"type": "boolean"},
+        "provenance": {"type": "boolean"},
+        "ci_conclusion": {"type": "string"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

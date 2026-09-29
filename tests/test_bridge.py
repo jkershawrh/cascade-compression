@@ -520,3 +520,63 @@ class TestLLMBackpressure:
             bridge._drain_memory_ledger_queue()
         assert bridge._ledger_memory_pending_count() == 0
         assert bridge.get_stats()["ledger_memory_last_success"]
+
+    def test_durable_receipt_queue_survives_restart(self, monkeypatch, tmp_path):
+        state_file = tmp_path / "state.json"
+        monkeypatch.setenv("CASCADE_STATE_FILE", str(state_file))
+        first = CascadeBridge()
+        first._ledger_receipt_store.enqueue([{
+            "entry_type": "decision.record",
+            "idempotency_key": "stable-key",
+        }])
+
+        second = CascadeBridge()
+        stats = second.get_stats()
+        assert stats["ledger_receipt_queue_durability"] == "sqlite"
+        assert stats["ledger_receipt_pending"] == 1
+        assert second._ledger_receipt_store.peek(1)[0].payload[
+            "idempotency_key"
+        ] == "stable-key"
+
+    def test_durable_receipt_is_acknowledged_only_after_success(
+        self, monkeypatch, tmp_path,
+    ):
+        monkeypatch.setenv("CASCADE_STATE_FILE", str(tmp_path / "state.json"))
+        bridge = CascadeBridge(ledger_url="https://ledger.example")
+        bridge._ledger_receipt_store.enqueue([{
+            "entry_type": "decision.record",
+            "idempotency_key": "stable-key",
+        }])
+        bridge._ledger_receipt_flush_running = True
+
+        with patch(
+            "cascade_compression.integrations.ledger.post_entry",
+            return_value=False,
+        ):
+            bridge._drain_ledger_receipt_queue()
+        assert bridge._ledger_receipt_pending_count() == 1
+        assert bridge.get_stats()["ledger_receipt_failures"] == 1
+
+        bridge._ledger_receipt_flush_running = True
+        with patch(
+            "cascade_compression.integrations.ledger.post_entry",
+            return_value=True,
+        ):
+            bridge._drain_ledger_receipt_queue()
+        assert bridge._ledger_receipt_pending_count() == 0
+        stats = bridge.get_stats()
+        assert stats["ledger_receipts_written"] == 1
+        assert stats["ledger_receipt_last_success"]
+
+    def test_process_persists_decision_receipt_before_delivery(
+        self, monkeypatch, tmp_path,
+    ):
+        monkeypatch.setenv("CASCADE_STATE_FILE", str(tmp_path / "state.json"))
+        bridge = CascadeBridge(ledger_url="https://ledger.example")
+        monkeypatch.setattr(bridge, "_start_ledger_receipt_drain", lambda: None)
+
+        bridge.process([FakeSignal(signal_type="routine", severity="info")])
+
+        queued = bridge._ledger_receipt_store.peek(1)
+        assert len(queued) == 1
+        assert queued[0].payload["entry_type"] == "decision.record"

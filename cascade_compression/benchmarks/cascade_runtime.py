@@ -27,8 +27,10 @@ from typing import Any, Callable
 from uuid import uuid4
 
 from cascade_compression.cascade.agents import default_agents
+from cascade_compression.cascade.memory import MemoryArchive
 from cascade_compression.cascade.pipeline import CascadePipeline
 from cascade_compression.cascade.protocol import Signal
+from cascade_compression.cascade.recall import RecallEngine
 from cascade_compression.classifier import serialize_signal
 
 
@@ -418,6 +420,60 @@ def benchmark_semantic(*, address: str, signal_name: str, run_id: str, samples: 
     return cells
 
 
+def benchmark_recall(*, memory_sizes: list[int], samples: int, warmup: int,
+                     cpu_limit: float | None) -> list[dict[str, Any]]:
+    """Measure exact-precedent recall over bounded in-memory archives."""
+    cells = []
+    for memory_count in memory_sizes:
+        archive = MemoryArchive(max_capacity=memory_count)
+        stored = []
+        for index in range(memory_count):
+            stored.append(archive.store(Signal(
+                signal_type=f"incident_class_{index % 20}",
+                severity="critical",
+                source=f"recall-benchmark-{index}",
+                namespace="benchmark",
+                content={
+                    "message": f"Historical incident signature {index} requires action",
+                    "value": index + 1,
+                },
+                labels={"service_group": str(index % 10)},
+            )))
+        engine = RecallEngine()
+
+        def recall(index: int) -> tuple[float, bool]:
+            target_index = index % memory_count
+            query = stored[target_index].signal
+            started = time.perf_counter_ns()
+            results = engine.recall(query, archive, top_k=1, min_score=0.0)
+            latency = (time.perf_counter_ns() - started) / 1_000_000
+            return latency, bool(
+                results and results[0].memory.memory_id == stored[target_index].memory_id
+            )
+
+        cold_latency, cold_ok = recall(0)
+        if not cold_ok:
+            raise RuntimeError("recall cold-start oracle failed")
+        for index in range(warmup):
+            _, ok = recall(index + 1)
+            if not ok:
+                raise RuntimeError("recall warmup oracle failed")
+        latencies, errors, elapsed = _parallel_samples(
+            recall, samples=samples, concurrency=1,
+        )
+        cell = _summary(latencies, samples, elapsed, cpu_limit, errors)
+        cell.update({
+            "memory_count": memory_count,
+            "top_k": 1,
+            "cold_start_latency_ms": round(cold_latency, 6),
+            "recall_oracle_passed": errors == 0,
+            "oracle_type": "exact_stored_precedent",
+            "concurrency": 1,
+        })
+        cells.append(cell)
+    return cells
+
+
 def run(args: argparse.Namespace) -> dict[str, Any]:
     cpu_limit = getattr(args, "cpu_cores", None) or _cpu_limit()
     run_id = args.run_id or uuid4().hex
@@ -432,6 +488,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "http": "External POST /cascade latency; survivor model work is asynchronous.",
             "semantic": "Direct synchronous llm-d-sc gRPC round trip.",
             "mixed": "Synthetic 100-signal route oracle; not adjudicated accuracy.",
+            "recall": "Exact-precedent retrieval over a synthetic bounded memory archive.",
         },
         "environment": {
             "label": args.environment_label,
@@ -456,6 +513,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "mixed_only": getattr(args, "mixed_only", False),
             "mixed_iterations": getattr(args, "mixed_iterations", 0),
             "mixed_http_samples": getattr(args, "mixed_http_samples", 0),
+            "recall_sizes": getattr(args, "recall_sizes", []),
             "run_id": run_id,
         },
         "results": {
@@ -496,6 +554,13 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             concurrencies=args.concurrencies,
             cpu_limit=cpu_limit,
             deadline_seconds=args.sc_deadline,
+        )
+    if getattr(args, "recall_sizes", []):
+        result["results"]["recall"] = benchmark_recall(
+            memory_sizes=args.recall_sizes,
+            samples=args.samples,
+            warmup=args.warmup,
+            cpu_limit=cpu_limit,
         )
     usage_after = resource.getrusage(resource.RUSAGE_SELF)
     result["run"] = {
@@ -542,6 +607,10 @@ def main() -> None:
     parser.add_argument("--sc-address", default="")
     parser.add_argument("--sc-signal", default="cascade_classification")
     parser.add_argument("--sc-deadline", type=float, default=5.0)
+    parser.add_argument(
+        "--recall-sizes", type=_positive, nargs="+", default=[],
+        help="Measure exact-precedent recall for each synthetic archive size",
+    )
     args = parser.parse_args()
     if args.mixed_only and not args.mixed_iterations:
         parser.error("--mixed-only requires --mixed-iterations")

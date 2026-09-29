@@ -133,12 +133,45 @@ class CascadeBridge:
             thread_name_prefix="cascade-ledger",
         )
         self._ledger_writes_dropped = 0
+        self._ledger_receipt_pending_max = max(
+            100, int(os.getenv("CASCADE_LEDGER_RECEIPT_PENDING", "100000"))
+        )
+        self._ledger_receipt_bytes_max = max(
+            1024 * 1024,
+            int(os.getenv(
+                "CASCADE_LEDGER_RECEIPT_BYTES", str(512 * 1024 * 1024),
+            )),
+        )
+        receipt_spool = os.getenv("CASCADE_LEDGER_RECEIPT_SPOOL_FILE", "")
+        if not receipt_spool and self._state_file:
+            receipt_spool = self._state_file + ".ledger-receipts.sqlite3"
+        self._ledger_receipt_store = (
+            DurableLedgerQueue(
+                receipt_spool,
+                max_pending=self._ledger_receipt_pending_max,
+                max_bytes=self._ledger_receipt_bytes_max,
+            )
+            if receipt_spool else None
+        )
+        self._ledger_receipt_lock = threading.Lock()
+        self._ledger_receipt_flush_running = False
+        self._ledger_receipt_retry_timer = None
+        self._ledger_receipt_failures = 0
+        self._ledger_receipt_consecutive_failures = 0
+        self._ledger_receipts_written = 0
+        self._ledger_receipt_last_success = ""
         self._ledger_memory_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="cascade-memory-ledger",
         )
         self._ledger_memory_pending: list = []
         self._ledger_memory_pending_max = max(
             100, int(os.getenv("CASCADE_LEDGER_MEMORY_PENDING", "50000"))
+        )
+        self._ledger_memory_bytes_max = max(
+            1024 * 1024,
+            int(os.getenv(
+                "CASCADE_LEDGER_MEMORY_BYTES", str(512 * 1024 * 1024),
+            )),
         )
         self._ledger_memory_batch_size = max(
             1, int(os.getenv("CASCADE_LEDGER_MEMORY_BATCH", "100"))
@@ -163,7 +196,9 @@ class CascadeBridge:
             spool_file = self._state_file + ".ledger-memory.sqlite3"
         self._ledger_memory_store = (
             DurableLedgerQueue(
-                spool_file, max_pending=self._ledger_memory_pending_max,
+                spool_file,
+                max_pending=self._ledger_memory_pending_max,
+                max_bytes=self._ledger_memory_bytes_max,
             )
             if spool_file else None
         )
@@ -291,6 +326,8 @@ class CascadeBridge:
         self._pending_memory_lock = threading.Lock()
 
         self._restore_state()
+        if self._ledger_url and self._ledger_receipt_pending_count():
+            self._start_ledger_receipt_drain()
         if self._ledger_url and self._ledger_memory_pending_count():
             self._start_memory_ledger_drain()
 
@@ -391,9 +428,7 @@ class CascadeBridge:
                 ).start()
 
         if self._ledger_url:
-            self._submit_ledger_write(
-                self._write_to_ledger, cascade_result, cascade_signals,
-            )
+            self._enqueue_decisions_to_ledger(cascade_result, cascade_signals)
 
         return {
             "enabled": True,
@@ -1255,6 +1290,96 @@ class CascadeBridge:
         except Exception as e:
             log.debug("Ledger write failed: %s", str(e)[:60])
 
+    def _enqueue_decisions_to_ledger(self, cascade_result, cascade_signals):
+        from .integrations.ledger import build_decision_entry
+        entry = build_decision_entry(
+            cascade_result, cascade_signals, self.domain,
+        )
+        if entry:
+            self._enqueue_ledger_entry(entry)
+
+    def _enqueue_ledger_entry(self, entry: dict) -> bool:
+        """Persist a receipt before delivery when a spool is configured."""
+        if not self._ledger_receipt_store:
+            from .integrations.ledger import post_entry
+            return self._submit_ledger_write(
+                post_entry, self._ledger_url, self._ledger_token, entry,
+            )
+        dropped = self._ledger_receipt_store.enqueue([entry])
+        if dropped:
+            self._ledger_writes_dropped += dropped
+            self._emit_meta(
+                "meta_ledger_backpressure", "high",
+                "Durable ledger receipt spool exceeded its configured bound",
+                dropped=dropped,
+                dropped_total=self._ledger_writes_dropped,
+                pending_max=self._ledger_receipt_pending_max,
+            )
+        self._start_ledger_receipt_drain()
+        return dropped == 0
+
+    def _ledger_receipt_pending_count(self) -> int:
+        return self._ledger_receipt_store.count() if self._ledger_receipt_store else 0
+
+    def _start_ledger_receipt_drain(self):
+        if not self._ledger_receipt_store:
+            return
+        with self._ledger_receipt_lock:
+            if (
+                self._ledger_receipt_flush_running
+                or not self._ledger_receipt_pending_count()
+            ):
+                return
+            self._ledger_receipt_flush_running = True
+        self._ledger_executor.submit(self._drain_ledger_receipt_queue)
+
+    def _schedule_ledger_receipt_retry(self):
+        if not self._ledger_receipt_store or not self._ledger_receipt_pending_count():
+            return
+        delay = min(
+            self._ledger_memory_retry_max,
+            self._ledger_memory_retry_initial
+            * (2 ** max(0, self._ledger_receipt_consecutive_failures - 1)),
+        )
+        timer = threading.Timer(delay, self._start_ledger_receipt_drain)
+        timer.daemon = True
+        self._ledger_receipt_retry_timer = timer
+        timer.start()
+
+    def _drain_ledger_receipt_queue(self):
+        try:
+            from .integrations.ledger import post_entry
+            while True:
+                with self._ledger_receipt_lock:
+                    queued = self._ledger_receipt_store.peek(1)
+                    if not queued:
+                        self._ledger_receipt_flush_running = False
+                        return
+                    item = queued[0]
+                if not post_entry(
+                    self._ledger_url, self._ledger_token, item.payload,
+                ):
+                    with self._ledger_receipt_lock:
+                        self._ledger_receipt_flush_running = False
+                        self._ledger_receipt_failures += 1
+                        self._ledger_receipt_consecutive_failures += 1
+                    self._schedule_ledger_receipt_retry()
+                    return
+                with self._ledger_receipt_lock:
+                    self._ledger_receipt_store.acknowledge([item.sequence])
+                    self._ledger_receipts_written += 1
+                    self._ledger_receipt_consecutive_failures = 0
+                    self._ledger_receipt_last_success = datetime.now(
+                        timezone.utc
+                    ).isoformat()
+        except Exception as e:
+            log.debug("Ledger receipt delivery failed: %s", str(e)[:60])
+            with self._ledger_receipt_lock:
+                self._ledger_receipt_flush_running = False
+                self._ledger_receipt_failures += 1
+                self._ledger_receipt_consecutive_failures += 1
+            self._schedule_ledger_receipt_retry()
+
     def _flush_promotion_events(self):
         events = self.promotion.drain_events()
         if not events or not self._ledger_url:
@@ -1268,9 +1393,15 @@ class CascadeBridge:
                 "to_tier": event.to_tier,
                 "reason": event.reason,
             })
-            self._submit_ledger_write(
-                self._write_promotion_to_ledger, event.to_dict(),
-            )
+            if self._ledger_receipt_store:
+                from .integrations.ledger import build_promotion_entry
+                self._enqueue_ledger_entry(
+                    build_promotion_entry(event.to_dict(), self.domain)
+                )
+            else:
+                self._submit_ledger_write(
+                    self._write_promotion_to_ledger, event.to_dict(),
+                )
 
     def _write_promotion_to_ledger(self, event_dict):
         try:
@@ -1521,6 +1652,9 @@ class CascadeBridge:
                 "llm_payloads_truncated": self._llm_payloads_truncated,
                 "llm_priority_dropped": self._llm_priority_dropped,
                 "ledger_writes_dropped": self._ledger_writes_dropped,
+                "ledger_receipt_failures": self._ledger_receipt_failures,
+                "ledger_receipts_written": self._ledger_receipts_written,
+                "ledger_receipt_last_success": self._ledger_receipt_last_success,
                 "ledger_memory_events_dropped": self._ledger_memory_events_dropped,
                 "ledger_memory_batches_written": self._ledger_memory_batches_written,
                 "ledger_memory_failures": self._ledger_memory_failures,
@@ -1561,6 +1695,15 @@ class CascadeBridge:
             self._llm_payloads_truncated = state.get("llm_payloads_truncated", 0)
             self._llm_priority_dropped = state.get("llm_priority_dropped", 0)
             self._ledger_writes_dropped = state.get("ledger_writes_dropped", 0)
+            self._ledger_receipt_failures = state.get(
+                "ledger_receipt_failures", 0,
+            )
+            self._ledger_receipts_written = state.get(
+                "ledger_receipts_written", 0,
+            )
+            self._ledger_receipt_last_success = state.get(
+                "ledger_receipt_last_success", "",
+            )
             self._ledger_memory_events_dropped = state.get(
                 "ledger_memory_events_dropped", 0,
             )
@@ -1704,6 +1847,37 @@ class CascadeBridge:
             }
         stats["ledger_writes_dropped"] = self._ledger_writes_dropped
         stats["ledger_max_pending"] = self._ledger_max_pending
+        receipt_pending = self._ledger_receipt_pending_count()
+        stats["ledger_receipt_pending"] = receipt_pending
+        stats["ledger_receipt_pending_max"] = self._ledger_receipt_pending_max
+        stats["ledger_receipt_utilization"] = round(
+            receipt_pending / self._ledger_receipt_pending_max, 4
+        )
+        stats["ledger_receipt_queue_durability"] = (
+            "sqlite" if self._ledger_receipt_store else "memory_only"
+        )
+        stats["ledger_receipt_oldest_age_seconds"] = round(
+            self._ledger_receipt_store.oldest_age_seconds(), 3
+        ) if self._ledger_receipt_store else None
+        stats["ledger_receipt_spool_bytes"] = (
+            self._ledger_receipt_store.storage_bytes()
+            if self._ledger_receipt_store else 0
+        )
+        receipt_payload_bytes = (
+            self._ledger_receipt_store.payload_bytes()
+            if self._ledger_receipt_store else 0
+        )
+        stats["ledger_receipt_payload_bytes"] = receipt_payload_bytes
+        stats["ledger_receipt_bytes_max"] = self._ledger_receipt_bytes_max
+        stats["ledger_receipt_byte_utilization"] = round(
+            receipt_payload_bytes / self._ledger_receipt_bytes_max, 4
+        )
+        stats["ledger_receipt_failures"] = self._ledger_receipt_failures
+        stats["ledger_receipt_consecutive_failures"] = (
+            self._ledger_receipt_consecutive_failures
+        )
+        stats["ledger_receipts_written"] = self._ledger_receipts_written
+        stats["ledger_receipt_last_success"] = self._ledger_receipt_last_success
         pending = self._ledger_memory_pending_count()
         stats["ledger_memory_pending"] = pending
         stats["ledger_memory_pending_max"] = self._ledger_memory_pending_max
@@ -1719,6 +1893,15 @@ class CascadeBridge:
         stats["ledger_memory_spool_bytes"] = (
             self._ledger_memory_store.storage_bytes()
             if self._ledger_memory_store else 0
+        )
+        memory_payload_bytes = (
+            self._ledger_memory_store.payload_bytes()
+            if self._ledger_memory_store else 0
+        )
+        stats["ledger_memory_payload_bytes"] = memory_payload_bytes
+        stats["ledger_memory_bytes_max"] = self._ledger_memory_bytes_max
+        stats["ledger_memory_byte_utilization"] = round(
+            memory_payload_bytes / self._ledger_memory_bytes_max, 4
         )
         stats["ledger_memory_events_dropped"] = self._ledger_memory_events_dropped
         stats["ledger_memory_batches_written"] = self._ledger_memory_batches_written

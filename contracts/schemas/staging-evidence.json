@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cascade-compression.org/contracts/cascade.staging-evidence/1.0.0-alpha.1",
+  "title": "Cascade Staging Evidence",
+  "type": "object",
+  "required": ["schema_version", "status", "run", "classification", "runtime", "audit", "artifact_digests", "gates", "failed_gates", "contains_raw_records"],
+  "properties": {
+    "schema_version": {"const": "cascade.staging-evidence.v1alpha1"},
+    "status": {"enum": ["incomplete", "staging_success"]},
+    "run": {
+      "type": "object",
+      "required": ["commit", "image_digest", "config_digest", "taxonomy_revision", "window_start", "window_end"]
+    },
+    "classification": {
+      "type": "object",
+      "required": ["arm", "quality_profile", "model_revisions", "dataset_digest", "records", "coverage", "accuracy", "balanced_accuracy", "macro_f1", "dangerous_misses", "calibration"],
+      "properties": {
+        "quality_profile": {"const": "oss-rc-a-v1"}
+      }
+    },
+    "runtime": {"type": "object"},
+    "audit": {"type": "object"},
+    "artifact_digests": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+    },
+    "gates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "passed", "evidence"],
+        "properties": {
+          "name": {"type": "string"},
+          "passed": {"type": "boolean"}
+        }
+      }
+    },
+    "failed_gates": {"type": "array", "items": {"type": "string"}},
+    "contains_raw_records": {"const": false}
+  },
+  "additionalProperties": true
+}

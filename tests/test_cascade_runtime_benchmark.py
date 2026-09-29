@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from cascade_compression.benchmarks.cascade_runtime import (
     _summary,
+    benchmark_recall,
     benchmark_mixed_nano,
     benchmark_nano,
     mixed_batch,
@@ -79,6 +80,16 @@ def test_mixed_nano_fails_closed_on_wrong_oracle(monkeypatch):
         benchmark_mixed_nano(iterations=2, warmup=1, cpu_limit=1.0)
 
 
+def test_recall_benchmark_reports_scale_latency_and_oracle():
+    cells = benchmark_recall(
+        memory_sizes=[20, 50], samples=3, warmup=1, cpu_limit=1.0,
+    )
+    assert [cell["memory_count"] for cell in cells] == [20, 50]
+    assert all(cell["recall_oracle_passed"] for cell in cells)
+    assert all(cell["errors"] == 0 for cell in cells)
+    assert all(cell["latency_ms"]["p95"] >= 0 for cell in cells)
+
+
 def test_mixed_fixture_matches_http_survivors(monkeypatch):
     for key in ("CASCADE_LLM_URL", "LITELLM_API_BASE", "CASCADE_LEDGER_URL",
                 "CASCADE_SEARCH_DB_URL", "CASCADE_STATE_FILE"):
@@ -117,6 +128,7 @@ def test_run_labels_measurement_semantics(monkeypatch):
         sc_address="",
         sc_signal="cascade_classification",
         sc_deadline=1.0,
+        recall_sizes=[],
     )
 
     result = run(args)

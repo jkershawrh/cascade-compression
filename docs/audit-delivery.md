@@ -4,14 +4,18 @@ Cascade's external ledger and GCL integration is optional. When enabled, ledger 
 share the signal request path: an unavailable ledger cannot stop classification, but it also must
 not silently erase the audit trail.
 
-Set `CASCADE_STATE_FILE` to enable the normal persisted Cascade state. Cascade then creates a
-separate SQLite write-ahead spool beside that file for memory lifecycle audit events. An explicit
-`CASCADE_LEDGER_MEMORY_SPOOL_FILE` overrides the location. The spool:
+Set `CASCADE_STATE_FILE` to enable the normal persisted Cascade state. Cascade then creates
+separate SQLite write-ahead spools beside that file: one for decision and promotion receipts, and
+one for memory lifecycle events before batching. Explicit
+`CASCADE_LEDGER_RECEIPT_SPOOL_FILE` and `CASCADE_LEDGER_MEMORY_SPOOL_FILE` settings override their
+locations. The spools:
 
 - acknowledges records only after the ledger accepts the batch;
 - survives process and pod restarts;
 - retries failures with bounded exponential backoff;
-- has a configurable maximum (`CASCADE_LEDGER_MEMORY_PENDING`, default 50,000);
+- has configurable row and serialized-payload bounds (`CASCADE_LEDGER_RECEIPT_PENDING`,
+  `CASCADE_LEDGER_RECEIPT_BYTES`, `CASCADE_LEDGER_MEMORY_PENDING`, and
+  `CASCADE_LEDGER_MEMORY_BYTES`);
 - drops the oldest record only after that explicit bound is exceeded; and
 - never includes its payloads in public metrics.
 
@@ -19,9 +23,10 @@ Without either path, Cascade uses a memory-only queue and reports
 `ledger_memory_queue_durability=memory_only`. This is suitable for local mechanics tests, not for a
 governed staging claim.
 
-The `/stats` response exposes pending count, queue utilization, oldest age, spool bytes, cumulative
-failures, consecutive failures, drops, successful batches, and last successful delivery. Alert at
-minimum on:
+The `/stats` response exposes those measurements independently as `ledger_receipt_*` and
+`ledger_memory_*`: pending count, row and byte utilization, oldest age, spool bytes, cumulative
+failures, consecutive failures, drops, successful writes or batches, and last successful delivery.
+Alert at minimum on:
 
 - durability other than `sqlite` in governed staging;
 - utilization at or above 0.80;

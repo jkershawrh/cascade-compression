@@ -8,7 +8,7 @@ Uses the generic decision-record.json schema — not cascade-specific.
 import hashlib
 import json
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 from uuid import uuid4
 
 log = logging.getLogger(__name__)
@@ -67,19 +67,30 @@ def write_decisions(
         log.debug("httpx not installed — ledger writes disabled")
         return
 
+    entry = build_decision_entry(cascade_result, cascade_signals, domain)
+    if entry is None:
+        return
+    _post_to_ledger(ledger_url, ledger_token, entry)
+
+
+def build_decision_entry(
+    cascade_result: Any,
+    cascade_signals: list,
+    domain: str,
+) -> Optional[Dict]:
+    """Build the idempotent ledger envelope without performing network I/O."""
     record = build_decision_record(
         cascade_result, cascade_signals,
         system_id=f"cascade-{domain}", domain=domain,
     )
-
     if not record["decisions"]:
-        return
+        return None
 
     content = json.dumps(record, sort_keys=True, separators=(",", ":"))
     input_hash = hashlib.sha256(content.encode()).hexdigest()
     correlation_id = record["batch_id"]
 
-    entry = {
+    return {
         "entry_type": "decision.record",
         "agent_id": record["system_id"],
         "content": content,
@@ -91,8 +102,6 @@ def write_decisions(
         ).hexdigest(),
         "input_hash": input_hash,
     }
-
-    _post_to_ledger(ledger_url, ledger_token, entry)
 
 
 def write_promotion_event(
@@ -111,13 +120,20 @@ def write_promotion_event(
         log.debug("httpx not installed — ledger writes disabled")
         return
 
+    _post_to_ledger(
+        ledger_url, ledger_token, build_promotion_entry(event_dict, domain),
+    )
+
+
+def build_promotion_entry(event_dict: Dict, domain: str) -> Dict:
+    """Build an idempotent promotion envelope without network I/O."""
     content = json.dumps(event_dict, sort_keys=True, separators=(",", ":"))
     input_hash = hashlib.sha256(content.encode()).hexdigest()
     agent_name = event_dict.get("agent_name", "unknown")
     event_type = event_dict.get("event_type", "unknown")
     correlation_id = f"{agent_name}-{event_type}-{event_dict.get('timestamp', '')}"
 
-    entry = {
+    return {
         "entry_type": "agent.promotion",
         "agent_id": f"cascade-{domain}",
         "content": content,
@@ -129,8 +145,6 @@ def write_promotion_event(
         ).hexdigest(),
         "input_hash": input_hash,
     }
-
-    _post_to_ledger(ledger_url, ledger_token, entry)
 
 
 def write_memory_event(
@@ -180,12 +194,21 @@ def write_memory_events(
     """Write a batch of memory lifecycle events as one ledger receipt."""
     if not ledger_url or not events:
         return True
+    return _post_to_ledger(
+        ledger_url, ledger_token, build_memory_events_entry(events, domain),
+    )
+
+
+def build_memory_events_entry(events: list, domain: str) -> Dict:
+    """Build one idempotent envelope for a memory-event batch."""
+    if not events:
+        raise ValueError("memory event batch cannot be empty")
     content = json.dumps(
         {"events": events}, sort_keys=True, separators=(",", ":"),
     )
     input_hash = hashlib.sha256(content.encode()).hexdigest()
     correlation_id = f"memory-batch-{input_hash[:24]}"
-    entry = {
+    return {
         "entry_type": "memory.batch",
         "agent_id": f"cascade-{domain}",
         "content": content,
@@ -197,6 +220,10 @@ def write_memory_events(
         ).hexdigest(),
         "input_hash": input_hash,
     }
+
+
+def post_entry(ledger_url: str, ledger_token: str, entry: Dict) -> bool:
+    """Post a pre-built ledger entry, returning explicit delivery success."""
     return _post_to_ledger(ledger_url, ledger_token, entry)
 
 

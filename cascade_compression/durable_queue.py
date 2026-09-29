@@ -22,13 +22,16 @@ class QueueItem:
 class DurableLedgerQueue:
     """Bounded FIFO whose acknowledgement happens only after remote success."""
 
-    def __init__(self, path: str, *, max_pending: int):
+    def __init__(self, path: str, *, max_pending: int, max_bytes: int = 0):
         if not path:
             raise ValueError("durable queue path is required")
         if max_pending < 1:
             raise ValueError("max_pending must be positive")
+        if max_bytes < 0:
+            raise ValueError("max_bytes cannot be negative")
         self.path = str(Path(path).expanduser().resolve())
         self.max_pending = max_pending
+        self.max_bytes = max_bytes
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         with closing(self._connect()) as connection:
             connection.execute("PRAGMA journal_mode=WAL")
@@ -37,9 +40,24 @@ class DurableLedgerQueue:
                 """CREATE TABLE IF NOT EXISTS ledger_events (
                     sequence INTEGER PRIMARY KEY AUTOINCREMENT,
                     payload TEXT NOT NULL,
+                    payload_bytes INTEGER NOT NULL,
                     enqueued_at REAL NOT NULL
                 )"""
             )
+            columns = {
+                row[1] for row in connection.execute(
+                    "PRAGMA table_info(ledger_events)"
+                ).fetchall()
+            }
+            if "payload_bytes" not in columns:
+                connection.execute(
+                    """ALTER TABLE ledger_events
+                       ADD COLUMN payload_bytes INTEGER NOT NULL DEFAULT 0"""
+                )
+                connection.execute(
+                    """UPDATE ledger_events
+                       SET payload_bytes = length(CAST(payload AS BLOB))"""
+                )
             connection.commit()
         try:
             os.chmod(self.path, 0o600)
@@ -50,31 +68,43 @@ class DurableLedgerQueue:
         return sqlite3.connect(self.path, timeout=10.0)
 
     def enqueue(self, events: Iterable[dict]) -> int:
-        encoded = [
-            (json.dumps(event, sort_keys=True, separators=(",", ":")), time.time())
-            for event in events
-        ]
+        encoded = []
+        for event in events:
+            payload = json.dumps(event, sort_keys=True, separators=(",", ":"))
+            encoded.append((payload, len(payload.encode("utf-8")), time.time()))
         if not encoded:
             return 0
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             connection.executemany(
-                "INSERT INTO ledger_events(payload, enqueued_at) VALUES (?, ?)",
+                """INSERT INTO ledger_events(payload, payload_bytes, enqueued_at)
+                   VALUES (?, ?, ?)""",
                 encoded,
             )
-            count = connection.execute(
-                "SELECT COUNT(*) FROM ledger_events"
-            ).fetchone()[0]
-            overflow = max(0, count - self.max_pending)
-            if overflow:
+            count, total_bytes = connection.execute(
+                "SELECT COUNT(*), COALESCE(SUM(payload_bytes), 0) FROM ledger_events"
+            ).fetchone()
+            count_overflow = max(0, count - self.max_pending)
+            byte_overflow = self.max_bytes and total_bytes > self.max_bytes
+            dropped = []
+            if count_overflow or byte_overflow:
+                rows = connection.execute(
+                    "SELECT sequence, payload_bytes FROM ledger_events ORDER BY sequence"
+                ).fetchall()
+                for sequence, payload_bytes in rows:
+                    if len(dropped) >= count_overflow and (
+                        not self.max_bytes or total_bytes <= self.max_bytes
+                    ):
+                        break
+                    dropped.append(sequence)
+                    total_bytes -= payload_bytes
+                placeholders = ",".join("?" for _ in dropped)
                 connection.execute(
-                    """DELETE FROM ledger_events WHERE sequence IN (
-                        SELECT sequence FROM ledger_events ORDER BY sequence LIMIT ?
-                    )""",
-                    (overflow,),
+                    f"DELETE FROM ledger_events WHERE sequence IN ({placeholders})",
+                    dropped,
                 )
             connection.commit()
-        return overflow
+        return len(dropped)
 
     def peek(self, limit: int) -> List[QueueItem]:
         if limit < 1:
@@ -115,6 +145,12 @@ class DurableLedgerQueue:
                 "SELECT MIN(enqueued_at) FROM ledger_events"
             ).fetchone()[0]
         return max(0.0, time.time() - oldest) if oldest is not None else 0.0
+
+    def payload_bytes(self) -> int:
+        with closing(self._connect()) as connection:
+            return int(connection.execute(
+                "SELECT COALESCE(SUM(payload_bytes), 0) FROM ledger_events"
+            ).fetchone()[0])
 
     def storage_bytes(self) -> int:
         return sum(
