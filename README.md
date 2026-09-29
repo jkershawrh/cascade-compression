@@ -22,7 +22,10 @@ collectors.
 
 The latest stable OSS release is `0.1.0`. The governed semantic-classification and custom-anchor
 work is available for evaluation as release candidate `0.2.0rc1`; it is not the final 0.2.0
-release. The Python package supports Python 3.9 through 3.13.
+release. The repository is currently configured for an **incubating OSS** prerelease: its mechanics,
+build, and supply chain are tested, but it makes no staging-readiness, production-readiness,
+classification-effectiveness, or natural compression-rate claim. The Python package supports
+Python 3.9 through 3.13.
 
 ```bash
 python -m venv .venv
@@ -74,7 +77,7 @@ misses, coverage, calibration, and pairwise agreement. See the
 [classification evaluation guide](docs/classification-evaluation.md). Agreement between two
 classifiers is never presented as accuracy.
 
-For an OSS release-candidate staging claim, bind that report to the exact runtime, audit health,
+For an optional staging-qualified claim, bind that report to the exact runtime, audit health,
 ledger capacity, clean-clone, package/container, and supply-chain checks with
 `cascade-stage-evidence`. The command fails closed unless the fixed `oss-rc-a-v1` quality profile
 and every operational gate pass. See the [staging evidence guide](docs/staging-evidence.md).

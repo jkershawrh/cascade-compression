@@ -19,6 +19,18 @@ def test_package_and_runtime_versions_match():
     )
 
 
+def test_release_profile_is_explicit_and_incubation_is_prerelease_only():
+    profile = json.loads((ROOT / "config" / "release-profile.json").read_text())
+    assert profile["schema_version"] == "cascade.release-profile.v1alpha1"
+    assert profile["claim_level"] in {"incubating_oss", "staging_qualified"}
+    assert profile["staging_evidence_required"] is (
+        profile["claim_level"] == "staging_qualified"
+    )
+    assert profile["limitations"]
+    if profile["claim_level"] == "incubating_oss":
+        assert re.search(r"(?:a|b|rc)\d+$", cascade_compression.__version__)
+
+
 def test_first_release_policy_files_exist():
     required = {
         "CHANGELOG.md",
@@ -108,9 +120,10 @@ def test_release_publication_is_gated_by_verified_package_and_container():
     evidence_steps = str(jobs["evidence"]["steps"])
     container_steps = str(jobs["container"]["steps"])
     release_steps = str(jobs["release"]["steps"])
-    assert "Verify tag and package version" in verify_steps
+    assert "Verify tag, package version, and release profile" in verify_steps
     assert "check_public_boundary.py" in verify_steps
     assert "verify_staging_handoff.py" in evidence_steps
+    assert "--candidate-manifest" in evidence_steps
     assert "cascade-staging-package-$GITHUB_SHA" in evidence_steps
     assert "--candidate-package candidate-package" in evidence_steps
     assert "staging-evidence.yml" in evidence_steps
@@ -127,7 +140,20 @@ def test_release_publication_is_gated_by_verified_package_and_container():
     assert "gh release create" in release_steps
     assert "release-artifact-manifest.json" in release_steps
     assert "staging-evidence.json" in release_steps
+    assert "release-profile.json" in release_steps
+    assert "incubating OSS" in release_steps
     assert "cascade-release-package-${{ github.sha }}" in evidence_steps
+
+    named_steps = {
+        step.get("name"): step for step in jobs["evidence"]["steps"]
+        if step.get("name")
+    }
+    assert named_steps["Download staging qualification for this commit"]["if"] == (
+        "needs.verify.outputs.claim_level == 'staging_qualified'"
+    )
+    assert named_steps["Verify staging qualification and candidate binding"]["if"] == (
+        "needs.verify.outputs.claim_level == 'staging_qualified'"
+    )
 
 
 def test_staging_evidence_handoff_is_attested_and_commit_bound():

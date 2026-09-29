@@ -4,6 +4,9 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## Unreleased
 
+- Separate incubating OSS publication from staging qualification: prereleases may publish verified,
+  attested mechanics without effectiveness claims, while the complete human-adjudicated staging
+  handoff remains mandatory for any staging-ready claim.
 - Add deterministic model-blind holdout freezing, two-reviewer adjudication, third-reviewer
   disagreement resolution, canonical signal binding, and a documented label rubric.
 - Distinguish representative-prevalence holdouts from label-coverage challenge holdouts, preflight

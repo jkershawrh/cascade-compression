@@ -1,0 +1,10 @@
+{
+  "schema_version": "cascade.release-profile.v1alpha1",
+  "claim_level": "incubating_oss",
+  "staging_evidence_required": false,
+  "limitations": [
+    "Experimental incubation release; not qualified for production use.",
+    "No decision-grade classification effectiveness or production compression claim.",
+    "Use the staging-success workflow for pilot or production-readiness qualification."
+  ]
+}

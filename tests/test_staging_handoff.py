@@ -70,6 +70,26 @@ def test_successful_handoff_binds_exact_candidate(tmp_path):
     ]
 
 
+def test_candidate_can_be_verified_without_staging_claim(tmp_path):
+    evidence, candidate, _, candidate_path, package_path = handoff_files(tmp_path)
+    summary = MODULE.verify_candidate(
+        candidate_path, evidence["run"]["commit"], candidate["repository"],
+        package_path,
+    )
+    assert summary["image_digest"] == candidate["image_digest"]
+    assert summary["candidate_workflow_run_id"] == candidate["workflow_run_id"]
+
+
+def test_candidate_only_verification_rejects_package_tampering(tmp_path):
+    evidence, candidate, _, candidate_path, package_path = handoff_files(tmp_path)
+    (package_path / "cascade.whl").write_bytes(b"tampered")
+    with pytest.raises(ValueError, match="digest mismatch"):
+        MODULE.verify_candidate(
+            candidate_path, evidence["run"]["commit"], candidate["repository"],
+            package_path,
+        )
+
+
 @pytest.mark.parametrize("tamper", ["status", "commit", "image", "candidate"])
 def test_tampered_handoff_is_rejected(tmp_path, tamper):
     evidence, candidate, evidence_path, candidate_path, _ = handoff_files(tmp_path)

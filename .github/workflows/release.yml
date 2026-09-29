@@ -10,6 +10,8 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
+    outputs:
+      claim_level: ${{ steps.profile.outputs.claim_level }}
     permissions:
       contents: read
     steps:
@@ -19,16 +21,33 @@ jobs:
           python-version: "3.11"
       - name: Enforce the public/private repository boundary
         run: python3 scripts/check_public_boundary.py
-      - name: Verify tag and package version
+      - name: Verify tag, package version, and release profile
+        id: profile
         run: |
           python - <<'PY'
+          import json
           import pathlib
           import tomllib
           import os
+          import re
 
           version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
           tag = os.environ["GITHUB_REF_NAME"]
           assert tag == f"v{version}", f"tag {tag!r} does not match package {version!r}"
+          profile = json.loads(pathlib.Path("config/release-profile.json").read_text())
+          assert profile["schema_version"] == "cascade.release-profile.v1alpha1"
+          claim_level = profile["claim_level"]
+          assert claim_level in {"incubating_oss", "staging_qualified"}
+          assert profile["staging_evidence_required"] is (
+              claim_level == "staging_qualified"
+          )
+          assert isinstance(profile.get("limitations"), list) and profile["limitations"]
+          if claim_level == "incubating_oss":
+              assert re.search(r"(?:a|b|rc)\d+$", version), (
+                  "incubating OSS releases must use a prerelease version"
+              )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"claim_level={claim_level}\n")
           PY
       - run: uv sync --extra dev --extra semantic-classifier --locked
       - name: Verify container dependency lock
@@ -60,16 +79,57 @@ jobs:
       contents: read
       packages: read
     outputs:
-      image: ${{ steps.handoff.outputs.image }}
-      digest: ${{ steps.handoff.outputs.image_digest }}
-      candidate_run_id: ${{ steps.handoff.outputs.candidate_run_id }}
+      image: ${{ steps.candidate.outputs.image }}
+      digest: ${{ steps.candidate.outputs.image_digest }}
+      candidate_run_id: ${{ steps.candidate.outputs.candidate_run_id }}
+      claim_level: ${{ needs.verify.outputs.claim_level }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           python-version: "3.11"
       - run: uv sync --extra dev --locked
-      - name: Download attested staging handoff for this commit
+      - name: Download attested candidate manifest for this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_NAME: cascade-staging-candidate-${{ github.sha }}
+        run: |
+          artifact_id=$(gh api \
+            "/repos/$GITHUB_REPOSITORY/actions/artifacts?name=$CANDIDATE_NAME" \
+            --jq '[.artifacts[] | select(.expired == false)] | sort_by(.created_at) | last | .id')
+          if [[ -z "$artifact_id" || "$artifact_id" == "null" ]]; then
+            echo "No unexpired candidate artifact exists for $GITHUB_SHA" >&2
+            exit 1
+          fi
+          gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" \
+            > candidate-manifest.zip
+          mkdir -p release-evidence/candidate
+          unzip -q candidate-manifest.zip -d release-evidence/candidate
+          cp config/release-profile.json release-evidence/release-profile.json
+      - name: Verify candidate provenance and binding
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh attestation verify \
+            release-evidence/candidate/staging-candidate-manifest.json \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/staging-candidate.yml" \
+            --source-digest "$GITHUB_SHA"
+          uv run python scripts/verify_staging_handoff.py \
+            --candidate-manifest release-evidence/candidate/staging-candidate-manifest.json \
+            --expected-commit "$GITHUB_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --output release-evidence/candidate-summary.json
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          summary = json.load(open("release-evidence/candidate-summary.json", encoding="utf-8"))
+          print(f"image={summary['image']}")
+          print(f"image_digest={summary['image_digest']}")
+          print(f"candidate_run_id={summary['candidate_workflow_run_id']}")
+          PY
+      - name: Download staging qualification for this commit
+        if: needs.verify.outputs.claim_level == 'staging_qualified'
         env:
           GH_TOKEN: ${{ github.token }}
           EVIDENCE_NAME: cascade-staging-evidence-${{ github.sha }}
@@ -83,38 +143,27 @@ jobs:
           fi
           gh api "/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" \
             > staging-evidence.zip
-          mkdir release-evidence
-          unzip -q staging-evidence.zip -d release-evidence
-      - name: Verify evidence provenance and candidate binding
-        id: handoff
+          mkdir staging-handoff
+          unzip -q staging-evidence.zip -d staging-handoff
+          cp staging-handoff/staging-evidence.json release-evidence/staging-evidence.json
+      - name: Verify staging qualification and candidate binding
+        if: needs.verify.outputs.claim_level == 'staging_qualified'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh attestation verify release-evidence/staging-evidence.json \
+          gh attestation verify staging-handoff/staging-evidence.json \
             --repo "$GITHUB_REPOSITORY" \
             --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/staging-evidence.yml"
-          gh attestation verify \
-            release-evidence/candidate/staging-candidate-manifest.json \
-            --repo "$GITHUB_REPOSITORY" \
-            --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/staging-candidate.yml" \
-            --source-digest "$GITHUB_SHA"
           uv run python scripts/verify_staging_handoff.py \
-            --evidence release-evidence/staging-evidence.json \
+            --evidence staging-handoff/staging-evidence.json \
             --candidate-manifest release-evidence/candidate/staging-candidate-manifest.json \
             --expected-commit "$GITHUB_SHA" \
             --expected-repository "$GITHUB_REPOSITORY" \
             --output release-evidence/handoff-summary.json
-          python3 - <<'PY' >> "$GITHUB_OUTPUT"
-          import json
-          summary = json.load(open("release-evidence/handoff-summary.json", encoding="utf-8"))
-          print(f"image={summary['image']}")
-          print(f"image_digest={summary['image_digest']}")
-          print(f"candidate_run_id={summary['candidate_workflow_run_id']}")
-          PY
       - name: Download and verify exact tested package artifacts
         env:
           GH_TOKEN: ${{ github.token }}
-          CANDIDATE_RUN_ID: ${{ steps.handoff.outputs.candidate_run_id }}
+          CANDIDATE_RUN_ID: ${{ steps.candidate.outputs.candidate_run_id }}
         run: |
           gh run download "$CANDIDATE_RUN_ID" \
             --repo "$GITHUB_REPOSITORY" \
@@ -126,6 +175,15 @@ jobs:
               --signer-workflow "$GITHUB_REPOSITORY/.github/workflows/staging-candidate.yml" \
               --source-digest "$GITHUB_SHA"
           done
+          uv run python scripts/verify_staging_handoff.py \
+            --candidate-manifest release-evidence/candidate/staging-candidate-manifest.json \
+            --candidate-package candidate-package \
+            --expected-commit "$GITHUB_SHA" \
+            --expected-repository "$GITHUB_REPOSITORY" \
+            --output release-evidence/candidate-summary.json
+      - name: Verify package remains bound to staging qualification
+        if: needs.verify.outputs.claim_level == 'staging_qualified'
+        run: |
           uv run python scripts/verify_staging_handoff.py \
             --evidence release-evidence/staging-evidence.json \
             --candidate-manifest release-evidence/candidate/staging-candidate-manifest.json \
@@ -141,8 +199,8 @@ jobs:
       - name: Verify tested candidate image provenance
         env:
           GH_TOKEN: ${{ github.token }}
-          CANDIDATE_IMAGE: ${{ steps.handoff.outputs.image }}
-          CANDIDATE_DIGEST: ${{ steps.handoff.outputs.image_digest }}
+          CANDIDATE_IMAGE: ${{ steps.candidate.outputs.image }}
+          CANDIDATE_DIGEST: ${{ steps.candidate.outputs.image_digest }}
         run: |
           gh attestation verify "oci://$CANDIDATE_IMAGE@$CANDIDATE_DIGEST" \
             --repo "$GITHUB_REPOSITORY" \
@@ -213,6 +271,7 @@ jobs:
           done <<< "$RELEASE_TAGS"
       - name: Write immutable container manifest
         env:
+          RELEASE_CLAIM_LEVEL: ${{ needs.evidence.outputs.claim_level }}
           RELEASE_COMMIT: ${{ github.sha }}
           RELEASE_DIGEST: ${{ needs.evidence.outputs.digest }}
           RELEASE_REPOSITORY: ${{ github.repository }}
@@ -228,6 +287,7 @@ jobs:
               "repository": os.environ["RELEASE_REPOSITORY"],
               "commit": os.environ["RELEASE_COMMIT"],
               "tag": os.environ["RELEASE_TAG"],
+              "claim_level": os.environ["RELEASE_CLAIM_LEVEL"],
               "image": f"ghcr.io/{os.environ['RELEASE_REPOSITORY']}",
               "image_digest": os.environ["RELEASE_DIGEST"],
               "multi_arch": ["linux/amd64", "linux/arm64"],
@@ -268,6 +328,7 @@ jobs:
           path: release-evidence
       - name: Write release artifact manifest
         env:
+          RELEASE_CLAIM_LEVEL: ${{ needs.evidence.outputs.claim_level }}
           RELEASE_COMMIT: ${{ github.sha }}
           RELEASE_DIGEST: ${{ needs.container.outputs.digest }}
           RELEASE_REPOSITORY: ${{ github.repository }}
@@ -297,14 +358,22 @@ jobs:
           assert any(item["name"].endswith(".tar.gz") for item in artifacts)
           assert any(item["name"].endswith(".spdx.json") for item in artifacts)
           assert any(item["name"] == "release-container-manifest.json" for item in artifacts)
-          assert any(item["name"] == "staging-evidence.json" for item in artifacts)
           assert any(item["name"] == "staging-candidate-manifest.json" for item in artifacts)
+          assert any(item["name"] == "candidate-summary.json" for item in artifacts)
+          assert any(item["name"] == "release-profile.json" for item in artifacts)
+          if os.environ["RELEASE_CLAIM_LEVEL"] == "staging_qualified":
+              assert any(item["name"] == "staging-evidence.json" for item in artifacts)
+              assert any(item["name"] == "handoff-summary.json" for item in artifacts)
+          else:
+              assert os.environ["RELEASE_CLAIM_LEVEL"] == "incubating_oss"
+              assert not any(item["name"] == "staging-evidence.json" for item in artifacts)
 
           manifest = {
-              "schema_version": "cascade.release-artifacts.v1alpha1",
+              "schema_version": "cascade.release-artifacts.v1alpha2",
               "repository": os.environ["RELEASE_REPOSITORY"],
               "commit": os.environ["RELEASE_COMMIT"],
               "tag": os.environ["RELEASE_TAG"],
+              "claim_level": os.environ["RELEASE_CLAIM_LEVEL"],
               "image_digest": os.environ["RELEASE_DIGEST"],
               "generated_at": datetime.now(timezone.utc).isoformat(),
               "artifacts": artifacts,
@@ -320,18 +389,28 @@ jobs:
       - name: Create GitHub release only after package and container succeed
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_CLAIM_LEVEL: ${{ needs.evidence.outputs.claim_level }}
         run: |
           args=(
             "$GITHUB_REF_NAME"
             release-package/*
             release-container/release-container-manifest.json
-            release-evidence/staging-evidence.json
             release-evidence/candidate/staging-candidate-manifest.json
-            release-evidence/handoff-summary.json
+            release-evidence/candidate-summary.json
+            release-evidence/release-profile.json
             release-artifact-manifest.json
             --generate-notes
             --verify-tag
           )
+          if [[ "$RELEASE_CLAIM_LEVEL" == "staging_qualified" ]]; then
+            args+=(
+              release-evidence/staging-evidence.json
+              release-evidence/handoff-summary.json
+              --title "$GITHUB_REF_NAME — staging-qualified"
+            )
+          else
+            args+=(--title "$GITHUB_REF_NAME — incubating OSS")
+          fi
           if [[ "$GITHUB_REF_NAME" =~ (a|b|rc)[0-9]+$ ]]; then
             args+=(--prerelease)
           fi

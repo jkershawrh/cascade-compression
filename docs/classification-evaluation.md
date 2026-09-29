@@ -7,7 +7,7 @@ report with a corpus digest, confusion matrices, per-label precision/recall/F1, 
 coverage, top-label calibration, and pairwise agreement.
 
 Calibration reports both its error and its coverage. An arm with confidence values on only a small
-subset cannot satisfy the release gate; `oss-rc-a-v1` requires confidence coverage of at least 95%.
+subset cannot satisfy the staging-qualified gate; `oss-rc-a-v1` requires confidence coverage of at least 95%.
 Use `CASCADE_GENERATIVE_STRUCTURED=1` during the held-out run to request a bounded confidence value
 from the generative backend. Self-reported confidence is not assumed to be reliable; the reported
 ECE and Brier score measure how well it matches observed correctness.
@@ -126,10 +126,10 @@ Do not ask one sample to prove two different things. Freeze two independently re
 
 - `representative_prevalence` samples the observed workload without preliminary label targeting.
   Use it for natural label mix, compression rate, and request-volume claims. It cannot satisfy the
-  release label-coverage gate.
+  staging label-coverage gate.
 - `label_coverage_challenge` deliberately samples candidate evidence for every Cascade label. Use
   it for per-label recall, balanced accuracy, suppression precision, calibration, and the
-  `oss-rc-a-v1` gate. Its overall accuracy and label mix are not prevalence estimates.
+  `oss-rc-a-v1` staging gate. Its overall accuracy and label mix are not prevalence estimates.
 
 A challenge candidate adds top-level `coverage_target` metadata. That target is only a sampling
 hypothesis and is removed from reviewer records; independent adjudication remains the sole ground
@@ -220,4 +220,4 @@ CASCADE_GENERATIVE_STRUCTURED=1 CASCADE_SC_ADDRESS=classifier.example:443 \
 The LLM URL/key/model and llm-d-sc TLS settings use the same environment variables as the service.
 A disagreement queue selected because models differed is useful for error analysis but is not, by
 itself, either a representative-prevalence holdout or a label-coverage challenge holdout. It cannot
-satisfy the release gate.
+satisfy the staging-qualified gate.

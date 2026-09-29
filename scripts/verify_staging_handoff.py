@@ -91,6 +91,39 @@ def verify_handoff(
     evidence, summary = verify_evidence(
         evidence_path, expected_commit, expected_repository,
     )
+    candidate_summary = verify_candidate(
+        candidate_path, expected_commit, expected_repository, candidate_package,
+    )
+    candidate = _load(candidate_path)
+    candidate_digest = candidate_summary["candidate_manifest_digest"]
+    if summary.get("manifest_digest") != candidate_digest:
+        raise ValueError("candidate summary digest does not match candidate manifest")
+    if evidence["artifact_digests"].get("candidate") != candidate_digest:
+        raise ValueError("artifact digest does not match candidate manifest")
+
+    bound_fields = (
+        "repository", "image", "image_digest", "workflow_run_id",
+        "workflow_run_attempt",
+    )
+    if any(summary.get(field) != candidate.get(field) for field in bound_fields):
+        raise ValueError("candidate summary does not match candidate manifest")
+    if evidence["run"].get("image_digest") != candidate.get("image_digest"):
+        raise ValueError("tested image digest does not match candidate manifest")
+
+    return candidate_summary
+
+
+def verify_candidate(
+    candidate_path: Path,
+    expected_commit: str,
+    expected_repository: str,
+    candidate_package: Optional[Path] = None,
+) -> dict:
+    """Verify an attested candidate independently of staging qualification."""
+    if not COMMIT.fullmatch(expected_commit):
+        raise ValueError("expected commit must be a full lowercase Git SHA")
+    if not expected_repository or expected_repository.strip() != expected_repository:
+        raise ValueError("expected repository must be non-empty and normalized")
     candidate = _load(candidate_path)
     manifest_schema = _load(
         ROOT / "contracts" / "schemas" / "staging-manifest.json",
@@ -109,20 +142,6 @@ def verify_handoff(
     candidate_digest = _digest(candidate)
     if not SHA256.fullmatch(candidate_digest):
         raise ValueError("candidate manifest digest is malformed")
-    if summary.get("manifest_digest") != candidate_digest:
-        raise ValueError("candidate summary digest does not match candidate manifest")
-    if evidence["artifact_digests"].get("candidate") != candidate_digest:
-        raise ValueError("artifact digest does not match candidate manifest")
-
-    bound_fields = (
-        "repository", "image", "image_digest", "workflow_run_id",
-        "workflow_run_attempt",
-    )
-    if any(summary.get(field) != candidate.get(field) for field in bound_fields):
-        raise ValueError("candidate summary does not match candidate manifest")
-    if evidence["run"].get("image_digest") != candidate.get("image_digest"):
-        raise ValueError("tested image digest does not match candidate manifest")
-
     if candidate_package is not None:
         if not candidate_package.is_dir():
             raise ValueError("candidate package directory does not exist")
@@ -157,14 +176,14 @@ def verify_handoff(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--evidence", type=Path, required=True)
+    parser.add_argument("--evidence", type=Path)
     parser.add_argument("--candidate-manifest", type=Path)
     parser.add_argument("--candidate-package", type=Path)
     parser.add_argument("--expected-commit", required=True)
     parser.add_argument("--expected-repository", required=True)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
-    if args.candidate_manifest:
+    if args.candidate_manifest and args.evidence:
         summary = verify_handoff(
             args.evidence,
             args.candidate_manifest,
@@ -172,7 +191,14 @@ def main() -> int:
             args.expected_repository,
             args.candidate_package,
         )
-    else:
+    elif args.candidate_manifest:
+        summary = verify_candidate(
+            args.candidate_manifest,
+            args.expected_commit,
+            args.expected_repository,
+            args.candidate_package,
+        )
+    elif args.evidence:
         evidence, candidate = verify_evidence(
             args.evidence, args.expected_commit, args.expected_repository,
         )
@@ -184,6 +210,8 @@ def main() -> int:
             "candidate_manifest_digest": candidate["manifest_digest"],
             "candidate_workflow_run_id": candidate["workflow_run_id"],
         }
+    else:
+        parser.error("--evidence or --candidate-manifest is required")
     payload = json.dumps(summary, indent=2, sort_keys=True) + "\n"
     if args.output:
         args.output.write_text(payload, encoding="utf-8")

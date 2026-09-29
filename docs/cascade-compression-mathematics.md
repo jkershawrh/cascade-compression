@@ -49,7 +49,8 @@ Overall accuracy alone is insufficient when routine traffic dominates the corpus
 
 Cascade treats an authoritative prediction as a dangerous miss when adjudicated truth is
 `needs_attention` or `real_incident` but the authoritative prediction is `routine_noise` or
-`known_pattern`. The release gate requires zero observed dangerous misses. “Zero observed” does
+`known_pattern`. The staging-qualified gate requires zero observed dangerous misses. “Zero
+observed” does
 not mean the unknown population rate is zero.
 
 Calibration is reported with top-label Brier score and expected calibration error (ECE). These
@@ -144,7 +145,7 @@ Synthetic route composition is fixed by the harness and is not a production comp
 
 ## 8. Decision-grade evidence
 
-A release-candidate claim requires all of the following to refer to the same immutable run:
+A staging-qualified claim requires all of the following to refer to the same immutable run:
 
 - commit, image, configuration, taxonomy, and model revisions;
 - a frozen corpus with complete independent adjudication by at least two reviewers;
