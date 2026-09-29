@@ -152,6 +152,17 @@ def test_runner_requires_structured_generative_confidence():
         )
 
 
+def test_runner_requires_review_to_finish_before_run_window():
+    rows, holdout, summary, run = inputs()
+    summary["review_window"]["completed_at"] = run["window_end"]
+    with pytest.raises(ValueError, match="review must complete before"):
+        run_and_evaluate(
+            rows, holdout, summary,
+            generative=FakeGenerative(), semantic=FakeSemantic(), run=run,
+            hybrid_margin=0.2, hybrid_suppress_margin=0.4,
+        )
+
+
 def test_runner_rejects_observed_taxonomy_mismatch():
     rows, holdout, summary, run = inputs()
     run["taxonomy_revision"] = "different-taxonomy"

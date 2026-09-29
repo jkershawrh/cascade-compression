@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cascade-compression.org/contracts/cascade.classification-evaluation/1.0.0-alpha.3",
+  "$id": "https://cascade-compression.org/contracts/cascade.classification-evaluation/1.0.0-alpha.4",
   "title": "Cascade Classification Evaluation",
   "type": "object",
   "required": ["schema_version", "dataset", "run", "arms", "pairwise_agreement", "evidence"],
   "properties": {
-    "schema_version": {"const": "cascade.classification-evaluation.v1alpha3"},
+    "schema_version": {"const": "cascade.classification-evaluation.v1alpha4"},
     "dataset": {
       "type": "object",
       "required": ["name", "revision", "digest", "records", "holdout_digest", "adjudication"],
@@ -24,7 +24,7 @@
     "pairwise_agreement": {"type": "object"},
     "evidence": {
       "type": "object",
-      "required": ["status", "ground_truth_required", "same_corpus", "corpus_binding", "adjudication_provenance_bound", "review_window_valid", "model_revisions_frozen", "contains_raw_records"],
+      "required": ["status", "ground_truth_required", "same_corpus", "corpus_binding", "adjudication_provenance_bound", "review_window_valid", "review_precedes_run", "model_revisions_frozen", "contains_raw_records"],
       "properties": {
         "status": {"enum": ["mechanics_only", "decision_grade"]},
         "ground_truth_required": {"const": true},
@@ -32,6 +32,7 @@
         "corpus_binding": {"type": "boolean"},
         "adjudication_provenance_bound": {"type": "boolean"},
         "review_window_valid": {"type": "boolean"},
+        "review_precedes_run": {"type": "boolean"},
         "model_revisions_frozen": {"type": "boolean"},
         "contains_raw_records": {"const": false}
       }

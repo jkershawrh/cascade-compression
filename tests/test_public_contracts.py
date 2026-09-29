@@ -53,6 +53,16 @@ def test_every_manifest_schema_is_valid_json_schema():
         jsonschema.Draft202012Validator.check_schema(load_schema(item["id"]))
 
 
+def test_absolute_schema_ids_match_manifest_contract_versions():
+    for item in contract_manifest()["contracts"]:
+        schema_id = str(load_schema(item["id"]).get("$id") or "")
+        if schema_id.startswith("https://cascade-compression.org/contracts/"):
+            assert schema_id == (
+                f"https://cascade-compression.org/contracts/"
+                f"{item['id']}/{item['version']}"
+            )
+
+
 def test_signal_and_decision_match_wire_contracts():
     signal = Signal(signal_type="example.event", source="test", content={"value": 1})
     signal_payload = asdict(signal)

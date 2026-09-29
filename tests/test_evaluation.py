@@ -58,7 +58,9 @@ def document():
             "taxonomy_revision": "taxonomy-v1",
             "window_start": "2026-09-01T00:00:00Z",
             "window_end": "2026-09-01T01:00:00Z",
-            "model_revisions": {"generative": "g1", "semantic": "s1"},
+            "model_revisions": {
+                "generative": "g1", "semantic": "s1", "hybrid": "h1",
+            },
         },
         "records": records,
     }
@@ -212,3 +214,56 @@ def test_calibration_reports_missing_confidence_coverage():
     assert calibration["samples"] == 3
     assert calibration["eligible_predictions"] == 4
     assert calibration["coverage"] == 0.75
+
+
+def test_never_predicted_supported_label_counts_as_zero_macro_f1():
+    source = document()
+    for row in source["records"]:
+        if row["predictions"]["hybrid"]["label"] == "real_incident":
+            row["predictions"]["hybrid"] = {
+                "label": "needs_attention", "confidence": 0.9,
+                "authoritative": True,
+            }
+    arm = evaluate_classifiers(source)["arms"]["hybrid"]
+    assert arm["per_label"]["real_incident"]["predicted"] == 0
+    assert arm["per_label"]["real_incident"]["precision"] is None
+    assert arm["per_label"]["real_incident"]["f1"] == 0.0
+    assert arm["macro_f1"] == 0.666667
+
+
+@pytest.mark.parametrize(
+    ("prediction", "message"),
+    [
+        ("routine_noise", "must be an object"),
+        ({"label": "routine_noise", "authoritative": "false"},
+         "requires boolean authoritative"),
+        ({"label": "routine_noise", "authoritative": True,
+          "model_output": "hidden"}, "undeclared fields"),
+        ({"confidence": 0.9}, "abstention.*empty object"),
+        ({"label": "routine_noise", "authoritative": True,
+          "confidence": True}, "finite number"),
+    ],
+)
+def test_malformed_prediction_records_fail_closed(prediction, message):
+    source = document()
+    source["records"][0]["predictions"]["hybrid"] = prediction
+    with pytest.raises(ValueError, match=message):
+        evaluate_classifiers(source)
+
+
+def test_model_revisions_must_match_evaluated_arms():
+    source = document()
+    source["run"]["model_revisions"].pop("semantic")
+    report = evaluate_classifiers(source)
+    assert report["evidence"]["status"] == "mechanics_only"
+    assert report["evidence"]["model_revisions_frozen"] is False
+
+
+def test_review_must_complete_before_evaluation_window():
+    source = document()
+    source["dataset"]["adjudication"]["review_window"]["completed_at"] = (
+        "2026-09-01T00:30:00Z"
+    )
+    report = evaluate_classifiers(source)
+    assert report["evidence"]["status"] == "mechanics_only"
+    assert report["evidence"]["review_precedes_run"] is False

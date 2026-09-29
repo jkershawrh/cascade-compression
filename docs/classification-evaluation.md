@@ -68,7 +68,7 @@ The input format is `cascade.classification-input.v1alpha1`:
 }
 ```
 
-The `cascade.classification-evaluation.v1alpha3` output never includes record identifiers or signal
+The `cascade.classification-evaluation.v1alpha4` output never includes record identifiers or signal
 payloads. Its dataset digest binds the report to the set of opaque identifiers and adjudicated
 labels. Its computed corpus digest must also match both the frozen holdout manifest and adjudication
 summary. A report is marked `decision_grade` only when that binding succeeds, adjudication is
@@ -77,6 +77,11 @@ evidence and complete adjudication summary, and the exact run metadata is frozen
 requires a full Git SHA, SHA-256 image and config digests, a non-empty taxonomy revision and model
 revision map, and a timezone-aware positive evaluation window. Synthetic, unbound, or incompletely
 adjudicated inputs remain `mechanics_only`.
+The independent review must finish before the model evaluation window begins, and the model
+revision map must cover exactly the evaluated arms. Prediction records use a closed field set and
+strict booleans/numbers; malformed metadata cannot silently change authority or calibration.
+Macro-F1 includes a zero for every supported truth class that receives no predictions rather than
+dropping that class from the average.
 
 `authoritative_dangerous_misses` counts important truth labels that an authoritative arm classified
 as suppressive. Non-authoritative semantic suggestions are still represented in the confusion

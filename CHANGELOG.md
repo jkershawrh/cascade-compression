@@ -39,6 +39,11 @@ All notable changes are documented here. This project follows Semantic Versionin
   count new arrivals instead of deleting old history, and require that policy for staging success.
 - Persist durable-spool rejection totals transactionally so restart cannot erase audit-loss
   accounting during a governed staging window.
+- Gate staging on path-free audit-spool filesystem headroom, including combined queue budgets when
+  both durable queues share one volume.
+- Correct macro-F1 so supported but never-predicted classes contribute zero, close prediction
+  metadata validation, and require independent review to finish before model evaluation; these
+  semantics are published as `cascade.classification-evaluation.v1alpha4`.
 
 ## 0.2.0rc1 - 2026-09-11
 

@@ -159,6 +159,9 @@ def run_classification_experiment(
         raise ValueError("run identity is incomplete or malformed")
     window_start = _parse_time(run["window_start"])
     window_end = _parse_time(run["window_end"])
+    review_completed = _parse_time(adjudication["review_window"]["completed_at"])
+    if review_completed > window_start:
+        raise ValueError("independent review must complete before the run window")
     started_at = datetime.now(timezone.utc)
     if not window_start <= started_at <= window_end:
         raise ValueError("experiment start is outside the declared run window")

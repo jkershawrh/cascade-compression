@@ -191,7 +191,7 @@ def build_staging_evidence(
     """Bind sanitized artifacts and apply explicit release-proof gates."""
     if manifest.get("schema_version") != "cascade.staging-manifest.v1alpha5":
         raise ValueError("unsupported staging manifest version")
-    if classification.get("schema_version") != "cascade.classification-evaluation.v1alpha3":
+    if classification.get("schema_version") != "cascade.classification-evaluation.v1alpha4":
         raise ValueError("classification artifact has an unsupported version")
     if runtime.get("schema_version") != 1:
         raise ValueError("runtime artifact has an unsupported version")

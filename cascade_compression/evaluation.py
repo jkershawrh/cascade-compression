@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from collections import Counter
 from datetime import datetime
@@ -181,11 +182,17 @@ def _evaluate_arm(rows: List[dict], arm: str) -> dict:
             if predicted_support[label]
             else None
         )
-        f1 = (
-            2 * precision * recall / (precision + recall)
-            if precision is not None and recall is not None and precision + recall
-            else 0.0 if precision is not None and recall is not None else None
-        )
+        if recall is None:
+            f1 = None
+        elif precision is None:
+            # A supported truth class with no predicted positives has zero F1;
+            # excluding it would inflate the macro average.
+            f1 = 0.0
+        else:
+            f1 = (
+                2 * precision * recall / (precision + recall)
+                if precision + recall else 0.0
+            )
         if recall is not None:
             recalls.append(recall)
         if f1 is not None:
@@ -250,8 +257,41 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
             raise ValueError(f"duplicate record_id: {record_id}")
         if truth not in CASCADE_LABELS:
             raise ValueError(f"unknown expected label: {truth}")
-        if not isinstance(row.get("predictions", {}), dict):
+        predictions = row.get("predictions", {})
+        if not isinstance(predictions, dict):
             raise ValueError("predictions must be an object keyed by arm")
+        for arm, prediction in predictions.items():
+            if not isinstance(arm, str) or not arm.strip() or arm != arm.strip():
+                raise ValueError("prediction arm names must be non-empty strings")
+            if not isinstance(prediction, dict):
+                raise ValueError(f"prediction for {arm} must be an object")
+            unexpected = set(prediction) - {
+                "label", "confidence", "authoritative",
+            }
+            if unexpected:
+                raise ValueError(
+                    f"prediction for {arm} contains undeclared fields: "
+                    + ", ".join(sorted(unexpected))
+                )
+            label = prediction.get("label")
+            if label in (None, ""):
+                if prediction:
+                    raise ValueError(
+                        f"abstention for {arm} must be an empty object"
+                    )
+                continue
+            if type(prediction.get("authoritative")) is not bool:
+                raise ValueError(
+                    f"classified prediction for {arm} requires boolean authoritative"
+                )
+            if "confidence" in prediction:
+                confidence = prediction["confidence"]
+                if type(confidence) not in (int, float) or not math.isfinite(
+                    float(confidence)
+                ):
+                    raise ValueError(
+                        f"confidence for {arm} must be a finite number"
+                    )
         signal_digest = str(row.get("signal_sha256") or "")
         if signal_digest and not re.fullmatch(r"sha256:[0-9a-f]{64}", signal_digest):
             raise ValueError("signal_sha256 must be a SHA-256 digest")
@@ -260,7 +300,7 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
         row["record_id"] = record_id
         row["expected"] = truth
         seen.add(record_id)
-        arms.update(str(arm) for arm in row.get("predictions", {}))
+        arms.update(predictions)
     if not arms:
         raise ValueError("classification evaluation requires at least one arm")
 
@@ -305,6 +345,8 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
         )
     )
     review_window = adjudication.get("review_window") or {}
+    review_started = None
+    review_completed = None
     try:
         review_started = datetime.fromisoformat(
             str(review_window.get("started_at") or "").replace("Z", "+00:00")
@@ -331,10 +373,25 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
     model_revisions = (
         raw_model_revisions if isinstance(raw_model_revisions, dict) else {}
     )
-    model_revisions_frozen = bool(model_revisions) and all(
-        str(key).strip() and str(value).strip()
-        for key, value in model_revisions.items()
+    model_revisions_frozen = (
+        set(model_revisions) == arms
+        and all(
+            str(key).strip() and str(value).strip()
+            for key, value in model_revisions.items()
+        )
     )
+    try:
+        run_started = datetime.fromisoformat(
+            str(run.get("window_start") or "").replace("Z", "+00:00")
+        )
+        review_precedes_run = bool(
+            review_window_valid
+            and review_completed is not None
+            and run_started.tzinfo is not None
+            and review_completed <= run_started
+        )
+    except ValueError:
+        review_precedes_run = False
     decision_grade = (
         adjudication.get("status") == "complete"
         and adjudication.get("independent") is True
@@ -342,12 +399,13 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
         and corpus_binding
         and adjudication_provenance_bound
         and review_window_valid
+        and review_precedes_run
         and not missing_run_fields
         and not invalid_run_fields
         and model_revisions_frozen
     )
     return {
-        "schema_version": "cascade.classification-evaluation.v1alpha3",
+        "schema_version": "cascade.classification-evaluation.v1alpha4",
         "dataset": {
             "name": str(dataset.get("name") or "unnamed"),
             "revision": str(dataset.get("revision") or "unversioned"),
@@ -380,6 +438,7 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
             "corpus_binding": corpus_binding,
             "adjudication_provenance_bound": adjudication_provenance_bound,
             "review_window_valid": review_window_valid,
+            "review_precedes_run": review_precedes_run,
             "computed_corpus_digest": computed_corpus_digest,
             "missing_run_fields": missing_run_fields,
             "invalid_run_fields": invalid_run_fields,
