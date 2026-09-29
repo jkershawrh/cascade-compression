@@ -31,6 +31,8 @@ All notable changes are documented here. This project follows Semantic Versionin
   benchmark snapshots and calculator assumptions.
 - Enforce private-path, environment-endpoint, credential-shape, and local-home-path boundaries on
   every tracked file before candidate or release publication.
+- Gate tagged container publication on package/version verification and create the GitHub release
+  only after both package and multi-architecture container artifacts succeed, with bound manifests.
 
 ## 0.2.0rc1 - 2026-09-11
 

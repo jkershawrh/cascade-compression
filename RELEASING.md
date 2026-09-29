@@ -17,17 +17,20 @@
    gates.
 5. Confirm CI, public safety, and credential scans pass and review the complete diff plus sanitized
    evidence for internal names, endpoints, deployment details, and raw records.
-6. Create an annotated tag named `v<version>` on the exact tested candidate commit and push it. The release
-   workflow signs the resulting package and container provenance through GitHub artifact
-   attestations. Versions containing `a`, `b`, or `rc` are published as GitHub prereleases and must
-   not move stable major/minor container tags.
+6. Create an annotated tag named `v<version>` on the exact tested candidate commit and push it. The
+   release workflow verifies the tag, public boundary, tests, package, and SBOM before permitting
+   the container build. It publishes the GitHub release only after the multi-architecture container
+   and its provenance succeed, then attaches package, container, and aggregate artifact manifests.
+   Versions containing `a`, `b`, or `rc` are published as GitHub prereleases and must not move
+   stable major/minor container tags.
 7. Attach the sanitized staging evidence and its digest to the prerelease. Keep blinded records,
    review receipts, disagreement queues, and raw runtime/audit exports private.
 
 The tag workflow builds the wheel, source archive, SPDX SBOM, and multi-architecture container. It
 publishes the container to `ghcr.io/jkershawrh/cascade-compression`, records build provenance, signs
-GitHub artifact attestations, and creates a GitHub release. PyPI publishing is intentionally disabled
-until a project-owned trusted publisher is configured.
+GitHub artifact attestations, and creates a GitHub release only after all preceding jobs succeed.
+The attached aggregate manifest records exact package hashes and the immutable container digest.
+PyPI publishing is intentionally disabled until a project-owned trusted publisher is configured.
 
 The container base is pinned to a multi-architecture manifest digest, and
 `requirements-container.lock` and `requirements-build.lock` are hash-locked exports of the

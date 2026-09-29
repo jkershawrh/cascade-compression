@@ -2,6 +2,7 @@ from pathlib import Path
 import json
 import re
 import cascade_compression
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -76,3 +77,23 @@ def test_contextual_data_cannot_masquerade_as_release_evidence():
     register = (ROOT / "docs" / "evidence-register.md").read_text()
     for filename in json_artifacts:
         assert filename in register
+
+
+def test_release_publication_is_gated_by_verified_package_and_container():
+    workflow = yaml.safe_load((ROOT / ".github" / "workflows" / "release.yml").read_text())
+    jobs = workflow["jobs"]
+    assert jobs["container"]["needs"] == "verify"
+    assert set(jobs["release"]["needs"]) == {"verify", "container"}
+
+    verify_steps = str(jobs["verify"]["steps"])
+    container_steps = str(jobs["container"]["steps"])
+    release_steps = str(jobs["release"]["steps"])
+    container_push = next(step for step in jobs["container"]["steps"] if step.get("id") == "push")
+    assert "Verify tag and package version" in verify_steps
+    assert "check_public_boundary.py" in verify_steps
+    assert container_push["with"]["push"] is True
+    assert "release-container-manifest.json" in container_steps
+    assert "gh release create" not in verify_steps
+    assert "gh release create" not in container_steps
+    assert "gh release create" in release_steps
+    assert "release-artifact-manifest.json" in release_steps
