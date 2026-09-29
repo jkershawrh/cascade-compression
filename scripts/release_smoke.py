@@ -27,6 +27,7 @@ def main() -> None:
     assert normalize_label("needs_attention") == "needs_attention"
     assert resource_path("contracts", "manifest.json").is_file()
     assert contract_schema("cascade.classification-evaluation").is_file()
+    assert contract_schema("cascade.adjudication-summary").is_file()
     assert contract_schema("cascade.staging-manifest").is_file()
     assert contract_schema("cascade.staging-evidence").is_file()
     frontend = resource_dir("frontend")

@@ -60,3 +60,30 @@ metadata is frozen. Synthetic or incompletely adjudicated inputs remain `mechani
 as suppressive. Non-authoritative semantic suggestions are still represented in the confusion
 matrix but do not count as Cascade suppression decisions. Pairwise agreement is explicitly marked
 as not being accuracy.
+
+## Independent review merge
+
+The private corpus should be reviewed twice, blind to evaluated model outputs, by two different
+people. Merge their receipt exports locally:
+
+```bash
+cascade-adjudicate \
+  --corpus private-blinded-corpus.jsonl \
+  --review reviewer-a-receipts.jsonl \
+  --review reviewer-b-receipts.jsonl \
+  --output-corpus private-adjudicated-corpus.jsonl \
+  --output-summary adjudication-summary.json \
+  --output-disagreements private-disagreements.jsonl
+```
+
+The command fails closed with exit code 2 while any disagreement remains. A third independent
+reviewer can review only that disagreement file; pass those receipts with `--resolution`. Review
+files must cover the exact corpus, use distinct reviewer references, declare independence from the
+evaluated arms, and agree on the signal digest. The merged corpus and disagreement file remain
+private. The summary contains only counts and a digest and is suitable for sanitized evidence
+review.
+
+After adjudication, join each record's truth label to the predictions produced by the generative,
+semantic, and hybrid arms on the exact same records, then run `cascade-evaluate`. A disagreement
+queue selected because models differed is useful for error analysis but is not, by itself, a
+representative holdout; use a separately frozen stratified sample for the release gate.
