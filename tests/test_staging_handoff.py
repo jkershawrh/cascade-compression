@@ -93,7 +93,7 @@ def test_tampered_handoff_is_rejected(tmp_path, tamper):
 def test_duplicate_json_keys_are_rejected(tmp_path):
     _, candidate, evidence_path, candidate_path, _ = handoff_files(tmp_path)
     evidence_path.write_text(
-        '{"schema_version":"cascade.staging-evidence.v1alpha2",'
+        '{"schema_version":"cascade.staging-evidence.v1alpha3",'
         '"status":"staging_success","status":"incomplete"}',
         encoding="utf-8",
     )

@@ -125,6 +125,9 @@ disabled for compatibility until the configured endpoint has passed the structur
 test; malformed or out-of-range responses fail explicitly.
 Use `cascade-freeze-holdout` to create a deterministic, stratified, model-blind review corpus, then
 `cascade-adjudicate` to require two independent reviews before reporting decision-grade accuracy.
+Release evidence uses an explicit label-coverage challenge holdout with prequalified authoritative
+records for `known_pattern`; a separate representative holdout is required for prevalence or
+natural compression-rate claims. Candidate targets select cases but never become ground truth.
 Loopback development may use plaintext gRPC. Remote endpoints require `CASCADE_SC_TLS=1`; optional
 `CASCADE_SC_TLS_CA`, `CASCADE_SC_TLS_CERT`, and `CASCADE_SC_TLS_KEY` configure private CAs or mTLS.
 

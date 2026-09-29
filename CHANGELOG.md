@@ -6,6 +6,9 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 - Add deterministic model-blind holdout freezing, two-reviewer adjudication, third-reviewer
   disagreement resolution, canonical signal binding, and a documented label rubric.
+- Distinguish representative-prevalence holdouts from label-coverage challenge holdouts, preflight
+  unique per-label candidates and authoritative `known_pattern` records, and prevent representative
+  samples from accidentally satisfying the release label-coverage gate.
 - Add same-corpus generative/semantic/hybrid evaluation with per-label metrics, dangerous-miss
   accounting, confidence coverage, calibration, cryptographically bound independent-review
   receipts, and fail-closed decision-grade evidence.
@@ -43,7 +46,7 @@ All notable changes are documented here. This project follows Semantic Versionin
   both durable queues share one volume.
 - Correct macro-F1 so supported but never-predicted classes contribute zero, close prediction
   metadata validation, and require independent review to finish before model evaluation; these
-  semantics are published as `cascade.classification-evaluation.v1alpha4`.
+  semantics were published as `cascade.classification-evaluation.v1alpha4`.
 - Harden learned-agent promotion with cumulative validation evidence, attributable time-bound
   approvals, activation-time threshold rechecks, fail-closed TTL handling, and type/context-scoped
   demotion. Restored counts and contextual suppressors must re-qualify before activation.

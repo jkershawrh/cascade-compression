@@ -132,10 +132,14 @@ def merge_independent_reviews(
     holdout_manifest: dict,
 ) -> Tuple[List[dict], dict, List[dict]]:
     """Return adjudicated corpus, sanitized summary, and unresolved private cases."""
-    if holdout_manifest.get("schema_version") != "cascade.holdout-manifest.v1alpha1":
+    if holdout_manifest.get("schema_version") != "cascade.holdout-manifest.v1alpha2":
         raise ValueError("unsupported holdout manifest")
     frozen_at = _parse_time(holdout_manifest.get("frozen_at"), "holdout frozen_at")
     cases = _index(corpus, "corpus")
+    challenge_design = (
+        (holdout_manifest.get("evaluation_design") or {}).get("purpose")
+        == "label_coverage_challenge"
+    )
     review_times = [
         _validate_receipt(receipt)
         for receipt in [*first_reviews, *second_reviews]
@@ -185,6 +189,18 @@ def merge_independent_reviews(
     review_evidence = []
     for case_id, case in cases.items():
         left, right = first[case_id], second[case_id]
+        allowed_evidence_refs = set(case.get("evidence_refs") or [])
+        if challenge_design:
+            for receipt in (left, right, resolutions.get(case_id)):
+                if (
+                    receipt is not None
+                    and receipt["classification"] == "known_pattern"
+                    and receipt["source_record_ref"] not in allowed_evidence_refs
+                ):
+                    raise ValueError(
+                        "known_pattern review must cite evidence frozen with "
+                        "the challenge case"
+                    )
         review_evidence.append({
             "case_id": case_id,
             "first": left["evidence_ref"],
@@ -251,7 +267,7 @@ def merge_independent_reviews(
     ):
         raise ValueError("adjudication corpus size does not match the holdout manifest")
     summary = {
-        "schema_version": "cascade.adjudication-summary.v1alpha3",
+        "schema_version": "cascade.adjudication-summary.v1alpha4",
         "status": "complete" if not unresolved else "incomplete",
         "corpus_digest": corpus_digest,
         "holdout_manifest_digest": _digest(holdout_manifest),
@@ -267,6 +283,7 @@ def merge_independent_reviews(
         "disagreements": disagreements,
         "unresolved": len(unresolved),
         "labels": dict(sorted(label_counts.items())),
+        "evaluation_design": holdout_manifest.get("evaluation_design", {}),
         "independent_reviewers": 2,
         "resolution_reviewers": len(resolution_reviewers),
         "contains_raw_records": False,

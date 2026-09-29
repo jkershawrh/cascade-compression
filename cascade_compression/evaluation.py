@@ -405,13 +405,14 @@ def evaluate_classifiers(document: Dict[str, Any]) -> dict:
         and model_revisions_frozen
     )
     return {
-        "schema_version": "cascade.classification-evaluation.v1alpha4",
+        "schema_version": "cascade.classification-evaluation.v1alpha5",
         "dataset": {
             "name": str(dataset.get("name") or "unnamed"),
             "revision": str(dataset.get("revision") or "unversioned"),
             "digest": _dataset_digest(rows),
             "records": len(rows),
             "holdout_digest": str(holdout_digest) if holdout_digest else None,
+            "evaluation_design": dataset.get("evaluation_design") or {},
             "adjudication": {
                 "status": str(adjudication.get("status") or "unknown"),
                 "method": str(adjudication.get("method") or "unspecified"),

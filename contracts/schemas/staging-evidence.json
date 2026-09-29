@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cascade-compression.org/contracts/cascade.staging-evidence/1.0.0-alpha.2",
+  "$id": "https://cascade-compression.org/contracts/cascade.staging-evidence/1.0.0-alpha.3",
   "title": "Cascade Staging Evidence",
   "type": "object",
   "required": ["schema_version", "status", "run", "candidate", "classification", "runtime", "audit", "artifact_digests", "gates", "failed_gates", "contains_raw_records"],
   "properties": {
-    "schema_version": {"const": "cascade.staging-evidence.v1alpha2"},
+    "schema_version": {"const": "cascade.staging-evidence.v1alpha3"},
     "status": {"enum": ["incomplete", "staging_success"]},
     "run": {
       "type": "object",
@@ -26,9 +26,10 @@
     },
     "classification": {
       "type": "object",
-      "required": ["arm", "quality_profile", "model_revisions", "dataset_digest", "holdout_digest", "records", "coverage", "accuracy", "balanced_accuracy", "macro_f1", "dangerous_misses", "calibration"],
+      "required": ["arm", "quality_profile", "evaluation_design", "model_revisions", "dataset_digest", "holdout_digest", "records", "coverage", "accuracy", "balanced_accuracy", "macro_f1", "dangerous_misses", "calibration"],
       "properties": {
-        "quality_profile": {"const": "oss-rc-a-v1"}
+        "quality_profile": {"const": "oss-rc-a-v1"},
+        "evaluation_design": {"type": "object"}
       }
     },
     "runtime": {

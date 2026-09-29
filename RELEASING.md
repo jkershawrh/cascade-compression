@@ -2,8 +2,10 @@
 
 ## Release gate
 
-1. Complete independent review and adjudication of the frozen holdout. Generate a same-corpus
-   classification report; model agreement alone is not release evidence.
+1. Complete independent review and adjudication of the frozen `label_coverage_challenge` holdout.
+   Generate a same-corpus classification report; model agreement alone is not release evidence.
+   Keep a separately frozen `representative_prevalence` report for natural label-mix, compression,
+   or workload-rate claims. Never infer prevalence from the release challenge corpus.
 2. Update `CHANGELOG.md`, `pyproject.toml`, and `cascade_compression.__version__` to the same
    prerelease Semantic Versioning value, then freeze that candidate commit.
 3. Run the manual **Staging candidate** workflow on that exact commit. It reruns tests and package

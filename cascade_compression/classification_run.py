@@ -29,9 +29,9 @@ def _parse_time(value: str) -> datetime:
 
 def _validate_corpus(corpus: Iterable[dict], holdout: dict,
                      adjudication: dict) -> List[dict]:
-    if holdout.get("schema_version") != "cascade.holdout-manifest.v1alpha1":
+    if holdout.get("schema_version") != "cascade.holdout-manifest.v1alpha2":
         raise ValueError("unsupported holdout manifest")
-    if adjudication.get("schema_version") != "cascade.adjudication-summary.v1alpha3":
+    if adjudication.get("schema_version") != "cascade.adjudication-summary.v1alpha4":
         raise ValueError("unsupported adjudication summary")
     if adjudication.get("status") != "complete" or adjudication.get("unresolved") != 0:
         raise ValueError("adjudication is not complete")
@@ -44,6 +44,8 @@ def _validate_corpus(corpus: Iterable[dict], holdout: dict,
         raise ValueError("adjudication review evidence is not cryptographically bound")
     if adjudication.get("holdout_manifest_digest") != canonical_digest(holdout):
         raise ValueError("adjudication summary does not match the holdout manifest")
+    if adjudication.get("evaluation_design") != holdout.get("evaluation_design"):
+        raise ValueError("adjudication evaluation design does not match the holdout")
     try:
         frozen_at = _parse_time(holdout["frozen_at"])
         review_started = _parse_time(adjudication["review_window"]["started_at"])
@@ -268,6 +270,7 @@ def run_classification_experiment(
             "name": holdout["dataset"]["name"],
             "revision": holdout["dataset"]["revision"],
             "holdout_digest": holdout["holdout_digest"],
+            "evaluation_design": holdout.get("evaluation_design") or {},
             "adjudication": {
                 "status": adjudication["status"],
                 "method": (

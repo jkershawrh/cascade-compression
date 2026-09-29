@@ -68,7 +68,7 @@ The input format is `cascade.classification-input.v1alpha1`:
 }
 ```
 
-The `cascade.classification-evaluation.v1alpha4` output never includes record identifiers or signal
+The `cascade.classification-evaluation.v1alpha5` output never includes record identifiers or signal
 payloads. Its dataset digest binds the report to the set of opaque identifiers and adjudicated
 labels. Its computed corpus digest must also match both the frozen holdout manifest and adjudication
 summary. A report is marked `decision_grade` only when that binding succeeds, adjudication is
@@ -99,6 +99,7 @@ expected labels, and predictions from reviewer material:
 cascade-freeze-holdout \
   --candidates private-candidates.jsonl \
   --quota source-a=75 --quota source-b=75 --quota source-c=75 --quota source-d=75 \
+  --evaluation-purpose representative_prevalence \
   --seed "$PRIVATE_HOLDOUT_SEED" \
   --dataset-name held-out-v1 --dataset-revision review-1 \
   --stratification-basis "source family and time window" \
@@ -118,6 +119,52 @@ predates the end of the source observation window. Keep the seed and blinded cor
 review all free-text manifest metadata before publishing it.
 Stratification can ensure class coverage for balanced accuracy, but it changes prevalence; do not
 present overall accuracy on a balanced corpus as the natural production rate.
+
+## Representative and challenge holdouts
+
+Do not ask one sample to prove two different things. Freeze two independently reviewed datasets:
+
+- `representative_prevalence` samples the observed workload without preliminary label targeting.
+  Use it for natural label mix, compression rate, and request-volume claims. It cannot satisfy the
+  release label-coverage gate.
+- `label_coverage_challenge` deliberately samples candidate evidence for every Cascade label. Use
+  it for per-label recall, balanced accuracy, suppression precision, calibration, and the
+  `oss-rc-a-v1` gate. Its overall accuracy and label mix are not prevalence estimates.
+
+A challenge candidate adds top-level `coverage_target` metadata. That target is only a sampling
+hypothesis and is removed from reviewer records; independent adjudication remains the sole ground
+truth. Every `known_pattern` candidate must also provide a non-empty top-level
+`source_record_ref` pointing to an authoritative record available to reviewers. The freezer binds
+the target and a digest of that reference into the candidate digest, rejects duplicate signal
+evidence, and fails before review if the selected sample misses a declared target.
+
+Example challenge freeze (oversample above the release minimum because reviewers may reject a
+candidate hypothesis):
+
+```bash
+cascade-freeze-holdout \
+  --candidates private-challenge-candidates.jsonl \
+  --quota routine-noise=40 --quota known-pattern=40 \
+  --quota needs-attention=40 --quota real-incident=40 \
+  --evaluation-purpose label_coverage_challenge \
+  --minimum-label-candidates routine_noise=30 \
+  --minimum-label-candidates known_pattern=30 \
+  --minimum-label-candidates needs_attention=30 \
+  --minimum-label-candidates real_incident=30 \
+  --seed "$PRIVATE_CHALLENGE_SEED" \
+  --dataset-name held-out-challenge-v1 --dataset-revision review-1 \
+  --stratification-basis "prequalified coverage candidate; not ground truth" \
+  --source-window-start 2026-09-01T00:00:00Z \
+  --source-window-end 2026-09-08T00:00:00Z \
+  --output-corpus private-challenge-corpus.jsonl \
+  --output-manifest challenge-manifest.json
+```
+
+The four quota names above are private sampling strata and need not equal the underscore-form label
+names. The freezer verifies actual selected `coverage_target` counts. A preflight pass does not
+guarantee 25 adjudicated examples per label; only the completed review summary can establish that.
+If review produces fewer than 25 for any label, collect and freeze a new challenge revision instead
+of relabeling, replacing, or supplementing the already-frozen corpus.
 
 The frozen corpus should then be reviewed twice, blind to evaluated model outputs, by two different
 people using the [independent adjudication rubric](adjudication-rubric.md). Merge their receipt
@@ -143,7 +190,7 @@ undeclared fields such as model predictions are rejected even when included in a
 receipt. The merged corpus
 and disagreement file remain private. All resolved disagreements must be completed by the same
 single third reviewer; the adjudicator rejects a mixture of additional reviewers. The
-`cascade.adjudication-summary.v1alpha3` summary commits
+`cascade.adjudication-summary.v1alpha4` summary commits
 to both the exact holdout manifest and the private receipt set. Adjudication recomputes each
 receipt's evidence digest, requires a timezone-aware review timestamp after the holdout was frozen,
 and rejects a corpus or record count that differs from the manifest. The sanitized summary includes
@@ -172,4 +219,5 @@ CASCADE_GENERATIVE_STRUCTURED=1 CASCADE_SC_ADDRESS=classifier.example:443 \
 
 The LLM URL/key/model and llm-d-sc TLS settings use the same environment variables as the service.
 A disagreement queue selected because models differed is useful for error analysis but is not, by
-itself, a representative holdout; use a separately frozen stratified sample for the release gate.
+itself, either a representative-prevalence holdout or a label-coverage challenge holdout. It cannot
+satisfy the release gate.

@@ -159,3 +159,94 @@ def test_freeze_cannot_predate_observation_window():
             source_window_end="2026-09-01T01:00:00Z",
             frozen_at="2026-09-01T00:30:00Z",
         )
+
+
+def test_challenge_holdout_preflights_label_candidates_and_authority():
+    rows = []
+    quotas = {}
+    minimums = {}
+    labels = ("routine_noise", "known_pattern", "needs_attention", "real_incident")
+    for label in labels:
+        quotas[label] = 2
+        minimums[label] = 2
+        for index in range(2):
+            rows.append({
+                "case_id": f"{label}-{index}",
+                "sampling_stratum": label,
+                "coverage_target": label,
+                "source_record_ref": (
+                    f"authority://pattern/{index}" if label == "known_pattern" else None
+                ),
+                "signal": {
+                    "signal_type": f"candidate_{label}",
+                    "severity": "medium",
+                    "content": {"message": f"candidate evidence {index}"},
+                },
+            })
+    corpus, manifest = freeze_stratified_holdout(
+        rows, quotas, seed="challenge-seed", dataset_name="challenge",
+        dataset_revision="v1", stratification_basis="candidate coverage target",
+        source_window_start="2026-09-01T00:00:00Z",
+        source_window_end="2026-09-01T01:00:00Z",
+        frozen_at="2026-09-01T02:00:00Z",
+        evaluation_purpose="label_coverage_challenge",
+        minimum_label_candidates=minimums,
+    )
+    assert len(corpus) == 8
+    assert all("coverage_target" not in row for row in corpus)
+    assert sum("evidence_refs" in row for row in corpus) == 2
+    design = manifest["evaluation_design"]
+    assert design["prevalence_claim_permitted"] is False
+    assert design["candidate_targets_are_ground_truth"] is False
+    assert design["selected_candidate_targets"] == minimums
+    assert design["known_pattern_authority_prequalified"] is True
+
+
+def test_challenge_holdout_rejects_unsubstantiated_known_pattern_candidate():
+    rows = []
+    labels = ("routine_noise", "known_pattern", "needs_attention", "real_incident")
+    for label in labels:
+        rows.append({
+            "case_id": label,
+            "sampling_stratum": label,
+            "coverage_target": label,
+            "source_record_ref": None,
+            "signal": {"signal_type": label, "severity": "medium"},
+        })
+    with pytest.raises(ValueError, match="authoritative source_record_ref"):
+        freeze_stratified_holdout(
+            rows, {label: 1 for label in labels},
+            seed="challenge-seed", dataset_name="challenge",
+            dataset_revision="v1", stratification_basis="candidate coverage target",
+            source_window_start="2026-09-01T00:00:00Z",
+            source_window_end="2026-09-01T01:00:00Z",
+            frozen_at="2026-09-01T02:00:00Z",
+            evaluation_purpose="label_coverage_challenge",
+            minimum_label_candidates={label: 1 for label in labels},
+        )
+
+
+def test_challenge_holdout_rejects_duplicate_signal_support():
+    rows = []
+    labels = ("routine_noise", "known_pattern", "needs_attention", "real_incident")
+    for label in labels:
+        rows.append({
+            "case_id": label,
+            "sampling_stratum": label,
+            "coverage_target": label,
+            "source_record_ref": (
+                "authority://shared" if label == "known_pattern" else None
+            ),
+            "signal": {"signal_type": "duplicate", "severity": "medium"},
+        })
+    with pytest.raises(ValueError, match="unique signals"):
+        freeze_stratified_holdout(
+            rows, {label: 1 for label in labels}, seed="challenge-seed",
+            dataset_name="challenge", dataset_revision="v1",
+            stratification_basis="candidate coverage target",
+            source_window_start="2026-09-01T00:00:00Z",
+            source_window_end="2026-09-01T01:00:00Z",
+            frozen_at="2026-09-01T02:00:00Z",
+            evaluation_purpose="label_coverage_challenge",
+            minimum_label_candidates={label: 1 for label in labels},
+        )

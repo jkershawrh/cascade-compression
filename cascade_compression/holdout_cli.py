@@ -43,6 +43,15 @@ def main() -> int:
     parser.add_argument("--source-window-start", required=True)
     parser.add_argument("--source-window-end", required=True)
     parser.add_argument("--frozen-at")
+    parser.add_argument(
+        "--evaluation-purpose",
+        choices=("representative_prevalence", "label_coverage_challenge"),
+        required=True,
+    )
+    parser.add_argument(
+        "--minimum-label-candidates", action="append", type=_quota, default=[],
+        metavar="LABEL=COUNT",
+    )
     parser.add_argument("--output-corpus", required=True)
     parser.add_argument("--output-manifest", required=True)
     args = parser.parse_args()
@@ -56,6 +65,9 @@ def main() -> int:
     quotas = dict(args.quota)
     if len(quotas) != len(args.quota):
         parser.error("each --quota stratum must be unique")
+    minimum_label_candidates = dict(args.minimum_label_candidates)
+    if len(minimum_label_candidates) != len(args.minimum_label_candidates):
+        parser.error("each --minimum-label-candidates label must be unique")
     corpus, manifest = freeze_stratified_holdout(
         _read_jsonl(args.candidates), quotas,
         seed=args.seed,
@@ -65,6 +77,8 @@ def main() -> int:
         source_window_start=args.source_window_start,
         source_window_end=args.source_window_end,
         frozen_at=args.frozen_at,
+        evaluation_purpose=args.evaluation_purpose,
+        minimum_label_candidates=minimum_label_candidates,
     )
     _write_jsonl(args.output_corpus, corpus)
     Path(args.output_manifest).write_text(

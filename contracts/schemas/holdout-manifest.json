@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cascade-compression.org/contracts/cascade.holdout-manifest/1.0.0-alpha.1",
+  "$id": "https://cascade-compression.org/contracts/cascade.holdout-manifest/1.0.0-alpha.2",
   "title": "Cascade Holdout Manifest",
   "type": "object",
-  "required": ["schema_version", "dataset", "source_window", "frozen_at", "selection", "candidate_digest", "holdout_digest", "blinding", "contains_raw_records"],
+  "required": ["schema_version", "dataset", "source_window", "frozen_at", "selection", "candidate_digest", "holdout_digest", "evaluation_design", "blinding", "contains_raw_records"],
   "properties": {
-    "schema_version": {"const": "cascade.holdout-manifest.v1alpha1"},
+    "schema_version": {"const": "cascade.holdout-manifest.v1alpha2"},
     "dataset": {
       "type": "object",
       "required": ["name", "revision"],
@@ -40,6 +40,19 @@
     },
     "candidate_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
     "holdout_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "evaluation_design": {
+      "type": "object",
+      "required": ["purpose", "prevalence_claim_permitted", "candidate_targets_are_ground_truth", "minimum_label_candidates", "selected_candidate_targets", "known_pattern_authority_prequalified"],
+      "properties": {
+        "purpose": {"enum": ["representative_prevalence", "label_coverage_challenge"]},
+        "prevalence_claim_permitted": {"type": "boolean"},
+        "candidate_targets_are_ground_truth": {"const": false},
+        "minimum_label_candidates": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 1}},
+        "selected_candidate_targets": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}},
+        "known_pattern_authority_prequalified": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
     "blinding": {
       "type": "object",
       "required": ["evaluated_predictions_removed", "ground_truth_removed", "sampling_strata_removed", "candidate_case_ids_replaced"],

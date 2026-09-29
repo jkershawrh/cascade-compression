@@ -57,6 +57,20 @@ def inputs():
         "dataset": {
             "name": "held-out", "revision": "v1",
             "holdout_digest": corpus_digest,
+            "evaluation_design": {
+                "purpose": "label_coverage_challenge",
+                "prevalence_claim_permitted": False,
+                "candidate_targets_are_ground_truth": False,
+                "minimum_label_candidates": {
+                    "routine_noise": 25, "known_pattern": 25,
+                    "needs_attention": 25, "real_incident": 25,
+                },
+                "selected_candidate_targets": {
+                    "routine_noise": 50, "known_pattern": 50,
+                    "needs_attention": 50, "real_incident": 50,
+                },
+                "known_pattern_authority_prequalified": True,
+            },
             "adjudication": {
                 "status": "complete", "method": "double-review",
                 "independent": True, "reviewers": 2,
@@ -252,6 +266,23 @@ def test_complete_bundle_passes_every_gate_and_schema():
         (ROOT / "contracts" / "schemas" / "staging-evidence.json").read_text()
     )
     jsonschema.Draft202012Validator(schema).validate(report)
+
+
+def test_representative_holdout_cannot_satisfy_label_coverage_gate():
+    manifest, classification, runtime, before, after = inputs()
+    classification["dataset"]["evaluation_design"] = {
+        "purpose": "representative_prevalence",
+        "prevalence_claim_permitted": True,
+        "candidate_targets_are_ground_truth": False,
+        "minimum_label_candidates": {},
+        "selected_candidate_targets": {},
+        "known_pattern_authority_prequalified": False,
+    }
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert report["status"] == "incomplete"
+    assert "classification_challenge_design" in report["failed_gates"]
 
 
 def test_new_audit_drop_fails_closed():

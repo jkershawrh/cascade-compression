@@ -80,14 +80,14 @@ def inputs():
     digest = canonical_digest(identity)
     now = datetime.now(timezone.utc)
     holdout = {
-        "schema_version": "cascade.holdout-manifest.v1alpha1",
+        "schema_version": "cascade.holdout-manifest.v1alpha2",
         "dataset": {"name": "synthetic", "revision": "v1"},
         "frozen_at": (now - timedelta(minutes=3)).isoformat(),
         "selection": {"selected_records": 4},
         "holdout_digest": digest,
     }
     summary = {
-        "schema_version": "cascade.adjudication-summary.v1alpha3",
+        "schema_version": "cascade.adjudication-summary.v1alpha4",
         "status": "complete", "unresolved": 0, "records": 4,
         "independent_reviewers": 2, "corpus_digest": digest,
         "holdout_manifest_digest": canonical_digest(holdout),

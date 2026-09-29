@@ -226,7 +226,7 @@ def build_staging_evidence(
         raise ValueError("staging evidence inputs must be JSON objects")
     if manifest.get("schema_version") != "cascade.staging-manifest.v1alpha5":
         raise ValueError("unsupported staging manifest version")
-    if classification.get("schema_version") != "cascade.classification-evaluation.v1alpha4":
+    if classification.get("schema_version") != "cascade.classification-evaluation.v1alpha5":
         raise ValueError("classification artifact has an unsupported version")
     if runtime.get("schema_version") != 1:
         raise ValueError("runtime artifact has an unsupported version")
@@ -381,6 +381,16 @@ def build_staging_evidence(
     )
     dataset_value = classification.get("dataset")
     dataset = dataset_value if isinstance(dataset_value, dict) else {}
+    evaluation_design_value = dataset.get("evaluation_design")
+    evaluation_design = (
+        evaluation_design_value if isinstance(evaluation_design_value, dict) else {}
+    )
+    challenge_design_valid = (
+        evaluation_design.get("purpose") == "label_coverage_challenge"
+        and evaluation_design.get("prevalence_claim_permitted") is False
+        and evaluation_design.get("candidate_targets_are_ground_truth") is False
+        and evaluation_design.get("known_pattern_authority_prequalified") is True
+    )
     classification_consistent = (
         classification_evidence.get("corpus_binding") is True
         and classification_evidence.get("adjudication_provenance_bound") is True
@@ -764,6 +774,18 @@ def build_staging_evidence(
             classification_evidence.get("status") == "decision_grade",
             classification_evidence.get("status"),
         ),
+        _gate("classification_challenge_design", challenge_design_valid, {
+            "purpose": evaluation_design.get("purpose"),
+            "prevalence_claim_permitted": evaluation_design.get(
+                "prevalence_claim_permitted"
+            ),
+            "candidate_targets_are_ground_truth": evaluation_design.get(
+                "candidate_targets_are_ground_truth"
+            ),
+            "known_pattern_authority_prequalified": evaluation_design.get(
+                "known_pattern_authority_prequalified"
+            ),
+        }),
         _gate(
             "classification_artifact_consistent",
             classification_consistent,
@@ -940,7 +962,7 @@ def build_staging_evidence(
     ]
     failed = [gate["name"] for gate in gates if not gate["passed"]]
     return {
-        "schema_version": "cascade.staging-evidence.v1alpha2",
+        "schema_version": "cascade.staging-evidence.v1alpha3",
         "status": "staging_success" if not failed else "incomplete",
         "run": {field: run.get(field) for field in REQUIRED_RUN_FIELDS},
         "candidate": {
@@ -954,6 +976,7 @@ def build_staging_evidence(
         "classification": {
             "arm": classification_arm,
             "quality_profile": "oss-rc-a-v1",
+            "evaluation_design": evaluation_design,
             "model_revisions": model_revisions,
             "dataset_digest": (classification.get("dataset") or {}).get("digest"),
             "holdout_digest": (classification.get("dataset") or {}).get(

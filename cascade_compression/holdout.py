@@ -9,6 +9,8 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
+from .classifier import CASCADE_LABELS
+
 FORBIDDEN_REVIEW_KEY = re.compile(
     r"ground.?truth|classif|predict|model|decision|outcome|llm|review|route|verdict",
     re.IGNORECASE,
@@ -67,6 +69,8 @@ def freeze_stratified_holdout(
     source_window_start: str,
     source_window_end: str,
     frozen_at: Optional[str] = None,
+    evaluation_purpose: str = "representative_prevalence",
+    minimum_label_candidates: Optional[Mapping[str, int]] = None,
 ) -> Tuple[List[dict], dict]:
     """Select exact per-stratum quotas and return blinded records plus a manifest.
 
@@ -75,6 +79,26 @@ def freeze_stratified_holdout(
     """
     if not seed:
         raise ValueError("holdout seed must not be empty")
+    if evaluation_purpose not in {
+        "representative_prevalence", "label_coverage_challenge",
+    }:
+        raise ValueError("unsupported evaluation purpose")
+    requested_label_candidates = {
+        str(label): int(count)
+        for label, count in (minimum_label_candidates or {}).items()
+    }
+    if (
+        evaluation_purpose == "representative_prevalence"
+        and requested_label_candidates
+    ):
+        raise ValueError("representative holdouts cannot declare label targets")
+    if evaluation_purpose == "label_coverage_challenge":
+        if set(requested_label_candidates) != set(CASCADE_LABELS):
+            raise ValueError(
+                "challenge holdouts require candidate targets for every label"
+            )
+        if any(count <= 0 for count in requested_label_candidates.values()):
+            raise ValueError("challenge label candidate targets must be positive")
     if not dataset_name or not dataset_revision or not stratification_basis:
         raise ValueError("dataset identity and stratification basis are required")
     source_start = _aware_timestamp(source_window_start, "source_window_start")
@@ -87,6 +111,7 @@ def freeze_stratified_holdout(
 
     grouped: Dict[str, List[dict]] = defaultdict(list)
     seen_ids = set()
+    challenge_signal_digests = set()
     candidate_identity = []
     for candidate in candidates:
         case_id = str(candidate.get("case_id") or "").strip()
@@ -106,18 +131,50 @@ def freeze_stratified_holdout(
             )
         seen_ids.add(case_id)
         signal_digest = canonical_digest(signal)
+        coverage_target = candidate.get("coverage_target")
+        source_record_ref = candidate.get("source_record_ref")
+        if evaluation_purpose == "label_coverage_challenge":
+            if coverage_target not in CASCADE_LABELS:
+                raise ValueError(
+                    f"challenge candidate {case_id} has no valid coverage_target"
+                )
+            if coverage_target == "known_pattern" and not (
+                isinstance(source_record_ref, str) and source_record_ref.strip()
+            ):
+                raise ValueError(
+                    f"known_pattern challenge candidate {case_id} requires "
+                    "an authoritative source_record_ref"
+                )
+            if signal_digest in challenge_signal_digests:
+                raise ValueError("challenge candidates must contain unique signals")
+            challenge_signal_digests.add(signal_digest)
         item = {
             "source_case_id": case_id,
             "stratum": stratum,
             "signal": signal,
             "signal_sha256": signal_digest,
             "score": _selection_score(seed, case_id, signal_digest),
+            "coverage_target": coverage_target,
+            "source_record_prequalified": bool(
+                isinstance(source_record_ref, str) and source_record_ref.strip()
+            ),
+            "source_record_ref": (
+                source_record_ref.strip()
+                if isinstance(source_record_ref, str) and source_record_ref.strip()
+                else None
+            ),
         }
         grouped[stratum].append(item)
         candidate_identity.append({
             "case_id": case_id,
             "sampling_stratum": stratum,
             "signal_sha256": signal_digest,
+            "coverage_target": coverage_target,
+            "source_record_ref_sha256": (
+                canonical_digest(source_record_ref)
+                if isinstance(source_record_ref, str) and source_record_ref.strip()
+                else None
+            ),
         })
 
     if not candidate_identity:
@@ -151,14 +208,17 @@ def freeze_stratified_holdout(
 
     blinded = []
     for item in sorted(selected, key=lambda value: value["score"]):
-        blinded.append({
+        blinded_case = {
             "schema_version": "cascade.system-evaluation-case.v1alpha1",
             "case_id": _opaque_case_id(
                 seed, item["source_case_id"], item["signal_sha256"],
             ),
             "signal": item["signal"],
             "signal_sha256": item["signal_sha256"],
-        })
+        }
+        if item["source_record_ref"]:
+            blinded_case["evidence_refs"] = [item["source_record_ref"]]
+        blinded.append(blinded_case)
     opaque_ids = [item["case_id"] for item in blinded]
     if len(opaque_ids) != len(set(opaque_ids)):
         raise ValueError("opaque case identifier collision")
@@ -172,8 +232,26 @@ def freeze_stratified_holdout(
          for row in blinded),
         key=lambda value: value["case_id"],
     )
+    selected_candidate_targets = defaultdict(int)
+    for item in selected:
+        if item["coverage_target"] in CASCADE_LABELS:
+            selected_candidate_targets[item["coverage_target"]] += 1
+    if evaluation_purpose == "label_coverage_challenge":
+        shortages = {
+            label: {
+                "selected": selected_candidate_targets[label],
+                "required": required,
+            }
+            for label, required in requested_label_candidates.items()
+            if selected_candidate_targets[label] < required
+        }
+        if shortages:
+            raise ValueError(
+                "selected challenge corpus misses candidate label targets: "
+                + json.dumps(shortages, sort_keys=True)
+            )
     manifest = {
-        "schema_version": "cascade.holdout-manifest.v1alpha1",
+        "schema_version": "cascade.holdout-manifest.v1alpha2",
         "dataset": {"name": dataset_name, "revision": dataset_revision},
         "source_window": {
             "start": source_window_start,
@@ -193,6 +271,27 @@ def freeze_stratified_holdout(
             key=lambda value: (value["case_id"], value["sampling_stratum"]),
         )),
         "holdout_digest": canonical_digest(selected_identity),
+        "evaluation_design": {
+            "purpose": evaluation_purpose,
+            "prevalence_claim_permitted": (
+                evaluation_purpose == "representative_prevalence"
+            ),
+            "candidate_targets_are_ground_truth": False,
+            "minimum_label_candidates": dict(sorted(
+                requested_label_candidates.items()
+            )),
+            "selected_candidate_targets": dict(sorted(
+                selected_candidate_targets.items()
+            )),
+            "known_pattern_authority_prequalified": (
+                evaluation_purpose == "label_coverage_challenge"
+                and all(
+                    item["source_record_prequalified"]
+                    for item in selected
+                    if item["coverage_target"] == "known_pattern"
+                )
+            ),
+        },
         "blinding": {
             "evaluated_predictions_removed": True,
             "ground_truth_removed": True,

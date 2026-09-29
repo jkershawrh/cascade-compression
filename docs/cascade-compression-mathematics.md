@@ -155,10 +155,14 @@ A release-candidate claim requires all of the following to refer to the same imm
 - clean-clone, package, container, SBOM, provenance, and successful CI checks.
 
 `cascade-stage-evidence` applies these gates and emits a sanitized aggregate. Its
-`oss-rc-a-v1` profile currently requires at least 200 records, at least 25 examples per label, at
+`oss-rc-a-v1` profile currently requires a declared label-coverage challenge corpus with
+prequalified authoritative evidence for `known_pattern`, at least 200 records, at least 25
+adjudicated examples per label, at
 least 50 important examples, at least 25 authoritative suppressions, 95% coverage, 0.85 balanced
 accuracy, 0.80 macro F1, 0.98 authoritative-suppression precision, confidence coverage of at least
 95%, ECE no greater than 0.10, and zero observed authoritative dangerous misses.
 
 Those thresholds are a release policy, not a universal guarantee. A deployment with higher impact
 or regulatory requirements should impose stricter acceptance criteria and an explicit human gate.
+The challenge corpus cannot establish natural prevalence or compression rate; those claims require
+a separately frozen representative-prevalence corpus.

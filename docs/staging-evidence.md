@@ -31,6 +31,9 @@ The command returns zero only for `staging_success`. It requires:
 
 - a decision-grade held-out classification report on the same run, with a valid independent-review
   window that completed before model evaluation began;
+- an explicit `label_coverage_challenge` design whose candidate targets are marked as non-truth,
+  whose `known_pattern` candidates were prequalified against authoritative records, and whose label
+  support was ultimately established by adjudication rather than the sampling hints;
 - a complete same-corpus generative, semantic, and hybrid comparison, with the hybrid arm selected
   for the release decision, frozen revisions for all three arms, and at least 95% coverage per arm;
 - the fixed `oss-rc-a-v1` quality profile: at least 200 held-out records, at least 25 examples of
@@ -64,7 +67,7 @@ signal payloads, credentials, cluster names, routes, and deployment manifests. I
 private evidence should remain in ignored or external evidence storage; only the sanitized output
 is eligible for publication after review.
 
-The output contract is `cascade.staging-evidence.v1alpha2`. Its candidate summary includes the
+The output contract is `cascade.staging-evidence.v1alpha3`. Its candidate summary includes the
 candidate workflow run, image digest, and candidate-manifest digest needed to carry the exact tested
 artifacts into release. Submit a successful sanitized output to the manual **Staging evidence**
 workflow as described in `RELEASING.md`; a release tag has no path around that attested handoff.

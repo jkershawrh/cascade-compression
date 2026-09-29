@@ -1,20 +1,21 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cascade-compression.org/contracts/cascade.classification-evaluation/1.0.0-alpha.4",
+  "$id": "https://cascade-compression.org/contracts/cascade.classification-evaluation/1.0.0-alpha.5",
   "title": "Cascade Classification Evaluation",
   "type": "object",
   "required": ["schema_version", "dataset", "run", "arms", "pairwise_agreement", "evidence"],
   "properties": {
-    "schema_version": {"const": "cascade.classification-evaluation.v1alpha4"},
+    "schema_version": {"const": "cascade.classification-evaluation.v1alpha5"},
     "dataset": {
       "type": "object",
-      "required": ["name", "revision", "digest", "records", "holdout_digest", "adjudication"],
+      "required": ["name", "revision", "digest", "records", "holdout_digest", "evaluation_design", "adjudication"],
       "properties": {
         "name": {"type": "string"},
         "revision": {"type": "string"},
         "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
         "holdout_digest": {"type": ["string", "null"], "pattern": "^sha256:[0-9a-f]{64}$"},
         "records": {"type": "integer", "minimum": 1},
+        "evaluation_design": {"type": "object"},
         "adjudication": {"type": "object"}
       }
     },

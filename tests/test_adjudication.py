@@ -67,7 +67,7 @@ def holdout_manifest():
         for index in range(4)
     ]
     return {
-        "schema_version": "cascade.holdout-manifest.v1alpha1",
+        "schema_version": "cascade.holdout-manifest.v1alpha2",
         "dataset": {"name": "test", "revision": "v1"},
         "frozen_at": "2026-08-31T00:00:00Z",
         "selection": {"selected_records": 4},
@@ -189,6 +189,25 @@ def test_known_pattern_requires_documented_authority():
     with pytest.raises(ValueError, match="known_pattern requires"):
         merge_independent_reviews(
             corpus(), first, second, holdout_manifest=holdout_manifest(),
+        )
+
+
+def test_challenge_known_pattern_must_cite_frozen_candidate_evidence():
+    cases = corpus()
+    cases[1]["evidence_refs"] = ["documented-pattern-2"]
+    manifest = holdout_manifest()
+    manifest["evaluation_design"] = {
+        "purpose": "label_coverage_challenge",
+        "prevalence_claim_permitted": False,
+        "candidate_targets_are_ground_truth": False,
+        "minimum_label_candidates": {label: 1 for label in LABELS},
+        "selected_candidate_targets": {label: 1 for label in LABELS},
+        "known_pattern_authority_prequalified": True,
+    }
+    with pytest.raises(ValueError, match="evidence frozen with the challenge case"):
+        merge_independent_reviews(
+            cases, reviews("reviewer-a"), reviews("reviewer-b"),
+            holdout_manifest=manifest,
         )
 
 
