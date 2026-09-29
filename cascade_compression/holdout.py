@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from collections import defaultdict
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
-FORBIDDEN_REVIEW_KEYS = frozenset({
-    "ground_truth", "expected", "predictions", "model_output",
-    "classifier_result",
-})
+FORBIDDEN_REVIEW_KEY = re.compile(
+    r"ground.?truth|classif|predict|model|decision|outcome|llm|review|route|verdict",
+    re.IGNORECASE,
+)
 
 
 def canonical_digest(value: Any) -> str:
@@ -36,7 +37,7 @@ def _forbidden_signal_keys(value: Any) -> set:
     if isinstance(value, dict):
         for key, nested in value.items():
             normalized = str(key).strip().lower()
-            if normalized in FORBIDDEN_REVIEW_KEYS:
+            if normalized == "expected" or FORBIDDEN_REVIEW_KEY.search(normalized):
                 found.add(normalized)
             found.update(_forbidden_signal_keys(nested))
     elif isinstance(value, list):

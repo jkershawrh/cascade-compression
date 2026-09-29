@@ -82,6 +82,17 @@ def test_model_output_nested_in_signal_cannot_reach_reviewers():
         freeze(rows=rows)
 
 
+@pytest.mark.parametrize(
+    "field",
+    ["classification", "decision", "outcome", "verdict", "llm_route"],
+)
+def test_label_bearing_signal_fields_cannot_reach_reviewers(field):
+    rows = candidates()
+    rows[0]["signal"]["content"][field] = "must-not-leak"
+    with pytest.raises(ValueError, match="evaluation fields"):
+        freeze(rows=rows)
+
+
 def test_freeze_timestamp_requires_timezone():
     with pytest.raises(ValueError, match="timezone"):
         freeze_stratified_holdout(

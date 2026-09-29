@@ -104,8 +104,10 @@ cascade-freeze-holdout \
 ```
 
 The quota set must cover every candidate stratum, and undersized strata fail closed. Signals that
-contain nested ground-truth or model-output fields are rejected instead of exposing them to
-reviewers. The manifest aliases stratum names and records the bounded source observation window,
+contain nested ground-truth, classification, model-output, decision, outcome, route, or verdict
+fields are rejected instead of exposing potentially label-bearing data to reviewers. The freezer
+enforces the review UI's denylist plus the exact `expected` field. The manifest aliases stratum
+names and records the bounded source observation window,
 selection counts, and digests but no raw records. The freezer rejects a `frozen_at` timestamp that
 predates the end of the source observation window. Keep the seed and blinded corpus private; still
 review all free-text manifest metadata before publishing it.
