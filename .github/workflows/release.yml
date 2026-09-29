@@ -414,4 +414,4 @@ jobs:
           if [[ "$GITHUB_REF_NAME" =~ (a|b|rc)[0-9]+$ ]]; then
             args+=(--prerelease)
           fi
-          gh release create "${args[@]}"
+          gh release create "${args[@]}" --repo "$GITHUB_REPOSITORY"

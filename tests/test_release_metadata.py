@@ -138,6 +138,7 @@ def test_release_publication_is_gated_by_verified_package_and_container():
     assert "gh release create" not in verify_steps
     assert "gh release create" not in container_steps
     assert "gh release create" in release_steps
+    assert '--repo "$GITHUB_REPOSITORY"' in release_steps
     assert "release-artifact-manifest.json" in release_steps
     assert "staging-evidence.json" in release_steps
     assert "release-profile.json" in release_steps
