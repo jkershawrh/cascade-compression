@@ -546,6 +546,22 @@ class TestLLMBackpressure:
             "idempotency_key"
         ] == "stable-key"
 
+    def test_durable_spool_stats_include_path_free_filesystem_headroom(
+        self, monkeypatch, tmp_path,
+    ):
+        monkeypatch.setenv("CASCADE_STATE_FILE", str(tmp_path / "state.json"))
+        bridge = CascadeBridge()
+
+        stats = bridge.get_stats()
+
+        for prefix in ("ledger_receipt", "ledger_memory"):
+            assert stats[f"{prefix}_filesystem_total_bytes"] > 0
+            assert stats[f"{prefix}_filesystem_free_bytes"] > 0
+            assert 0 <= stats[f"{prefix}_filesystem_used_fraction"] <= 1
+        assert stats["ledger_spools_share_filesystem"] is True
+        assert not any(key.endswith("filesystem_id") for key in stats)
+        assert not any("path" in key for key in stats)
+
     def test_durable_receipt_is_acknowledged_only_after_success(
         self, monkeypatch, tmp_path,
     ):

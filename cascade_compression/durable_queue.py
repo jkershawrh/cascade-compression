@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import sqlite3
 import time
 from contextlib import closing
@@ -184,3 +185,15 @@ class DurableLedgerQueue:
             for path in (Path(self.path), Path(self.path + "-wal"), Path(self.path + "-shm"))
             if path.exists()
         )
+
+    def filesystem_capacity(self) -> dict:
+        """Return path-free capacity telemetry for the filesystem holding the spool."""
+        parent = Path(self.path).parent
+        usage = shutil.disk_usage(parent)
+        used_fraction = (usage.total - usage.free) / usage.total if usage.total else 1.0
+        return {
+            "filesystem_id": f"device:{os.stat(parent).st_dev}",
+            "total_bytes": int(usage.total),
+            "free_bytes": int(usage.free),
+            "used_fraction": round(used_fraction, 6),
+        }

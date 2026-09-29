@@ -50,6 +50,14 @@ def test_queue_reports_age_and_storage_without_exposing_payloads(tmp_path):
     assert queue.oldest_age_seconds() > 0
     assert queue.payload_bytes() > 0
     assert queue.storage_bytes() > 0
+    capacity = queue.filesystem_capacity()
+    assert capacity["total_bytes"] > 0
+    assert capacity["free_bytes"] > 0
+    assert 0 <= capacity["used_fraction"] <= 1
+    assert capacity["filesystem_id"].startswith("device:")
+    assert set(capacity) == {
+        "filesystem_id", "total_bytes", "free_bytes", "used_fraction",
+    }
     if os.name != "nt":
         assert path.stat().st_mode & 0o777 == 0o600
 

@@ -1927,6 +1927,19 @@ class CascadeBridge:
             self._ledger_receipt_store.storage_bytes()
             if self._ledger_receipt_store else 0
         )
+        receipt_filesystem = (
+            self._ledger_receipt_store.filesystem_capacity()
+            if self._ledger_receipt_store else {}
+        )
+        stats["ledger_receipt_filesystem_total_bytes"] = (
+            receipt_filesystem.get("total_bytes")
+        )
+        stats["ledger_receipt_filesystem_free_bytes"] = (
+            receipt_filesystem.get("free_bytes")
+        )
+        stats["ledger_receipt_filesystem_used_fraction"] = (
+            receipt_filesystem.get("used_fraction")
+        )
         receipt_payload_bytes = (
             self._ledger_receipt_store.payload_bytes()
             if self._ledger_receipt_store else 0
@@ -1965,6 +1978,24 @@ class CascadeBridge:
         stats["ledger_memory_spool_bytes"] = (
             self._ledger_memory_store.storage_bytes()
             if self._ledger_memory_store else 0
+        )
+        memory_filesystem = (
+            self._ledger_memory_store.filesystem_capacity()
+            if self._ledger_memory_store else {}
+        )
+        stats["ledger_memory_filesystem_total_bytes"] = (
+            memory_filesystem.get("total_bytes")
+        )
+        stats["ledger_memory_filesystem_free_bytes"] = (
+            memory_filesystem.get("free_bytes")
+        )
+        stats["ledger_memory_filesystem_used_fraction"] = (
+            memory_filesystem.get("used_fraction")
+        )
+        stats["ledger_spools_share_filesystem"] = bool(
+            receipt_filesystem.get("filesystem_id")
+            and receipt_filesystem.get("filesystem_id")
+            == memory_filesystem.get("filesystem_id")
         )
         memory_payload_bytes = (
             self._ledger_memory_store.payload_bytes()

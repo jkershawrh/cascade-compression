@@ -218,11 +218,20 @@ def inputs():
         "ledger_receipt_payload_bytes": 0,
         "ledger_receipt_bytes_max": 536870912,
         "ledger_receipt_byte_utilization": 0.0,
+        "ledger_receipt_spool_bytes": 4096,
+        "ledger_receipt_filesystem_total_bytes": 10737418240,
+        "ledger_receipt_filesystem_free_bytes": 8589934592,
+        "ledger_receipt_filesystem_used_fraction": 0.2,
         "ledger_memory_pending_max": 50000,
         "ledger_memory_utilization": 0.0,
         "ledger_memory_payload_bytes": 0,
         "ledger_memory_bytes_max": 536870912,
         "ledger_memory_byte_utilization": 0.0,
+        "ledger_memory_spool_bytes": 4096,
+        "ledger_memory_filesystem_total_bytes": 10737418240,
+        "ledger_memory_filesystem_free_bytes": 8589934592,
+        "ledger_memory_filesystem_used_fraction": 0.2,
+        "ledger_spools_share_filesystem": True,
     }
     return manifest, classification, runtime, dict(stats), dict(stats)
 
@@ -312,6 +321,58 @@ def test_cascade_spool_near_byte_capacity_blocks_staging_success():
 def test_missing_cascade_spool_capacity_measurement_fails_closed():
     manifest, classification, runtime, before, after = inputs()
     before.pop("ledger_receipt_bytes_max")
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "cascade_spool_capacity_healthy" in report["failed_gates"]
+
+
+def test_missing_shared_filesystem_measurement_fails_closed():
+    manifest, classification, runtime, before, after = inputs()
+    before.pop("ledger_spools_share_filesystem")
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "cascade_spool_capacity_healthy" in report["failed_gates"]
+
+
+def test_cascade_spool_full_filesystem_blocks_staging_success():
+    manifest, classification, runtime, before, after = inputs()
+    before.update({
+        "ledger_receipt_filesystem_total_bytes": 1000,
+        "ledger_receipt_filesystem_free_bytes": 100,
+        "ledger_receipt_filesystem_used_fraction": 0.9,
+    })
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "cascade_spool_capacity_healthy" in report["failed_gates"]
+
+
+def test_cascade_spool_requires_free_space_for_configured_budget():
+    manifest, classification, runtime, before, after = inputs()
+    before.update({
+        "ledger_memory_bytes_max": 600_000_000,
+        "ledger_memory_filesystem_total_bytes": 700_000_000,
+        "ledger_memory_filesystem_free_bytes": 560_000_000,
+        "ledger_memory_filesystem_used_fraction": 0.2,
+    })
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "cascade_spool_capacity_healthy" in report["failed_gates"]
+
+
+def test_shared_spool_filesystem_requires_combined_queue_headroom():
+    manifest, classification, runtime, before, after = inputs()
+    before.update({
+        "ledger_receipt_filesystem_total_bytes": 1_000_000_000,
+        "ledger_receipt_filesystem_free_bytes": 700_000_000,
+        "ledger_receipt_filesystem_used_fraction": 0.3,
+        "ledger_memory_filesystem_total_bytes": 1_000_000_000,
+        "ledger_memory_filesystem_free_bytes": 700_000_000,
+        "ledger_memory_filesystem_used_fraction": 0.3,
+    })
     report = build_staging_evidence(
         manifest, classification, runtime, before, after,
     )

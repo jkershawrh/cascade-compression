@@ -116,7 +116,7 @@ def _bounded_number(value: Any, minimum: float, maximum: float) -> bool:
 
 
 def _audit_spool_capacity(snapshot: dict, prefix: str) -> tuple[bool, dict]:
-    """Validate both row and payload-byte bounds from one /stats snapshot."""
+    """Validate queue bounds and filesystem headroom from one /stats snapshot."""
     try:
         pending = int(snapshot[f"{prefix}_pending"])
         pending_max = int(snapshot[f"{prefix}_pending_max"])
@@ -124,11 +124,22 @@ def _audit_spool_capacity(snapshot: dict, prefix: str) -> tuple[bool, dict]:
         bytes_max = int(snapshot[f"{prefix}_bytes_max"])
         reported_rows = float(snapshot[f"{prefix}_utilization"])
         reported_bytes = float(snapshot[f"{prefix}_byte_utilization"])
+        spool_bytes = int(snapshot[f"{prefix}_spool_bytes"])
+        filesystem_total = int(snapshot[f"{prefix}_filesystem_total_bytes"])
+        filesystem_free = int(snapshot[f"{prefix}_filesystem_free_bytes"])
+        reported_filesystem_used = float(
+            snapshot[f"{prefix}_filesystem_used_fraction"]
+        )
     except (KeyError, TypeError, ValueError):
         return False, {"measurements_present": False}
 
     computed_rows = pending / pending_max if pending_max > 0 else math.inf
     computed_bytes = payload_bytes / bytes_max if bytes_max > 0 else math.inf
+    computed_filesystem_used = (
+        (filesystem_total - filesystem_free) / filesystem_total
+        if filesystem_total > 0 else math.inf
+    )
+    required_free = max(0, bytes_max - payload_bytes)
     measurements_valid = (
         pending >= 0
         and pending_max > 0
@@ -140,11 +151,18 @@ def _audit_spool_capacity(snapshot: dict, prefix: str) -> tuple[bool, dict]:
         and math.isfinite(reported_bytes)
         and abs(reported_rows - computed_rows) <= 0.0001
         and abs(reported_bytes - computed_bytes) <= 0.0001
+        and spool_bytes >= 0
+        and filesystem_total > 0
+        and 0 <= filesystem_free <= filesystem_total
+        and math.isfinite(reported_filesystem_used)
+        and abs(reported_filesystem_used - computed_filesystem_used) <= 0.0001
     )
     healthy = (
         measurements_valid
         and computed_rows < AUDIT_SPOOL_ALERT_FRACTION
         and computed_bytes < AUDIT_SPOOL_ALERT_FRACTION
+        and computed_filesystem_used < AUDIT_SPOOL_ALERT_FRACTION
+        and filesystem_free >= required_free
     )
     return healthy, {
         "measurements_present": True,
@@ -154,6 +172,12 @@ def _audit_spool_capacity(snapshot: dict, prefix: str) -> tuple[bool, dict]:
         "payload_bytes": payload_bytes,
         "bytes_max": bytes_max,
         "byte_utilization": round(computed_bytes, 4),
+        "spool_bytes": spool_bytes,
+        "filesystem_total_bytes": filesystem_total,
+        "filesystem_free_bytes": filesystem_free,
+        "filesystem_used_fraction": round(computed_filesystem_used, 4),
+        "required_free_bytes": required_free,
+        "configured_queue_budget_fits": filesystem_free >= required_free,
     }
 
 
@@ -493,6 +517,27 @@ def build_staging_evidence(
             healthy, evidence = _audit_spool_capacity(snapshot, prefix)
             spool_capacity[f"{queue_name}_{snapshot_name}"] = evidence
             spool_capacity_healthy = spool_capacity_healthy and healthy
+        shared_filesystem = snapshot.get("ledger_spools_share_filesystem")
+        spool_capacity_healthy = (
+            spool_capacity_healthy and type(shared_filesystem) is bool
+        )
+        if shared_filesystem is True:
+            receipt_capacity = spool_capacity[f"receipt_{snapshot_name}"]
+            memory_capacity = spool_capacity[f"memory_{snapshot_name}"]
+            shared_required = int(receipt_capacity.get("required_free_bytes") or 0)
+            shared_required += int(memory_capacity.get("required_free_bytes") or 0)
+            shared_free = min(
+                int(receipt_capacity.get("filesystem_free_bytes") or 0),
+                int(memory_capacity.get("filesystem_free_bytes") or 0),
+            )
+            shared_healthy = shared_free >= shared_required
+            spool_capacity[f"shared_filesystem_{snapshot_name}"] = {
+                "queues_share_filesystem": True,
+                "free_bytes": shared_free,
+                "combined_required_free_bytes": shared_required,
+                "configured_queue_budgets_fit": shared_healthy,
+            }
+            spool_capacity_healthy = spool_capacity_healthy and shared_healthy
     capacity_healthy = (
         ledger.get("capacity_measured") is True
         and 0 <= float(ledger.get("used_fraction", 2))

@@ -28,12 +28,15 @@ governed staging claim.
 The `/stats` response exposes those measurements independently as `ledger_receipt_*` and
 `ledger_memory_*`: pending count, row and byte utilization, oldest age, spool bytes, overflow
 policy, cumulative failures, consecutive failures, rejected/dropped events, successful writes or
-batches, and last successful delivery.
+batches, and last successful delivery. It also reports path-free filesystem total/free bytes and
+used fraction for each spool, plus a boolean used to combine budgets when both queues share one
+volume; no local path, device identity, or payload is exposed.
 Capacity rejections are counted transactionally in each SQLite spool and survive process restarts;
 the governed staging gate requires those counters in both audit snapshots with no increase. It
 also recomputes row and serialized-payload utilization from their raw counters and fails closed if
-either spool is at or above 80% in either snapshot, if a capacity field is missing, or if a
-reported utilization is inconsistent with its counters.
+either spool or its backing filesystem is at or above 80% in either snapshot, if the filesystem
+lacks enough free space for the queue's remaining configured payload budget, if a capacity field
+is missing, or if a reported utilization is inconsistent with its counters.
 Alert at minimum on:
 
 - durability other than `sqlite` in governed staging;
