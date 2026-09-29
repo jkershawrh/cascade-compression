@@ -129,6 +129,21 @@ def run_classification_experiment(
     )
     revisions = {"generative": set(), "semantic": set()}
 
+    def observe(result: Any, observed: Dict[str, set]) -> None:
+        if result is None:
+            return
+        if (result.backend == "generative" and result.model_revision
+                and result.prompt_revision):
+            observed["generative"].add((
+                result.model_revision, result.prompt_revision,
+            ))
+        if (result.backend == "semantic" and result.classifier_id
+                and result.model_revision and result.taxonomy_revision):
+            observed["semantic"].add((
+                result.classifier_id, result.model_revision,
+                result.tokenizer_revision, result.taxonomy_revision,
+            ))
+
     def classify(row: dict) -> tuple[dict, dict, float]:
         call_started = time.perf_counter()
         signal = row["signal"]
@@ -137,16 +152,10 @@ def run_classification_experiment(
         gen = compared.alternatives.get("generative")
         sem = compared.alternatives.get("semantic")
         observed = {"generative": set(), "semantic": set()}
-        if gen and gen.model_revision and gen.prompt_revision:
-            observed["generative"].add((
-                gen.model_revision, gen.prompt_revision,
-            ))
-        if (sem and sem.classifier_id and sem.model_revision
-                and sem.taxonomy_revision):
-            observed["semantic"].add((
-                sem.classifier_id, sem.model_revision, sem.tokenizer_revision,
-                sem.taxonomy_revision,
-            ))
+        for result in (
+            gen, sem, hybrid_result, *hybrid_result.alternatives.values(),
+        ):
+            observe(result, observed)
         output = {
             "record_id": row["case_id"],
             "signal_sha256": row["signal_sha256"],

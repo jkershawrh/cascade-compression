@@ -37,6 +37,18 @@ class FakeSemantic:
         )
 
 
+class DriftingSemantic(FakeSemantic):
+    def __init__(self):
+        self.calls = 0
+
+    def classify(self, signal, text):
+        result = super().classify(signal, text)
+        self.calls += 1
+        if self.calls > len(LABELS):
+            result.taxonomy_revision = "taxonomy-v2"
+        return result
+
+
 def inputs():
     rows = []
     for index, label in enumerate(LABELS):
@@ -132,5 +144,15 @@ def test_runner_rejects_observed_taxonomy_mismatch():
         run_and_evaluate(
             rows, holdout, summary,
             generative=FakeGenerative(), semantic=FakeSemantic(), run=run,
+            hybrid_margin=0.2, hybrid_suppress_margin=0.4,
+        )
+
+
+def test_runner_detects_taxonomy_drift_in_hybrid_execution():
+    rows, holdout, summary, run = inputs()
+    with pytest.raises(ValueError, match="taxonomy does not match"):
+        run_and_evaluate(
+            rows, holdout, summary,
+            generative=FakeGenerative(), semantic=DriftingSemantic(), run=run,
             hybrid_margin=0.2, hybrid_suppress_margin=0.4,
         )
