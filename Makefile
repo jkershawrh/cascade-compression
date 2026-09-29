@@ -1,40 +1,42 @@
 .PHONY: test test-cascade test-routing test-infra test-tco test-all up
 
+PYTHON ?= python3
+
 ## ── Memory tests ───────────────────────────────────────────────────
 test-memory:
-	python -m pytest tests/test_memory.py tests/test_memory_contracts.py tests/test_recall.py tests/test_consolidation.py tests/test_priming.py tests/test_federation.py -v
+	$(PYTHON) -m pytest tests/test_memory.py tests/test_memory_contracts.py tests/test_recall.py tests/test_consolidation.py tests/test_priming.py tests/test_federation.py -v
 
 ## ── Cascade engine tests ────────────────────────────────────────────
 test-cascade:
-	python -m pytest tests/test_cascade.py tests/test_cascade_safety.py tests/test_promotion.py -v
+	$(PYTHON) -m pytest tests/test_cascade.py tests/test_cascade_safety.py tests/test_promotion.py -v
 
 ## ── Routing tests ───────────────────────────────────────────────────
 test-routing:
-	python -m pytest tests/test_corpora.py tests/test_strategy_router.py tests/test_bootstrapper.py tests/test_task_mapping.py tests/test_synthetic_routing.py -v
+	$(PYTHON) -m pytest tests/test_corpora.py tests/test_strategy_router.py tests/test_bootstrapper.py tests/test_task_mapping.py tests/test_synthetic_routing.py -v
 
 ## ── Infrastructure tests ────────────────────────────────────────────
 test-infra:
-	python -m pytest tests/test_scaler.py tests/test_fleet_manager.py -v
+	$(PYTHON) -m pytest tests/test_scaler.py tests/test_fleet_manager.py -v
 
 ## ── TCO calculator tests ────────────────────────────────────────────
 test-contracts:
-	python -m pytest tests/test_contracts.py -v
+	$(PYTHON) -m pytest tests/test_contracts.py -v
 
 test-calculations:
-	python -m pytest tests/test_calculations.py -v
+	$(PYTHON) -m pytest tests/test_calculations.py -v
 
 test-scenarios:
-	python -m pytest tests/test_scenarios.py -v
+	$(PYTHON) -m pytest tests/test_scenarios.py -v
 
 test-api:
-	python -m pytest tests/test_api.py -v
+	$(PYTHON) -m pytest tests/test_api.py -v
 
 test-tco:
-	python -m pytest tests/test_contracts.py tests/test_calculations.py tests/test_scenarios.py tests/test_api.py -v
+	$(PYTHON) -m pytest tests/test_contracts.py tests/test_calculations.py tests/test_scenarios.py tests/test_api.py -v
 
 ## ── All tests ───────────────────────────────────────────────────────
 test-all:
-	python -m pytest tests/ -v
+	$(PYTHON) -m pytest tests/ -v
 
 ## ── Run the app ─────────────────────────────────────────────────────
 up:

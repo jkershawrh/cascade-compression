@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cascade-compression.org/contracts/cascade.classification-evaluation/1.0.0-alpha.1",
+  "title": "Cascade Classification Evaluation",
+  "type": "object",
+  "required": ["schema_version", "dataset", "run", "arms", "pairwise_agreement", "evidence"],
+  "properties": {
+    "schema_version": {"const": "cascade.classification-evaluation.v1alpha1"},
+    "dataset": {
+      "type": "object",
+      "required": ["name", "revision", "digest", "records", "adjudication"],
+      "properties": {
+        "name": {"type": "string"},
+        "revision": {"type": "string"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "records": {"type": "integer", "minimum": 1},
+        "adjudication": {"type": "object"}
+      }
+    },
+    "run": {"type": "object"},
+    "model_revisions": {"type": "object"},
+    "arms": {"type": "object", "minProperties": 1},
+    "pairwise_agreement": {"type": "object"},
+    "evidence": {
+      "type": "object",
+      "required": ["status", "ground_truth_required", "same_corpus", "contains_raw_records"],
+      "properties": {
+        "status": {"enum": ["mechanics_only", "decision_grade"]},
+        "ground_truth_required": {"const": true},
+        "same_corpus": {"const": true},
+        "contains_raw_records": {"const": false}
+      }
+    }
+  },
+  "additionalProperties": true
+}

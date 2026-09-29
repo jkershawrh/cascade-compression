@@ -29,6 +29,7 @@ from .cascade.protocol import Signal, llm_complete
 from .cascade.protocol import Outcome
 from .cascade.triage import ExactRepeatTriage
 from .classifier import SERIALIZER_REVISION, classifier_from_environment
+from .durable_queue import DurableLedgerQueue
 
 log = logging.getLogger(__name__)
 
@@ -122,6 +123,7 @@ class CascadeBridge:
         )
         self._ledger_url = ledger_url or os.getenv("CASCADE_LEDGER_URL", "")
         self._ledger_token = ledger_token or os.getenv("CASCADE_LEDGER_TOKEN", "")
+        self._state_file = os.getenv("CASCADE_STATE_FILE", "")
         self._ledger_max_pending = max(
             1, int(os.getenv("CASCADE_LEDGER_MAX_PENDING", "8"))
         )
@@ -145,6 +147,26 @@ class CascadeBridge:
         self._ledger_memory_flush_running = False
         self._ledger_memory_events_dropped = 0
         self._ledger_memory_batches_written = 0
+        self._ledger_memory_failures = 0
+        self._ledger_memory_consecutive_failures = 0
+        self._ledger_memory_last_success = ""
+        self._ledger_memory_retry_initial = max(
+            0.1, float(os.getenv("CASCADE_LEDGER_RETRY_INITIAL_SECONDS", "1"))
+        )
+        self._ledger_memory_retry_max = max(
+            self._ledger_memory_retry_initial,
+            float(os.getenv("CASCADE_LEDGER_RETRY_MAX_SECONDS", "60")),
+        )
+        self._ledger_memory_retry_timer = None
+        spool_file = os.getenv("CASCADE_LEDGER_MEMORY_SPOOL_FILE", "")
+        if not spool_file and self._state_file:
+            spool_file = self._state_file + ".ledger-memory.sqlite3"
+        self._ledger_memory_store = (
+            DurableLedgerQueue(
+                spool_file, max_pending=self._ledger_memory_pending_max,
+            )
+            if spool_file else None
+        )
 
         self.enabled = True
         nano_profile = os.getenv("CASCADE_NANO_PROFILE", "legacy").strip().lower()
@@ -259,8 +281,6 @@ class CascadeBridge:
         self.memory_archive = MemoryArchive(max_capacity=self._memory_max) if self._memory_enabled else None
         self.suppression_archive = SuppressionArchive(max_capacity=self._memory_max) if self._memory_enabled else None
 
-        self._state_file = os.getenv("CASCADE_STATE_FILE", "")
-
         # Meta-cascade: self-monitoring signals
         self._meta_signals: list = []
         self._meta_max_buffer = 500
@@ -271,6 +291,8 @@ class CascadeBridge:
         self._pending_memory_lock = threading.Lock()
 
         self._restore_state()
+        if self._ledger_url and self._ledger_memory_pending_count():
+            self._start_memory_ledger_drain()
 
     def process(self, signals: list) -> Dict:
         if not self.enabled or not signals:
@@ -1265,12 +1287,16 @@ class CascadeBridge:
             return
         new_events = [event.to_dict() for event in self.memory_archive.drain_events()]
         with self._ledger_memory_lock:
-            self._ledger_memory_pending.extend(new_events)
-            overflow = (
-                len(self._ledger_memory_pending) - self._ledger_memory_pending_max
-            )
+            if self._ledger_memory_store:
+                overflow = self._ledger_memory_store.enqueue(new_events)
+            else:
+                self._ledger_memory_pending.extend(new_events)
+                overflow = (
+                    len(self._ledger_memory_pending) - self._ledger_memory_pending_max
+                )
             if overflow > 0:
-                self._ledger_memory_pending = self._ledger_memory_pending[overflow:]
+                if not self._ledger_memory_store:
+                    self._ledger_memory_pending = self._ledger_memory_pending[overflow:]
                 self._ledger_memory_events_dropped += overflow
                 self._emit_meta(
                     "meta_ledger_memory_overflow", "high",
@@ -1279,35 +1305,79 @@ class CascadeBridge:
                     dropped_total=self._ledger_memory_events_dropped,
                     pending_max=self._ledger_memory_pending_max,
                 )
-            if self._ledger_memory_flush_running or not self._ledger_memory_pending:
+        self._start_memory_ledger_drain()
+
+    def _ledger_memory_pending_count(self) -> int:
+        if self._ledger_memory_store:
+            return self._ledger_memory_store.count()
+        return len(self._ledger_memory_pending)
+
+    def _start_memory_ledger_drain(self):
+        with self._ledger_memory_lock:
+            if self._ledger_memory_flush_running or not self._ledger_memory_pending_count():
                 return
             self._ledger_memory_flush_running = True
         self._ledger_memory_executor.submit(self._drain_memory_ledger_queue)
+
+    def _schedule_memory_ledger_retry(self):
+        if not self._ledger_memory_store or not self._ledger_memory_pending_count():
+            return
+        delay = min(
+            self._ledger_memory_retry_max,
+            self._ledger_memory_retry_initial
+            * (2 ** max(0, self._ledger_memory_consecutive_failures - 1)),
+        )
+        timer = threading.Timer(delay, self._start_memory_ledger_drain)
+        timer.daemon = True
+        self._ledger_memory_retry_timer = timer
+        timer.start()
 
     def _drain_memory_ledger_queue(self):
         try:
             from .integrations.ledger import write_memory_events
             while True:
                 with self._ledger_memory_lock:
-                    if not self._ledger_memory_pending:
+                    if not self._ledger_memory_pending_count():
                         self._ledger_memory_flush_running = False
                         return
-                    batch = list(
-                        self._ledger_memory_pending[:self._ledger_memory_batch_size]
-                    )
+                    if self._ledger_memory_store:
+                        queued = self._ledger_memory_store.peek(
+                            self._ledger_memory_batch_size
+                        )
+                        batch = [item.payload for item in queued]
+                    else:
+                        queued = []
+                        batch = list(
+                            self._ledger_memory_pending[:self._ledger_memory_batch_size]
+                        )
                 if not write_memory_events(
                     self._ledger_url, self._ledger_token, batch, self.domain,
                 ):
                     with self._ledger_memory_lock:
                         self._ledger_memory_flush_running = False
+                        self._ledger_memory_failures += 1
+                        self._ledger_memory_consecutive_failures += 1
+                    self._schedule_memory_ledger_retry()
                     return
                 with self._ledger_memory_lock:
-                    del self._ledger_memory_pending[:len(batch)]
+                    if self._ledger_memory_store:
+                        self._ledger_memory_store.acknowledge(
+                            item.sequence for item in queued
+                        )
+                    else:
+                        del self._ledger_memory_pending[:len(batch)]
                     self._ledger_memory_batches_written += 1
+                    self._ledger_memory_consecutive_failures = 0
+                    self._ledger_memory_last_success = datetime.now(
+                        timezone.utc
+                    ).isoformat()
         except Exception as e:
             log.debug("Memory ledger batch failed: %s", str(e)[:60])
             with self._ledger_memory_lock:
                 self._ledger_memory_flush_running = False
+                self._ledger_memory_failures += 1
+                self._ledger_memory_consecutive_failures += 1
+            self._schedule_memory_ledger_retry()
 
     def _deactivate_agent(self, signal_type: str):
         pattern_type = self._activated_patterns.pop(signal_type, None)
@@ -1453,6 +1523,8 @@ class CascadeBridge:
                 "ledger_writes_dropped": self._ledger_writes_dropped,
                 "ledger_memory_events_dropped": self._ledger_memory_events_dropped,
                 "ledger_memory_batches_written": self._ledger_memory_batches_written,
+                "ledger_memory_failures": self._ledger_memory_failures,
+                "ledger_memory_last_success": self._ledger_memory_last_success,
                 "activation_timestamps": dict(self._activation_timestamps),
                 "stats_snapshot": {
                     "signals_processed": self.stats.signals_processed,
@@ -1494,6 +1566,12 @@ class CascadeBridge:
             )
             self._ledger_memory_batches_written = state.get(
                 "ledger_memory_batches_written", 0,
+            )
+            self._ledger_memory_failures = state.get(
+                "ledger_memory_failures", 0,
+            )
+            self._ledger_memory_last_success = state.get(
+                "ledger_memory_last_success", "",
             )
             self._activation_timestamps = state.get("activation_timestamps", {})
             if state.get("version") in (2, 3):
@@ -1626,9 +1704,29 @@ class CascadeBridge:
             }
         stats["ledger_writes_dropped"] = self._ledger_writes_dropped
         stats["ledger_max_pending"] = self._ledger_max_pending
-        stats["ledger_memory_pending"] = len(self._ledger_memory_pending)
+        pending = self._ledger_memory_pending_count()
+        stats["ledger_memory_pending"] = pending
+        stats["ledger_memory_pending_max"] = self._ledger_memory_pending_max
+        stats["ledger_memory_utilization"] = round(
+            pending / self._ledger_memory_pending_max, 4
+        )
+        stats["ledger_memory_queue_durability"] = (
+            "sqlite" if self._ledger_memory_store else "memory_only"
+        )
+        stats["ledger_memory_oldest_age_seconds"] = round(
+            self._ledger_memory_store.oldest_age_seconds(), 3
+        ) if self._ledger_memory_store else None
+        stats["ledger_memory_spool_bytes"] = (
+            self._ledger_memory_store.storage_bytes()
+            if self._ledger_memory_store else 0
+        )
         stats["ledger_memory_events_dropped"] = self._ledger_memory_events_dropped
         stats["ledger_memory_batches_written"] = self._ledger_memory_batches_written
+        stats["ledger_memory_failures"] = self._ledger_memory_failures
+        stats["ledger_memory_consecutive_failures"] = (
+            self._ledger_memory_consecutive_failures
+        )
+        stats["ledger_memory_last_success"] = self._ledger_memory_last_success
         stats["classifier"] = {
             "mode": self.classifier.mode,
             "config_error": self.classifier.config_error,

@@ -68,6 +68,12 @@ See [the architecture](docs/architecture.md) and [the event workflow](docs/event
 the full mechanics. [Custom anchor engineering](docs/anchor-engineering.md) documents the separate
 proposal, evaluation, approval, activation, and rollback lifecycle.
 
+For accuracy claims, run all classifier policies over one frozen adjudicated corpus with
+`cascade-evaluate`. The resulting sanitized report separates ground-truth accuracy, dangerous
+misses, coverage, calibration, and pairwise agreement. See the
+[classification evaluation guide](docs/classification-evaluation.md). Agreement between two
+classifiers is never presented as accuracy.
+
 ### Advisory triage evaluation
 
 Set `CASCADE_NANO_PROFILE=triage_only` to preserve every input while tagging
@@ -111,6 +117,9 @@ Safety controls such as severity protection, promotion evidence, shadow validati
 and immediate demotion are built into Cascade. An external ledger and GCL auditor are optional
 assurance layers: configure them when independent receipts or policy verdicts are required. They
 are not prerequisites for local compression, classification, memory, or llm-d-sc evaluation.
+When ledger delivery is enabled, configure persisted state so memory audit events use the
+[durable write-ahead spool](docs/audit-delivery.md); a memory-only retry queue is not sufficient for
+a governed staging claim.
 
 Container images for tagged releases are published at
 `ghcr.io/jkershawrh/cascade-compression`. Release artifacts include an SPDX SBOM and signed GitHub

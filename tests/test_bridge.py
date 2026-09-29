@@ -479,3 +479,44 @@ class TestLLMBackpressure:
 
         assert bridge._ledger_memory_pending == []
         assert bridge._ledger_memory_batches_written == 1
+
+    def test_durable_memory_ledger_queue_survives_restart(
+        self, monkeypatch, tmp_path,
+    ):
+        state_file = tmp_path / "state.json"
+        monkeypatch.setenv("CASCADE_STATE_FILE", str(state_file))
+        first = CascadeBridge()
+        first._ledger_memory_store.enqueue([{"memory_id": "persisted"}])
+
+        second = CascadeBridge()
+        stats = second.get_stats()
+        assert stats["ledger_memory_queue_durability"] == "sqlite"
+        assert stats["ledger_memory_pending"] == 1
+        assert second._ledger_memory_store.peek(1)[0].payload == {
+            "memory_id": "persisted"
+        }
+
+    def test_durable_memory_ledger_acknowledges_only_after_success(
+        self, monkeypatch, tmp_path,
+    ):
+        monkeypatch.setenv("CASCADE_STATE_FILE", str(tmp_path / "state.json"))
+        bridge = CascadeBridge(ledger_url="https://ledger.example")
+        bridge._ledger_memory_store.enqueue([{"memory_id": "m1"}])
+        bridge._ledger_memory_flush_running = True
+
+        with patch(
+            "cascade_compression.integrations.ledger.write_memory_events",
+            return_value=False,
+        ):
+            bridge._drain_memory_ledger_queue()
+        assert bridge._ledger_memory_pending_count() == 1
+        assert bridge.get_stats()["ledger_memory_failures"] == 1
+
+        bridge._ledger_memory_flush_running = True
+        with patch(
+            "cascade_compression.integrations.ledger.write_memory_events",
+            return_value=True,
+        ):
+            bridge._drain_memory_ledger_queue()
+        assert bridge._ledger_memory_pending_count() == 0
+        assert bridge.get_stats()["ledger_memory_last_success"]
