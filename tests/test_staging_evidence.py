@@ -198,8 +198,12 @@ def inputs():
     stats = {
         "ledger_writes_dropped": 10,
         "ledger_memory_events_dropped": 20,
+        "ledger_receipt_rejected_total": 3,
+        "ledger_memory_rejected_total": 4,
         "ledger_receipt_queue_durability": "sqlite",
         "ledger_memory_queue_durability": "sqlite",
+        "ledger_receipt_overflow_policy": "preserve_queued_reject_new",
+        "ledger_memory_overflow_policy": "preserve_queued_reject_new",
         "ledger_receipt_pending": 0,
         "ledger_memory_pending": 0,
         "ledger_receipt_consecutive_failures": 0,
@@ -233,6 +237,34 @@ def test_new_audit_drop_fails_closed():
         manifest, classification, runtime, before, after,
     )
     assert report["status"] == "incomplete"
+    assert "audit_delivery_healthy" in report["failed_gates"]
+
+
+def test_destructive_cascade_spool_policy_fails_closed():
+    manifest, classification, runtime, before, after = inputs()
+    after["ledger_receipt_overflow_policy"] = "delete_oldest"
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "audit_delivery_healthy" in report["failed_gates"]
+
+
+def test_missing_durable_rejection_counter_fails_closed():
+    manifest, classification, runtime, before, after = inputs()
+    before.pop("ledger_memory_rejected_total")
+    after.pop("ledger_memory_rejected_total")
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "audit_delivery_healthy" in report["failed_gates"]
+
+
+def test_audit_spools_must_be_durable_for_entire_window():
+    manifest, classification, runtime, before, after = inputs()
+    before["ledger_memory_queue_durability"] = "memory_only"
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
     assert "audit_delivery_healthy" in report["failed_gates"]
 
 

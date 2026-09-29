@@ -491,7 +491,11 @@ class TestLLMBackpressure:
         second = CascadeBridge()
         stats = second.get_stats()
         assert stats["ledger_memory_queue_durability"] == "sqlite"
+        assert stats["ledger_memory_overflow_policy"] == (
+            "preserve_queued_reject_new"
+        )
         assert stats["ledger_memory_pending"] == 1
+        assert stats["ledger_memory_rejected_total"] == 0
         assert second._ledger_memory_store.peek(1)[0].payload == {
             "memory_id": "persisted"
         }
@@ -533,7 +537,11 @@ class TestLLMBackpressure:
         second = CascadeBridge()
         stats = second.get_stats()
         assert stats["ledger_receipt_queue_durability"] == "sqlite"
+        assert stats["ledger_receipt_overflow_policy"] == (
+            "preserve_queued_reject_new"
+        )
         assert stats["ledger_receipt_pending"] == 1
+        assert stats["ledger_receipt_rejected_total"] == 0
         assert second._ledger_receipt_store.peek(1)[0].payload[
             "idempotency_key"
         ] == "stable-key"

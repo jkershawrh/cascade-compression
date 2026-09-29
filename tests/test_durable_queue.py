@@ -2,7 +2,10 @@ import os
 import sqlite3
 import time
 
-from cascade_compression.durable_queue import DurableLedgerQueue
+from cascade_compression.durable_queue import (
+    DURABLE_QUEUE_OVERFLOW_POLICY,
+    DurableLedgerQueue,
+)
 
 
 def test_queue_survives_reopen_and_acknowledges_only_selected_rows(tmp_path):
@@ -17,10 +20,26 @@ def test_queue_survives_reopen_and_acknowledges_only_selected_rows(tmp_path):
     assert [item.payload for item in reopened.peek(10)] == [{"id": 2}]
 
 
-def test_queue_is_bounded_and_drops_oldest(tmp_path):
+def test_queue_is_bounded_and_rejects_new_without_deleting_oldest(tmp_path):
     queue = DurableLedgerQueue(str(tmp_path / "ledger.sqlite3"), max_pending=3)
     assert queue.enqueue([{"id": i} for i in range(5)]) == 2
-    assert [item.payload["id"] for item in queue.peek(10)] == [2, 3, 4]
+    assert [item.payload["id"] for item in queue.peek(10)] == [0, 1, 2]
+    assert queue.overflow_policy == DURABLE_QUEUE_OVERFLOW_POLICY
+    assert queue.rejected_count() == 2
+
+    reopened = DurableLedgerQueue(queue.path, max_pending=3)
+    assert reopened.rejected_count() == 2
+
+
+def test_queue_preserves_existing_rows_when_configuration_shrinks(tmp_path):
+    path = tmp_path / "ledger.sqlite3"
+    original = DurableLedgerQueue(str(path), max_pending=3)
+    assert original.enqueue([{"id": 1}, {"id": 2}]) == 0
+
+    smaller = DurableLedgerQueue(str(path), max_pending=1)
+    assert smaller.enqueue([{"id": 3}]) == 1
+    assert [item.payload["id"] for item in smaller.peek(10)] == [1, 2]
+    assert smaller.rejected_count() == 1
 
 
 def test_queue_reports_age_and_storage_without_exposing_payloads(tmp_path):
@@ -45,8 +64,9 @@ def test_queue_is_bounded_by_serialized_payload_bytes(tmp_path):
         {"id": 3, "value": "c" * 20},
     ])
     assert dropped == 2
-    assert [item.payload["id"] for item in queue.peek(10)] == [3]
+    assert [item.payload["id"] for item in queue.peek(10)] == [1]
     assert queue.payload_bytes() <= 50
+    assert queue.rejected_count() == 2
 
 
 def test_queue_migrates_pre_byte_limit_database(tmp_path):
@@ -66,3 +86,4 @@ def test_queue_migrates_pre_byte_limit_database(tmp_path):
     queue = DurableLedgerQueue(str(path), max_pending=10, max_bytes=100)
     assert queue.count() == 1
     assert queue.payload_bytes() == len('{"id":1}'.encode("utf-8"))
+    assert queue.rejected_count() == 0

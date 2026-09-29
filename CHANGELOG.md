@@ -35,6 +35,10 @@ All notable changes are documented here. This project follows Semantic Versionin
   only after both package and multi-architecture container artifacts succeed, with bound manifests.
 - Attest the immutable staging-candidate manifest itself and require its provenance in the
   versioned staging-success contract.
+- Preserve queued undelivered audit records when durable spool capacity is exhausted; reject and
+  count new arrivals instead of deleting old history, and require that policy for staging success.
+- Persist durable-spool rejection totals transactionally so restart cannot erase audit-loss
+  accounting during a governed staging window.
 
 ## 0.2.0rc1 - 2026-09-11
 

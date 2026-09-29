@@ -16,7 +16,8 @@ locations. The spools:
 - has configurable row and serialized-payload bounds (`CASCADE_LEDGER_RECEIPT_PENDING`,
   `CASCADE_LEDGER_RECEIPT_BYTES`, `CASCADE_LEDGER_MEMORY_PENDING`, and
   `CASCADE_LEDGER_MEMORY_BYTES`);
-- drops the oldest record only after that explicit bound is exceeded; and
+- preserves every queued undelivered record and rejects only new arrivals after an explicit bound
+  is reached (`preserve_queued_reject_new`); and
 - never includes its payloads in public metrics.
 
 Without either path, Cascade uses a memory-only queue and reports
@@ -24,20 +25,26 @@ Without either path, Cascade uses a memory-only queue and reports
 governed staging claim.
 
 The `/stats` response exposes those measurements independently as `ledger_receipt_*` and
-`ledger_memory_*`: pending count, row and byte utilization, oldest age, spool bytes, cumulative
-failures, consecutive failures, drops, successful writes or batches, and last successful delivery.
+`ledger_memory_*`: pending count, row and byte utilization, oldest age, spool bytes, overflow
+policy, cumulative failures, consecutive failures, rejected/dropped events, successful writes or
+batches, and last successful delivery.
+Capacity rejections are counted transactionally in each SQLite spool and survive process restarts;
+the governed staging gate requires those counters in both audit snapshots with no increase.
 Alert at minimum on:
 
 - durability other than `sqlite` in governed staging;
 - utilization at or above 0.80;
 - a non-zero consecutive failure count;
 - oldest age beyond the deployment's recovery objective; or
-- any increase in dropped events.
+- any increase in rejected or dropped events.
 
 The spool protects Cascade-side delivery only. Ledger database capacity, retention, partitioning,
 and any ledger-owned outbox remain responsibilities of the ledger deployment. A full database can
 still exhaust a bounded spool, so storage alerts and tested recovery procedures are required for a
 complete governance claim.
+
+The memory-only development fallback remains bounded by dropping old entries and reports
+`drop_oldest_memory_only`; it is intentionally unable to satisfy the governed staging gate.
 
 ### Immutable outbox recovery
 

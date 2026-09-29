@@ -29,7 +29,7 @@ from .cascade.protocol import Signal, llm_complete
 from .cascade.protocol import Outcome
 from .cascade.triage import ExactRepeatTriage
 from .classifier import SERIALIZER_REVISION, classifier_from_environment
-from .durable_queue import DurableLedgerQueue
+from .durable_queue import DURABLE_QUEUE_OVERFLOW_POLICY, DurableLedgerQueue
 
 log = logging.getLogger(__name__)
 
@@ -1305,18 +1305,18 @@ class CascadeBridge:
             return self._submit_ledger_write(
                 post_entry, self._ledger_url, self._ledger_token, entry,
             )
-        dropped = self._ledger_receipt_store.enqueue([entry])
-        if dropped:
-            self._ledger_writes_dropped += dropped
+        rejected = self._ledger_receipt_store.enqueue([entry])
+        if rejected:
+            self._ledger_writes_dropped += rejected
             self._emit_meta(
                 "meta_ledger_backpressure", "high",
-                "Durable ledger receipt spool exceeded its configured bound",
-                dropped=dropped,
+                "Durable ledger receipt spool rejected new work at its configured bound; queued undelivered records were preserved",
+                rejected=rejected,
                 dropped_total=self._ledger_writes_dropped,
                 pending_max=self._ledger_receipt_pending_max,
             )
         self._start_ledger_receipt_drain()
-        return dropped == 0
+        return rejected == 0
 
     def _ledger_receipt_pending_count(self) -> int:
         return self._ledger_receipt_store.count() if self._ledger_receipt_store else 0
@@ -1419,20 +1419,24 @@ class CascadeBridge:
         new_events = [event.to_dict() for event in self.memory_archive.drain_events()]
         with self._ledger_memory_lock:
             if self._ledger_memory_store:
-                overflow = self._ledger_memory_store.enqueue(new_events)
+                rejected = self._ledger_memory_store.enqueue(new_events)
             else:
                 self._ledger_memory_pending.extend(new_events)
-                overflow = (
+                rejected = (
                     len(self._ledger_memory_pending) - self._ledger_memory_pending_max
                 )
-            if overflow > 0:
+            if rejected > 0:
                 if not self._ledger_memory_store:
-                    self._ledger_memory_pending = self._ledger_memory_pending[overflow:]
-                self._ledger_memory_events_dropped += overflow
+                    self._ledger_memory_pending = self._ledger_memory_pending[rejected:]
+                self._ledger_memory_events_dropped += rejected
                 self._emit_meta(
                     "meta_ledger_memory_overflow", "high",
-                    f"Memory ledger retry queue dropped {overflow} oldest events",
-                    dropped=overflow,
+                    (
+                        f"Durable memory ledger spool rejected {rejected} new events and preserved queued undelivered records"
+                        if self._ledger_memory_store
+                        else f"Memory-only ledger retry queue dropped {rejected} oldest events"
+                    ),
+                    rejected=rejected,
                     dropped_total=self._ledger_memory_events_dropped,
                     pending_max=self._ledger_memory_pending_max,
                 )
@@ -1856,6 +1860,10 @@ class CascadeBridge:
         stats["ledger_receipt_queue_durability"] = (
             "sqlite" if self._ledger_receipt_store else "memory_only"
         )
+        stats["ledger_receipt_overflow_policy"] = (
+            DURABLE_QUEUE_OVERFLOW_POLICY
+            if self._ledger_receipt_store else "bounded_executor_reject_new"
+        )
         stats["ledger_receipt_oldest_age_seconds"] = round(
             self._ledger_receipt_store.oldest_age_seconds(), 3
         ) if self._ledger_receipt_store else None
@@ -1872,6 +1880,10 @@ class CascadeBridge:
         stats["ledger_receipt_byte_utilization"] = round(
             receipt_payload_bytes / self._ledger_receipt_bytes_max, 4
         )
+        stats["ledger_receipt_rejected_total"] = (
+            self._ledger_receipt_store.rejected_count()
+            if self._ledger_receipt_store else self._ledger_writes_dropped
+        )
         stats["ledger_receipt_failures"] = self._ledger_receipt_failures
         stats["ledger_receipt_consecutive_failures"] = (
             self._ledger_receipt_consecutive_failures
@@ -1886,6 +1898,10 @@ class CascadeBridge:
         )
         stats["ledger_memory_queue_durability"] = (
             "sqlite" if self._ledger_memory_store else "memory_only"
+        )
+        stats["ledger_memory_overflow_policy"] = (
+            DURABLE_QUEUE_OVERFLOW_POLICY
+            if self._ledger_memory_store else "drop_oldest_memory_only"
         )
         stats["ledger_memory_oldest_age_seconds"] = round(
             self._ledger_memory_store.oldest_age_seconds(), 3
@@ -1902,6 +1918,10 @@ class CascadeBridge:
         stats["ledger_memory_bytes_max"] = self._ledger_memory_bytes_max
         stats["ledger_memory_byte_utilization"] = round(
             memory_payload_bytes / self._ledger_memory_bytes_max, 4
+        )
+        stats["ledger_memory_rejected_total"] = (
+            self._ledger_memory_store.rejected_count()
+            if self._ledger_memory_store else self._ledger_memory_events_dropped
         )
         stats["ledger_memory_events_dropped"] = self._ledger_memory_events_dropped
         stats["ledger_memory_batches_written"] = self._ledger_memory_batches_written

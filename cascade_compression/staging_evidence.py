@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, Iterable, Optional
 
 from .classifier import CASCADE_LABELS
+from .durable_queue import DURABLE_QUEUE_OVERFLOW_POLICY
 from .evaluation import REQUIRED_RUN_FIELDS, run_identity_errors
 
 
@@ -402,18 +403,39 @@ def build_staging_evidence(
         audit_brackets_window = False
     ledger = manifest.get("ledger") or {}
     outbox = ledger.get("outbox") or {}
-    drop_fields = ("ledger_writes_dropped", "ledger_memory_events_dropped")
+    drop_fields = (
+        "ledger_writes_dropped",
+        "ledger_memory_events_dropped",
+        "ledger_receipt_rejected_total",
+        "ledger_memory_rejected_total",
+    )
+    durable_loss_counters_present = all(
+        field in snapshot
+        for field in drop_fields
+        for snapshot in (stats_before, stats_after)
+    )
     drop_deltas = {
         field: int(stats_after.get(field) or 0) - int(stats_before.get(field) or 0)
         for field in drop_fields
     }
     audit_healthy = (
-        stats_after.get("ledger_receipt_queue_durability") == "sqlite"
+        stats_before.get("ledger_receipt_queue_durability") == "sqlite"
+        and stats_before.get("ledger_memory_queue_durability") == "sqlite"
+        and stats_after.get("ledger_receipt_queue_durability") == "sqlite"
         and stats_after.get("ledger_memory_queue_durability") == "sqlite"
+        and stats_before.get("ledger_receipt_overflow_policy")
+        == DURABLE_QUEUE_OVERFLOW_POLICY
+        and stats_before.get("ledger_memory_overflow_policy")
+        == DURABLE_QUEUE_OVERFLOW_POLICY
+        and stats_after.get("ledger_receipt_overflow_policy")
+        == DURABLE_QUEUE_OVERFLOW_POLICY
+        and stats_after.get("ledger_memory_overflow_policy")
+        == DURABLE_QUEUE_OVERFLOW_POLICY
         and int(stats_after.get("ledger_receipt_pending") or 0) == 0
         and int(stats_after.get("ledger_memory_pending") or 0) == 0
         and int(stats_after.get("ledger_receipt_consecutive_failures") or 0) == 0
         and int(stats_after.get("ledger_memory_consecutive_failures") or 0) == 0
+        and durable_loss_counters_present
         and all(delta == 0 for delta in drop_deltas.values())
     )
     capacity_healthy = (
@@ -592,6 +614,16 @@ def build_staging_evidence(
         _gate("audit_delivery_healthy", audit_healthy and audit_brackets_window, {
             "window_bracketed": audit_brackets_window,
             "drop_deltas": drop_deltas,
+            "durable_loss_counters_present": durable_loss_counters_present,
+            "required_overflow_policy": DURABLE_QUEUE_OVERFLOW_POLICY,
+            "receipt_overflow_policy_before": stats_before.get(
+                "ledger_receipt_overflow_policy"),
+            "receipt_overflow_policy_after": stats_after.get(
+                "ledger_receipt_overflow_policy"),
+            "memory_overflow_policy_before": stats_before.get(
+                "ledger_memory_overflow_policy"),
+            "memory_overflow_policy_after": stats_after.get(
+                "ledger_memory_overflow_policy"),
             "receipt_pending": stats_after.get("ledger_receipt_pending"),
             "memory_pending": stats_after.get("ledger_memory_pending"),
         }),

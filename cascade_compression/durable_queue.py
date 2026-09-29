@@ -12,6 +12,9 @@ from pathlib import Path
 from typing import Iterable, List
 
 
+DURABLE_QUEUE_OVERFLOW_POLICY = "preserve_queued_reject_new"
+
+
 @dataclass(frozen=True)
 class QueueItem:
     sequence: int
@@ -20,7 +23,9 @@ class QueueItem:
 
 
 class DurableLedgerQueue:
-    """Bounded FIFO whose acknowledgement happens only after remote success."""
+    """Bounded FIFO that never deletes queued, undelivered records on overflow."""
+
+    overflow_policy = DURABLE_QUEUE_OVERFLOW_POLICY
 
     def __init__(self, path: str, *, max_pending: int, max_bytes: int = 0):
         if not path:
@@ -43,6 +48,16 @@ class DurableLedgerQueue:
                     payload_bytes INTEGER NOT NULL,
                     enqueued_at REAL NOT NULL
                 )"""
+            )
+            connection.execute(
+                """CREATE TABLE IF NOT EXISTS ledger_queue_meta (
+                    key TEXT PRIMARY KEY,
+                    value INTEGER NOT NULL
+                )"""
+            )
+            connection.execute(
+                """INSERT OR IGNORE INTO ledger_queue_meta(key, value)
+                   VALUES ('rejected_events', 0)"""
             )
             columns = {
                 row[1] for row in connection.execute(
@@ -68,6 +83,11 @@ class DurableLedgerQueue:
         return sqlite3.connect(self.path, timeout=10.0)
 
     def enqueue(self, events: Iterable[dict]) -> int:
+        """Persist the ordered prefix that fits and return the rejected count.
+
+        Existing rows are immutable until explicit acknowledgement. Once either bound is reached,
+        this method rejects the remaining new events instead of evicting older audit history.
+        """
         encoded = []
         for event in events:
             payload = json.dumps(event, sort_keys=True, separators=(",", ":"))
@@ -76,35 +96,34 @@ class DurableLedgerQueue:
             return 0
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
-            connection.executemany(
-                """INSERT INTO ledger_events(payload, payload_bytes, enqueued_at)
-                   VALUES (?, ?, ?)""",
-                encoded,
-            )
             count, total_bytes = connection.execute(
                 "SELECT COUNT(*), COALESCE(SUM(payload_bytes), 0) FROM ledger_events"
             ).fetchone()
-            count_overflow = max(0, count - self.max_pending)
-            byte_overflow = self.max_bytes and total_bytes > self.max_bytes
-            dropped = []
-            if count_overflow or byte_overflow:
-                rows = connection.execute(
-                    "SELECT sequence, payload_bytes FROM ledger_events ORDER BY sequence"
-                ).fetchall()
-                for sequence, payload_bytes in rows:
-                    if len(dropped) >= count_overflow and (
-                        not self.max_bytes or total_bytes <= self.max_bytes
-                    ):
-                        break
-                    dropped.append(sequence)
-                    total_bytes -= payload_bytes
-                placeholders = ",".join("?" for _ in dropped)
+            accepted = []
+            for item in encoded:
+                payload_bytes = item[1]
+                if count >= self.max_pending or (
+                    self.max_bytes and total_bytes + payload_bytes > self.max_bytes
+                ):
+                    break
+                accepted.append(item)
+                count += 1
+                total_bytes += payload_bytes
+            if accepted:
+                connection.executemany(
+                    """INSERT INTO ledger_events(payload, payload_bytes, enqueued_at)
+                       VALUES (?, ?, ?)""",
+                    accepted,
+                )
+            rejected = len(encoded) - len(accepted)
+            if rejected:
                 connection.execute(
-                    f"DELETE FROM ledger_events WHERE sequence IN ({placeholders})",
-                    dropped,
+                    """UPDATE ledger_queue_meta
+                       SET value = value + ? WHERE key = 'rejected_events'""",
+                    (rejected,),
                 )
             connection.commit()
-        return len(dropped)
+        return rejected
 
     def peek(self, limit: int) -> List[QueueItem]:
         if limit < 1:
@@ -150,6 +169,13 @@ class DurableLedgerQueue:
         with closing(self._connect()) as connection:
             return int(connection.execute(
                 "SELECT COALESCE(SUM(payload_bytes), 0) FROM ledger_events"
+            ).fetchone()[0])
+
+    def rejected_count(self) -> int:
+        """Return the durable cumulative count of capacity-rejected events."""
+        with closing(self._connect()) as connection:
+            return int(connection.execute(
+                "SELECT value FROM ledger_queue_meta WHERE key = 'rejected_events'"
             ).fetchone()[0])
 
     def storage_bytes(self) -> int:
