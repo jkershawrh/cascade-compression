@@ -18,7 +18,11 @@
         "quality_profile": {"const": "oss-rc-a-v1"}
       }
     },
-    "runtime": {"type": "object"},
+    "runtime": {
+      "type": "object",
+      "required": ["quality_profile", "cells", "errors", "cpu_allocation_verified"],
+      "properties": {"quality_profile": {"const": "oss-rc-runtime-v1"}}
+    },
     "audit": {"type": "object"},
     "artifact_digests": {
       "type": "object",

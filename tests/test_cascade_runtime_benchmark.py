@@ -134,6 +134,7 @@ def test_run_labels_measurement_semantics(monkeypatch):
     result = run(args)
 
     assert result["schema_version"] == 1
+    assert result["completed_at"] >= result["generated_at"]
     assert result["environment"]["label"] == "test"
     assert set(result["results"]) == {"nano"}
     assert "asynchronous" in result["semantics"]["http"]

@@ -50,9 +50,20 @@ per-core throughput. The request returns before any asynchronous LLM work.
 For publishable throughput, run the same revision in an **isolated** allocation
 with a pinned CPU quota, at least 100 warm-up batches and 500 measured batches.
 Record the exact image or commit, CPU model, quota, Python version, batch sizes,
-and raw JSON. The harness reports per-core throughput only when it detects a
+and raw JSON. The artifact records both start and completion timestamps so the staging gate can
+bind the complete benchmark to its declared audit window. The harness reports per-core throughput
+only when it detects a
 cgroup quota or you provide a verified `--cpu-cores` value. An unconstrained
 developer-laptop result is a smoke test, not a hardware comparison.
+
+The fixed `oss-rc-runtime-v1` staging profile requires 500 baseline samples/iterations, 100 warm-up
+runs, 500 mixed-route iterations, 100 mixed HTTP samples, and HTTP plus semantic concurrency of at
+least 8. It requires the nano batch-1, serial HTTP, mixed nano/HTTP, llm-d-sc normalized-hit and
+unique-miss, and recall-at-1K/10K cells. Conservative acceptance limits are: nano batch-1 p95 at
+most 5 ms and at least 1,000 signals/s/core; serial HTTP p95 at most 100 ms; mixed HTTP p95 at most
+1,000 ms per 100-signal batch; semantic cache-hit p95 at most 250 ms; semantic unique-miss p95 at
+most 2,000 ms; and recall p95 at most 50 ms at 1K and 250 ms at 10K memories. These are release
+policy thresholds, not universal hardware guarantees.
 
 Optional `--http-url` and `--sc-address` activate external tests. Point them
 only at benchmark services you own; do not benchmark a shared production

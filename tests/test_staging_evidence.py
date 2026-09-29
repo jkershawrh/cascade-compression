@@ -88,12 +88,57 @@ def inputs():
     runtime = {
         "schema_version": 1,
         "generated_at": "2026-09-01T00:30:00Z",
+        "completed_at": "2026-09-01T00:45:00Z",
         "environment": {
             "cpu_allocation_verified": True,
             "git_revision": COMMIT,
         },
-        "config": {"run_id": "runtime-run-1"},
-        "results": {"nano": [{"errors": 0}]},
+        "config": {
+            "run_id": "runtime-run-1", "iterations": 500, "samples": 500,
+            "warmup": 100, "mixed_iterations": 500,
+            "mixed_http_samples": 100,
+        },
+        "results": {
+            "nano": [{
+                "errors": 0, "samples": 500, "batch_size": 1,
+                "throughput_signals_per_second_per_core": 5000.0,
+                "latency_ms": {"p95": 1.0},
+            }],
+            "http": [
+                {"errors": 0, "samples": 500, "concurrency": 1,
+                 "latency_ms": {"p95": 20.0}},
+                {"errors": 0, "samples": 500, "concurrency": 8,
+                 "latency_ms": {"p95": 40.0}},
+            ],
+            "semantic": [
+                {"errors": 0, "samples": 500,
+                 "workload": "normalized_cache_hit", "concurrency": 1,
+                 "latency_ms": {"p95": 20.0}},
+                {"errors": 0, "samples": 500,
+                 "workload": "normalized_cache_hit", "concurrency": 8,
+                 "latency_ms": {"p95": 50.0}},
+                {"errors": 0, "samples": 500,
+                 "workload": "unique_cache_miss", "concurrency": 1,
+                 "latency_ms": {"p95": 500.0}},
+                {"errors": 0, "samples": 500,
+                 "workload": "unique_cache_miss", "concurrency": 8,
+                 "latency_ms": {"p95": 900.0}},
+            ],
+            "mixed_nano": {
+                "errors": 0, "samples": 500, "survivor_oracle_passed": True,
+                "latency_ms": {"p95": 20.0},
+            },
+            "mixed_http": {
+                "errors": 0, "samples": 100, "survivor_oracle_passed": True,
+                "latency_ms": {"p95": 200.0},
+            },
+            "recall": [
+                {"errors": 0, "samples": 500, "memory_count": 1000,
+                 "recall_oracle_passed": True, "latency_ms": {"p95": 10.0}},
+                {"errors": 0, "samples": 500, "memory_count": 10000,
+                 "recall_oracle_passed": True, "latency_ms": {"p95": 100.0}},
+            ],
+        },
     }
     stats = {
         "ledger_writes_dropped": 10,
@@ -212,3 +257,52 @@ def test_missing_supply_chain_evidence_is_incomplete():
         manifest, classification, runtime, before, after,
     )
     assert "supply_chain_evidence" in report["failed_gates"]
+
+
+def test_missing_semantic_runtime_cells_cannot_pass_a_profile():
+    manifest, classification, runtime, before, after = inputs()
+    runtime["results"]["semantic"] = []
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "runtime_oss_rc_a_profile" in report["failed_gates"]
+    json.dumps(report, allow_nan=False)
+
+
+def test_slow_runtime_cell_cannot_pass_a_profile():
+    manifest, classification, runtime, before, after = inputs()
+    runtime["results"]["recall"][1]["latency_ms"]["p95"] = 500.0
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "runtime_oss_rc_a_profile" in report["failed_gates"]
+
+
+def test_each_external_path_requires_parallel_measurement():
+    manifest, classification, runtime, before, after = inputs()
+    runtime["results"]["semantic"] = [
+        cell for cell in runtime["results"]["semantic"]
+        if cell["concurrency"] == 1
+    ]
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "runtime_oss_rc_a_profile" in report["failed_gates"]
+
+
+def test_undersampled_runtime_cell_cannot_pass_a_profile():
+    manifest, classification, runtime, before, after = inputs()
+    runtime["results"]["semantic"][0]["samples"] = 10
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "runtime_oss_rc_a_profile" in report["failed_gates"]
+
+
+def test_benchmark_must_complete_inside_declared_window():
+    manifest, classification, runtime, before, after = inputs()
+    runtime["completed_at"] = "2026-09-01T01:30:00Z"
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "runtime_reproducible" in report["failed_gates"]

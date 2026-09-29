@@ -569,6 +569,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
         "system_cpu_seconds": round(usage_after.ru_stime - usage_before.ru_stime, 6),
         "max_rss_kib": usage_after.ru_maxrss,
     }
+    result["completed_at"] = datetime.now(timezone.utc).isoformat()
     return result
 
 

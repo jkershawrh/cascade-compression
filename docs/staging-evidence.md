@@ -31,6 +31,9 @@ The command returns zero only for `staging_success`. It requires:
 - zero authoritative dangerous misses;
 - measured calibration;
 - a CPU allocation and commit-bound runtime benchmark with no errors;
+- the fixed `oss-rc-runtime-v1` profile, including nano throughput/tail latency, HTTP request-path
+  latency, mixed route oracles, llm-d-sc cache-hit and unique-miss overhead at serial and parallel
+  load, and exact-precedent recall at 1K and 10K memories;
 - durable, drained audit queues with no new drops;
 - ledger capacity below its declared alert threshold;
 - a healthy, drained ledger-owned outbox with an explicit lifecycle policy;

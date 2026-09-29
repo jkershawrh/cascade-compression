@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 from datetime import datetime
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Optional
 
 from .evaluation import REQUIRED_RUN_FIELDS, run_identity_errors
 
@@ -21,6 +22,24 @@ OSS_RC_A_PROFILE = {
     "minimum_authoritative_suppression_precision": 0.98,
     "minimum_calibration_coverage": 0.95,
     "maximum_expected_calibration_error": 0.10,
+}
+
+OSS_RC_RUNTIME_PROFILE = {
+    "minimum_iterations": 500,
+    "minimum_samples": 500,
+    "minimum_warmup": 100,
+    "minimum_mixed_iterations": 500,
+    "minimum_mixed_http_samples": 100,
+    "minimum_parallel_concurrency": 8,
+    "minimum_cell_samples": 500,
+    "minimum_nano_signals_per_second_per_core": 1000.0,
+    "maximum_nano_batch_1_p95_ms": 5.0,
+    "maximum_http_concurrency_1_p95_ms": 100.0,
+    "maximum_mixed_http_p95_ms": 1000.0,
+    "maximum_semantic_cache_hit_p95_ms": 250.0,
+    "maximum_semantic_unique_miss_p95_ms": 2000.0,
+    "maximum_recall_1000_p95_ms": 50.0,
+    "maximum_recall_10000_p95_ms": 250.0,
 }
 
 
@@ -46,6 +65,30 @@ def _runtime_cells(runtime: dict) -> Iterable[dict]:
 
 def _gate(name: str, passed: bool, evidence: Any) -> dict:
     return {"name": name, "passed": bool(passed), "evidence": evidence}
+
+
+def _matching_cell(cells: Iterable[dict], **criteria: Any) -> dict:
+    return next((
+        cell for cell in cells
+        if all(cell.get(key) == value for key, value in criteria.items())
+    ), {})
+
+
+def _p95(cell: dict) -> Optional[float]:
+    try:
+        value = float((cell.get("latency_ms") or {}).get("p95"))
+    except (TypeError, ValueError):
+        return None
+    return value if math.isfinite(value) and value >= 0 else None
+
+
+def _within_p95(cell: dict, maximum: float) -> bool:
+    value = _p95(cell)
+    return value is not None and value <= maximum
+
+
+def _samples_at_least(cell: dict, minimum: int) -> bool:
+    return int(cell.get("samples") or 0) >= minimum
 
 
 def build_staging_evidence(
@@ -130,14 +173,107 @@ def build_staging_evidence(
         for key, value in cell.items()
         if key.endswith("_oracle_passed")
     )
+    results = runtime.get("results") or {}
+    nano_cells = results.get("nano") if isinstance(results.get("nano"), list) else []
+    http_cells = results.get("http") if isinstance(results.get("http"), list) else []
+    semantic_cells = (
+        results.get("semantic") if isinstance(results.get("semantic"), list) else []
+    )
+    recall_cells = (
+        results.get("recall") if isinstance(results.get("recall"), list) else []
+    )
+    nano_1 = _matching_cell(nano_cells, batch_size=1)
+    http_1 = _matching_cell(http_cells, concurrency=1)
+    semantic_hit_1 = _matching_cell(
+        semantic_cells, workload="normalized_cache_hit", concurrency=1,
+    )
+    semantic_miss_1 = _matching_cell(
+        semantic_cells, workload="unique_cache_miss", concurrency=1,
+    )
+    recall_1000 = _matching_cell(recall_cells, memory_count=1000)
+    recall_10000 = _matching_cell(recall_cells, memory_count=10000)
+    mixed_nano = results.get("mixed_nano") or {}
+    mixed_http = results.get("mixed_http") or {}
+    http_parallel = max(
+        [int(cell.get("concurrency") or 0) for cell in http_cells], default=0,
+    )
+    semantic_hit_parallel = max([
+        int(cell.get("concurrency") or 0) for cell in semantic_cells
+        if cell.get("workload") == "normalized_cache_hit"
+    ], default=0)
+    semantic_miss_parallel = max([
+        int(cell.get("concurrency") or 0) for cell in semantic_cells
+        if cell.get("workload") == "unique_cache_miss"
+    ], default=0)
+    parallel_concurrency = min(
+        http_parallel, semantic_hit_parallel, semantic_miss_parallel,
+    )
+    http_parallel_cell = _matching_cell(http_cells, concurrency=http_parallel)
+    semantic_hit_parallel_cell = _matching_cell(
+        semantic_cells,
+        workload="normalized_cache_hit", concurrency=semantic_hit_parallel,
+    )
+    semantic_miss_parallel_cell = _matching_cell(
+        semantic_cells,
+        workload="unique_cache_miss", concurrency=semantic_miss_parallel,
+    )
+    runtime_profile = OSS_RC_RUNTIME_PROFILE
+    runtime_profile_passed = (
+        int(runtime_config.get("iterations") or 0)
+        >= runtime_profile["minimum_iterations"]
+        and int(runtime_config.get("samples") or 0)
+        >= runtime_profile["minimum_samples"]
+        and int(runtime_config.get("warmup") or 0)
+        >= runtime_profile["minimum_warmup"]
+        and int(runtime_config.get("mixed_iterations") or 0)
+        >= runtime_profile["minimum_mixed_iterations"]
+        and int(runtime_config.get("mixed_http_samples") or 0)
+        >= runtime_profile["minimum_mixed_http_samples"]
+        and parallel_concurrency >= runtime_profile["minimum_parallel_concurrency"]
+        and bool(nano_1) and bool(http_1)
+        and bool(semantic_hit_1) and bool(semantic_miss_1)
+        and bool(mixed_nano) and bool(mixed_http)
+        and bool(recall_1000) and bool(recall_10000)
+        and all(_samples_at_least(cell, runtime_profile["minimum_cell_samples"])
+                for cell in (
+                    nano_1, http_1, http_parallel_cell,
+                    semantic_hit_1, semantic_hit_parallel_cell,
+                    semantic_miss_1, semantic_miss_parallel_cell,
+                    mixed_nano, recall_1000, recall_10000,
+                ))
+        and _samples_at_least(
+            mixed_http, runtime_profile["minimum_mixed_http_samples"],
+        )
+        and float(nano_1.get("throughput_signals_per_second_per_core") or 0)
+        >= runtime_profile["minimum_nano_signals_per_second_per_core"]
+        and _within_p95(nano_1, runtime_profile["maximum_nano_batch_1_p95_ms"])
+        and _within_p95(http_1, runtime_profile["maximum_http_concurrency_1_p95_ms"])
+        and _within_p95(mixed_http, runtime_profile["maximum_mixed_http_p95_ms"])
+        and _within_p95(
+            semantic_hit_1,
+            runtime_profile["maximum_semantic_cache_hit_p95_ms"],
+        )
+        and _within_p95(
+            semantic_miss_1,
+            runtime_profile["maximum_semantic_unique_miss_p95_ms"],
+        )
+        and _within_p95(
+            recall_1000, runtime_profile["maximum_recall_1000_p95_ms"],
+        )
+        and _within_p95(
+            recall_10000, runtime_profile["maximum_recall_10000_p95_ms"],
+        )
+    )
 
     verification = manifest.get("verification") or {}
     audit_window = manifest.get("audit_window") or {}
     try:
         run_start = _parse_time(run["window_start"])
         run_end = _parse_time(run["window_end"])
+        benchmark_started = _parse_time(runtime.get("generated_at", ""))
+        benchmark_completed = _parse_time(runtime.get("completed_at", ""))
         runtime_in_window = (
-            run_start <= _parse_time(runtime.get("generated_at", "")) <= run_end
+            run_start <= benchmark_started <= benchmark_completed <= run_end
         )
         audit_brackets_window = (
             _parse_time(audit_window.get("stats_before_at", "")) <= run_start
@@ -245,6 +381,28 @@ def build_staging_evidence(
             "cells": len(cells), "errors": runtime_errors,
             "oracle_failures": oracle_failures,
         }),
+        _gate("runtime_oss_rc_a_profile", runtime_profile_passed, {
+            "profile": "oss-rc-runtime-v1",
+            "thresholds": runtime_profile,
+            "observed": {
+                "iterations": runtime_config.get("iterations"),
+                "samples": runtime_config.get("samples"),
+                "warmup": runtime_config.get("warmup"),
+                "mixed_iterations": runtime_config.get("mixed_iterations"),
+                "mixed_http_samples": runtime_config.get("mixed_http_samples"),
+                "parallel_concurrency": parallel_concurrency,
+                "nano_per_core": nano_1.get(
+                    "throughput_signals_per_second_per_core"
+                ),
+                "nano_p95_ms": _p95(nano_1),
+                "http_p95_ms": _p95(http_1),
+                "mixed_http_p95_ms": _p95(mixed_http),
+                "semantic_cache_hit_p95_ms": _p95(semantic_hit_1),
+                "semantic_unique_miss_p95_ms": _p95(semantic_miss_1),
+                "recall_1000_p95_ms": _p95(recall_1000),
+                "recall_10000_p95_ms": _p95(recall_10000),
+            },
+        }),
         _gate("audit_delivery_healthy", audit_healthy and audit_brackets_window, {
             "window_bracketed": audit_brackets_window,
             "drop_deltas": drop_deltas,
@@ -310,6 +468,7 @@ def build_staging_evidence(
             "calibration": arm.get("calibration"),
         },
         "runtime": {
+            "quality_profile": "oss-rc-runtime-v1",
             "cells": len(cells),
             "errors": runtime_errors,
             "cpu_allocation_verified": runtime_environment.get(
