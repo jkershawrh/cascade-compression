@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cascade-compression.org/contracts/cascade.staging-manifest/1.0.0-alpha.1",
+  "$id": "https://cascade-compression.org/contracts/cascade.staging-manifest/1.0.0-alpha.2",
   "title": "Cascade Staging Manifest",
   "type": "object",
-  "required": ["schema_version", "run", "classification_arm", "model_revisions", "runtime_run_id", "audit_window", "ledger", "verification"],
+  "required": ["schema_version", "run", "candidate", "classification_arm", "model_revisions", "runtime_run_id", "audit_window", "ledger", "verification"],
   "properties": {
-    "schema_version": {"const": "cascade.staging-manifest.v1alpha1"},
+    "schema_version": {"const": "cascade.staging-manifest.v1alpha2"},
     "run": {
       "type": "object",
       "required": ["commit", "image_digest", "config_digest", "taxonomy_revision", "window_start", "window_end"],
@@ -16,6 +16,29 @@
         "taxonomy_revision": {"type": "string", "minLength": 1},
         "window_start": {"type": "string", "format": "date-time"},
         "window_end": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "candidate": {
+      "type": "object",
+      "required": ["schema_version", "repository", "commit", "image", "image_digest", "workflow_run_id", "workflow_run_attempt", "generated_at", "multi_arch", "sbom", "provenance"],
+      "properties": {
+        "schema_version": {"const": "cascade.staging-candidate.v1alpha1"},
+        "repository": {"type": "string", "minLength": 1},
+        "commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "image": {"type": "string", "minLength": 1},
+        "image_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "workflow_run_id": {"type": "string", "pattern": "^[1-9][0-9]*$"},
+        "workflow_run_attempt": {"type": "integer", "minimum": 1},
+        "generated_at": {"type": "string", "format": "date-time"},
+        "multi_arch": {
+          "type": "array",
+          "items": {"type": "string"},
+          "minItems": 2,
+          "uniqueItems": true
+        },
+        "sbom": {"const": true},
+        "provenance": {"const": true}
       },
       "additionalProperties": false
     },

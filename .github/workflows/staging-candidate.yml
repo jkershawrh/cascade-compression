@@ -77,7 +77,9 @@ jobs:
           CANDIDATE_COMMIT: ${{ github.sha }}
           CANDIDATE_IMAGE: ghcr.io/${{ github.repository }}
           CANDIDATE_DIGEST: ${{ steps.push.outputs.digest }}
+          CANDIDATE_REPOSITORY: ${{ github.repository }}
           CANDIDATE_RUN_ID: ${{ github.run_id }}
+          CANDIDATE_RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           python - <<'PY'
           import json
@@ -86,10 +88,12 @@ jobs:
 
           manifest = {
               "schema_version": "cascade.staging-candidate.v1alpha1",
+              "repository": os.environ["CANDIDATE_REPOSITORY"],
               "commit": os.environ["CANDIDATE_COMMIT"],
               "image": os.environ["CANDIDATE_IMAGE"],
               "image_digest": os.environ["CANDIDATE_DIGEST"],
               "workflow_run_id": os.environ["CANDIDATE_RUN_ID"],
+              "workflow_run_attempt": int(os.environ["CANDIDATE_RUN_ATTEMPT"]),
               "generated_at": datetime.now(timezone.utc).isoformat(),
               "multi_arch": ["linux/amd64", "linux/arm64"],
               "sbom": True,

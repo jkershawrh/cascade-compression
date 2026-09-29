@@ -71,8 +71,21 @@ def inputs():
         "records": records,
     })
     manifest = {
-        "schema_version": "cascade.staging-manifest.v1alpha1",
+        "schema_version": "cascade.staging-manifest.v1alpha2",
         "run": run,
+        "candidate": {
+            "schema_version": "cascade.staging-candidate.v1alpha1",
+            "repository": "example/cascade-compression",
+            "commit": COMMIT,
+            "image": "ghcr.io/example/cascade-compression",
+            "image_digest": IMAGE,
+            "workflow_run_id": "123456",
+            "workflow_run_attempt": 1,
+            "generated_at": "2026-08-31T23:30:00Z",
+            "multi_arch": ["linux/amd64", "linux/arm64"],
+            "sbom": True,
+            "provenance": True,
+        },
         "classification_arm": "hybrid",
         "model_revisions": {
             "generative": "generative-v1",
@@ -266,6 +279,15 @@ def test_artifact_from_different_commit_is_rejected():
         manifest, classification, runtime, before, after,
     )
     assert "classification_same_run" in report["failed_gates"]
+
+
+def test_candidate_manifest_must_match_tested_image():
+    manifest, classification, runtime, before, after = inputs()
+    manifest["candidate"]["image_digest"] = "sha256:" + "d" * 64
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "candidate_artifact_bound" in report["failed_gates"]
 
 
 def test_malformed_manifest_identity_is_rejected():

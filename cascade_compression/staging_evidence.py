@@ -93,6 +93,13 @@ def _samples_at_least(cell: dict, minimum: int) -> bool:
     return int(cell.get("samples") or 0) >= minimum
 
 
+def _positive_int(value: Any) -> bool:
+    try:
+        return int(value) > 0
+    except (TypeError, ValueError):
+        return False
+
+
 def build_staging_evidence(
     manifest: Dict[str, Any],
     classification: Dict[str, Any],
@@ -101,7 +108,7 @@ def build_staging_evidence(
     stats_after: Dict[str, Any],
 ) -> dict:
     """Bind sanitized artifacts and apply explicit release-proof gates."""
-    if manifest.get("schema_version") != "cascade.staging-manifest.v1alpha1":
+    if manifest.get("schema_version") != "cascade.staging-manifest.v1alpha2":
         raise ValueError("unsupported staging manifest version")
     if classification.get("schema_version") != "cascade.classification-evaluation.v1alpha1":
         raise ValueError("classification artifact has an unsupported version")
@@ -132,6 +139,28 @@ def build_staging_evidence(
     model_revisions = manifest.get("model_revisions") or {}
     classification_models = classification.get("model_revisions") or {}
     models_frozen = bool(model_revisions) and classification_models == model_revisions
+    candidate = manifest.get("candidate") or {}
+    candidate_bound = (
+        candidate.get("schema_version")
+        == "cascade.staging-candidate.v1alpha1"
+        and bool(candidate.get("repository"))
+        and bool(candidate.get("image"))
+        and candidate.get("commit") == run.get("commit")
+        and candidate.get("image_digest") == run.get("image_digest")
+        and _positive_int(candidate.get("workflow_run_id"))
+        and _positive_int(candidate.get("workflow_run_attempt"))
+        and candidate.get("sbom") is True
+        and candidate.get("provenance") is True
+        and {"linux/amd64", "linux/arm64"}
+        <= set(candidate.get("multi_arch") or [])
+    )
+    try:
+        candidate_precedes_run = (
+            _parse_time(candidate.get("generated_at", ""))
+            <= _parse_time(run.get("window_start", ""))
+        )
+    except (TypeError, ValueError):
+        candidate_precedes_run = False
     pairwise = classification.get("pairwise_agreement") or {}
     required_pairs = {
         "generative__hybrid", "generative__semantic", "hybrid__semantic",
@@ -346,6 +375,22 @@ def build_staging_evidence(
             "missing_fields": missing_run, "invalid_fields": invalid_run,
             "positive_window": positive_window,
         }),
+        _gate("candidate_artifact_bound", (
+            candidate_bound and candidate_precedes_run
+        ), {
+            "schema_version": candidate.get("schema_version"),
+            "repository": candidate.get("repository"),
+            "commit_matches": candidate.get("commit") == run.get("commit"),
+            "image_digest_matches": (
+                candidate.get("image_digest") == run.get("image_digest")
+            ),
+            "workflow_run_id": candidate.get("workflow_run_id"),
+            "workflow_run_attempt": candidate.get("workflow_run_attempt"),
+            "candidate_precedes_run": candidate_precedes_run,
+            "multi_arch": candidate.get("multi_arch"),
+            "sbom": candidate.get("sbom"),
+            "provenance": candidate.get("provenance"),
+        }),
         _gate("classification_same_run", run_matches, {
             "arm": classification_arm,
             "dataset_digest": (classification.get("dataset") or {}).get("digest"),
@@ -521,6 +566,7 @@ def build_staging_evidence(
             "outbox_pending": outbox.get("pending"),
         },
         "artifact_digests": {
+            "candidate": _digest(candidate),
             "classification": _digest(classification),
             "runtime": _digest(runtime),
             "stats_before": _digest(stats_before),

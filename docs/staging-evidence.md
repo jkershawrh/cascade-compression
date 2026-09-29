@@ -14,10 +14,13 @@ cascade-stage-evidence \
   --output staging-evidence.json
 ```
 
-The manifest uses `cascade.staging-manifest.v1alpha1` and declares the exact commit, image digest,
+The manifest uses `cascade.staging-manifest.v1alpha2` and declares the exact commit, image digest,
 configuration digest, taxonomy revision, frozen model revisions, runtime run ID, an audit snapshot
-window that brackets the run, release verification, and ledger health. It must include a healthy,
-capacity-monitored ledger outbox with a declared policy;
+window that brackets the run, the complete candidate manifest downloaded from the manual staging
+workflow, release verification, and ledger health. The candidate manifest must identify the same
+commit and immutable image digest, predate the test window, and attest both target architectures,
+SBOM, and provenance. The staging manifest must also include a healthy, capacity-monitored ledger
+outbox with a declared policy;
 deleting pending rows is not accepted as a recovery policy.
 
 The command returns zero only for `staging_success`. It requires:
