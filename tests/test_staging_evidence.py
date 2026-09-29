@@ -73,7 +73,7 @@ def inputs():
         "records": records,
     })
     manifest = {
-        "schema_version": "cascade.staging-manifest.v1alpha2",
+        "schema_version": "cascade.staging-manifest.v1alpha3",
         "run": run,
         "candidate": {
             "schema_version": "cascade.staging-candidate.v1alpha1",
@@ -103,7 +103,18 @@ def inputs():
             "capacity_measured": True,
             "used_fraction": 0.4,
             "alert_threshold": 0.8,
-            "outbox": {"status": "healthy", "pending": 0, "policy": "relay-and-archive"},
+            "outbox": {
+                "status": "healthy",
+                "pending": 0,
+                "inflight": 0,
+                "failed": 0,
+                "oldest_pending_seconds": 0,
+                "policy": "immutable-relay-and-archive-v1",
+                "archive_verified": True,
+                "undelivered_deleted": 0,
+                "last_relay_success_at": "2026-09-01T00:50:00Z",
+                "recovery_drill_at": "2026-08-15T00:00:00Z",
+            },
         },
         "verification": {
             "clean_clone_passed": True,
@@ -286,6 +297,26 @@ def test_sparse_confidence_values_cannot_pass_calibration_gate():
 def test_stale_outbox_blocks_staging_success():
     manifest, classification, runtime, before, after = inputs()
     manifest["ledger"]["outbox"].update({"status": "stalled", "pending": 50})
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "ledger_outbox_healthy" in report["failed_gates"]
+
+
+def test_destructive_outbox_policy_blocks_staging_success():
+    manifest, classification, runtime, before, after = inputs()
+    manifest["ledger"]["outbox"].update({
+        "policy": "delete-stale-rows", "undelivered_deleted": 50,
+    })
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "ledger_outbox_healthy" in report["failed_gates"]
+
+
+def test_stale_recovery_drill_blocks_staging_success():
+    manifest, classification, runtime, before, after = inputs()
+    manifest["ledger"]["outbox"]["recovery_drill_at"] = "2025-01-01T00:00:00Z"
     report = build_staging_evidence(
         manifest, classification, runtime, before, after,
     )

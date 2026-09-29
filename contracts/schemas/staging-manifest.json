@@ -1,11 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://cascade-compression.org/contracts/cascade.staging-manifest/1.0.0-alpha.2",
+  "$id": "https://cascade-compression.org/contracts/cascade.staging-manifest/1.0.0-alpha.3",
   "title": "Cascade Staging Manifest",
   "type": "object",
   "required": ["schema_version", "run", "candidate", "classification_arm", "model_revisions", "runtime_run_id", "audit_window", "ledger", "verification"],
   "properties": {
-    "schema_version": {"const": "cascade.staging-manifest.v1alpha2"},
+    "schema_version": {"const": "cascade.staging-manifest.v1alpha3"},
     "run": {
       "type": "object",
       "required": ["commit", "image_digest", "config_digest", "taxonomy_revision", "window_start", "window_end"],
@@ -67,11 +67,18 @@
         "alert_threshold": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
         "outbox": {
           "type": "object",
-          "required": ["status", "pending", "policy"],
+          "required": ["status", "pending", "inflight", "failed", "oldest_pending_seconds", "policy", "archive_verified", "undelivered_deleted", "last_relay_success_at", "recovery_drill_at"],
           "properties": {
-            "status": {"type": "string"},
+            "status": {"enum": ["healthy", "recovering", "stalled"]},
             "pending": {"type": "integer", "minimum": 0},
-            "policy": {"type": "string", "minLength": 1}
+            "inflight": {"type": "integer", "minimum": 0},
+            "failed": {"type": "integer", "minimum": 0},
+            "oldest_pending_seconds": {"type": "number", "minimum": 0},
+            "policy": {"const": "immutable-relay-and-archive-v1"},
+            "archive_verified": {"type": "boolean"},
+            "undelivered_deleted": {"type": "integer", "minimum": 0},
+            "last_relay_success_at": {"type": "string", "format": "date-time"},
+            "recovery_drill_at": {"type": "string", "format": "date-time"}
           },
           "additionalProperties": false
         }

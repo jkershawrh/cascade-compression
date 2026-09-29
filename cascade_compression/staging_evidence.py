@@ -45,6 +45,9 @@ OSS_RC_RUNTIME_PROFILE = {
     "maximum_recall_10000_p95_ms": 250.0,
 }
 
+OUTBOX_POLICY = "immutable-relay-and-archive-v1"
+MAX_RECOVERY_DRILL_AGE_SECONDS = 90 * 24 * 60 * 60
+
 
 def _digest(document: Dict[str, Any]) -> str:
     canonical = json.dumps(document, sort_keys=True, separators=(",", ":"))
@@ -117,7 +120,7 @@ def build_staging_evidence(
     stats_after: Dict[str, Any],
 ) -> dict:
     """Bind sanitized artifacts and apply explicit release-proof gates."""
-    if manifest.get("schema_version") != "cascade.staging-manifest.v1alpha2":
+    if manifest.get("schema_version") != "cascade.staging-manifest.v1alpha3":
         raise ValueError("unsupported staging manifest version")
     if classification.get("schema_version") != "cascade.classification-evaluation.v1alpha2":
         raise ValueError("classification artifact has an unsupported version")
@@ -393,10 +396,29 @@ def build_staging_evidence(
         and 0 <= float(ledger.get("used_fraction", 2))
         < float(ledger.get("alert_threshold", 0)) <= 1
     )
+    try:
+        relay_success = _parse_time(outbox.get("last_relay_success_at", ""))
+        recovery_drill = _parse_time(outbox.get("recovery_drill_at", ""))
+        stats_before_at = _parse_time(audit_window.get("stats_before_at", ""))
+        stats_after_at = _parse_time(audit_window.get("stats_after_at", ""))
+        outbox_times_healthy = (
+            stats_before_at <= relay_success <= stats_after_at
+            and recovery_drill <= run_start
+            and 0 <= (run_start - recovery_drill).total_seconds()
+            <= MAX_RECOVERY_DRILL_AGE_SECONDS
+        )
+    except (TypeError, ValueError, UnboundLocalError):
+        outbox_times_healthy = False
     outbox_healthy = (
         outbox.get("status") == "healthy"
+        and outbox.get("policy") == OUTBOX_POLICY
         and int(outbox.get("pending") or 0) == 0
-        and bool(outbox.get("policy"))
+        and int(outbox.get("inflight") or 0) == 0
+        and int(outbox.get("failed") or 0) == 0
+        and float(outbox.get("oldest_pending_seconds") or 0) == 0
+        and outbox.get("archive_verified") is True
+        and int(outbox.get("undelivered_deleted") or 0) == 0
+        and outbox_times_healthy
     )
 
     gates = [
@@ -550,7 +572,16 @@ def build_staging_evidence(
         }),
         _gate("ledger_outbox_healthy", outbox_healthy, {
             "status": outbox.get("status"), "pending": outbox.get("pending"),
-            "policy_declared": bool(outbox.get("policy")),
+            "inflight": outbox.get("inflight"),
+            "failed": outbox.get("failed"),
+            "oldest_pending_seconds": outbox.get("oldest_pending_seconds"),
+            "policy": outbox.get("policy"),
+            "required_policy": OUTBOX_POLICY,
+            "archive_verified": outbox.get("archive_verified"),
+            "undelivered_deleted": outbox.get("undelivered_deleted"),
+            "last_relay_success_at": outbox.get("last_relay_success_at"),
+            "recovery_drill_at": outbox.get("recovery_drill_at"),
+            "timing_verified": outbox_times_healthy,
         }),
         _gate("clean_clone_verified", (
             verification.get("clean_clone_passed") is True
