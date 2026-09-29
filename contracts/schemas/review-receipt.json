@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cascade-compression.org/contracts/cascade.review-receipt/1.0.0-alpha.1",
+  "title": "Cascade Independent Review Receipt",
+  "type": "object",
+  "required": [
+    "schema_version", "case_id", "signal_sha256", "actionability",
+    "classification", "expected_memory", "source", "source_record_ref",
+    "rationale", "reviewer_ref", "reviewed_at",
+    "independent_of_evaluated_arms", "evidence_ref"
+  ],
+  "properties": {
+    "schema_version": {"const": "cascade.review-receipt.v1alpha1"},
+    "case_id": {"type": "string", "minLength": 1},
+    "signal_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "actionability": {"enum": ["actionable", "suppressible"]},
+    "classification": {
+      "enum": ["routine_noise", "known_pattern", "needs_attention", "real_incident"]
+    },
+    "expected_memory": {"type": "boolean"},
+    "source": {"enum": ["independent_human_review", "authoritative_record"]},
+    "source_record_ref": {"type": ["string", "null"]},
+    "rationale": {"type": "string", "minLength": 1},
+    "reviewer_ref": {"type": "string", "minLength": 1},
+    "reviewed_at": {"type": "string", "format": "date-time"},
+    "independent_of_evaluated_arms": {"const": true},
+    "evidence_ref": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"classification": {"enum": ["needs_attention", "real_incident"]}}},
+      "then": {"properties": {"actionability": {"const": "actionable"}}},
+      "else": {"properties": {"actionability": {"const": "suppressible"}}}
+    },
+    {
+      "if": {"properties": {"classification": {"const": "known_pattern"}}},
+      "then": {
+        "properties": {
+          "source": {"const": "authoritative_record"},
+          "source_record_ref": {"type": "string", "minLength": 1}
+        }
+      }
+    }
+  ],
+  "additionalProperties": false
+}

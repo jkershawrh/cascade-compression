@@ -45,6 +45,8 @@ def _parse_time(value: Any, label: str) -> datetime:
 
 
 def _validate_receipt(receipt: dict) -> datetime:
+    if receipt.get("schema_version") != "cascade.review-receipt.v1alpha1":
+        raise ValueError("review receipt has an unsupported schema version")
     classification = receipt.get("classification")
     actionability = receipt.get("actionability")
     if classification not in CASCADE_LABELS:

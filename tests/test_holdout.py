@@ -123,6 +123,7 @@ def test_holdout_digest_binds_to_adjudication_summary():
         result = []
         for row in corpus:
             receipt = {
+                "schema_version": "cascade.review-receipt.v1alpha1",
                 "case_id": row["case_id"],
                 "signal_sha256": row["signal_sha256"],
                 "actionability": "actionable",

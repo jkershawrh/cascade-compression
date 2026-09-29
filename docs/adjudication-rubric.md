@@ -25,8 +25,8 @@ actionable. The adjudicator rejects a receipt whose label and actionability conf
 
 ## Evidence requirements
 
-- Every receipt records the exact frozen signal digest, reviewer reference, UTC review time,
-  rationale, truth source, and evidence digest.
+- Every receipt declares `cascade.review-receipt.v1alpha1` and records the exact frozen signal
+  digest, reviewer reference, UTC review time, rationale, truth source, and evidence digest.
 - `known_pattern` must use `source: authoritative_record` and a non-empty `source_record_ref`. If no
   authoritative record exists, it is not release-grade `known_pattern` truth.
 - `independent_human_review` may support the other labels. Use `authoritative_record` whenever a

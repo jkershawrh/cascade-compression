@@ -29,6 +29,7 @@ def reviews(reviewer, overrides=None):
         label = overrides.get(index, label)
         authoritative = label == "known_pattern"
         receipt = {
+            "schema_version": "cascade.review-receipt.v1alpha1",
             "case_id": f"case-{index}",
             "signal_sha256": signal_digest(index),
             "actionability": (
@@ -82,8 +83,13 @@ def evidence_digest(receipt):
 
 
 def test_two_complete_independent_reviews_form_ground_truth():
+    first = reviews("reviewer-a")
+    jsonschema.validate(
+        first[0],
+        json.loads(contract_schema("cascade.review-receipt").read_text()),
+    )
     merged, summary, unresolved = merge_independent_reviews(
-        corpus(), reviews("reviewer-a"), reviews("reviewer-b"),
+        corpus(), first, reviews("reviewer-b"),
         holdout_manifest=holdout_manifest(),
     )
     assert summary["status"] == "complete"
@@ -190,6 +196,19 @@ def test_review_receipt_evidence_digest_must_match_contents():
     first = reviews("reviewer-a")
     first[0]["rationale"] = "Changed after the receipt was signed."
     with pytest.raises(ValueError, match="evidence digest does not match"):
+        merge_independent_reviews(
+            corpus(), first, reviews("reviewer-b"),
+            holdout_manifest=holdout_manifest(),
+        )
+
+
+def test_review_receipt_requires_versioned_contract():
+    first = reviews("reviewer-a")
+    first[0].pop("schema_version")
+    first[0]["evidence_ref"] = evidence_digest({
+        key: value for key, value in first[0].items() if key != "evidence_ref"
+    })
+    with pytest.raises(ValueError, match="unsupported schema version"):
         merge_independent_reviews(
             corpus(), first, reviews("reviewer-b"),
             holdout_manifest=holdout_manifest(),
