@@ -97,3 +97,21 @@ def test_release_publication_is_gated_by_verified_package_and_container():
     assert "gh release create" not in container_steps
     assert "gh release create" in release_steps
     assert "release-artifact-manifest.json" in release_steps
+
+
+def test_candidate_manifest_is_attested_before_upload():
+    workflow = yaml.safe_load(
+        (ROOT / ".github" / "workflows" / "staging-candidate.yml").read_text()
+    )
+    steps = workflow["jobs"]["container"]["steps"]
+    names = [step.get("name", "") for step in steps]
+    write_index = names.index("Write immutable candidate manifest")
+    attest_index = names.index("Attest immutable candidate manifest")
+    upload_index = next(
+        index for index, step in enumerate(steps)
+        if str(step.get("uses", "")).startswith("actions/upload-artifact@")
+    )
+    assert write_index < attest_index < upload_index
+    workflow_text = (ROOT / ".github" / "workflows" / "staging-candidate.yml").read_text()
+    assert '"schema_version": "cascade.staging-candidate.v1alpha3"' in workflow_text
+    assert '"manifest_provenance": True' in workflow_text

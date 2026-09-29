@@ -130,7 +130,7 @@ jobs:
           assert any(item["name"].endswith(".spdx.json") for item in package_artifacts)
 
           manifest = {
-              "schema_version": "cascade.staging-candidate.v1alpha2",
+              "schema_version": "cascade.staging-candidate.v1alpha3",
               "repository": os.environ["CANDIDATE_REPOSITORY"],
               "commit": os.environ["CANDIDATE_COMMIT"],
               "image": os.environ["CANDIDATE_IMAGE"],
@@ -143,12 +143,17 @@ jobs:
               "container_provenance": True,
               "package_sbom": True,
               "package_provenance": True,
+              "manifest_provenance": True,
               "package_artifacts": package_artifacts,
           }
           with open("staging-candidate-manifest.json", "w", encoding="utf-8") as handle:
               json.dump(manifest, handle, indent=2, sort_keys=True)
               handle.write("\n")
           PY
+      - name: Attest immutable candidate manifest
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: staging-candidate-manifest.json
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cascade-staging-candidate-${{ github.sha }}

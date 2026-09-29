@@ -73,10 +73,10 @@ def inputs():
         "records": records,
     })
     manifest = {
-        "schema_version": "cascade.staging-manifest.v1alpha4",
+        "schema_version": "cascade.staging-manifest.v1alpha5",
         "run": run,
         "candidate": {
-            "schema_version": "cascade.staging-candidate.v1alpha2",
+            "schema_version": "cascade.staging-candidate.v1alpha3",
             "repository": "example/cascade-compression",
             "commit": COMMIT,
             "image": "ghcr.io/example/cascade-compression",
@@ -89,6 +89,7 @@ def inputs():
             "container_provenance": True,
             "package_sbom": True,
             "package_provenance": True,
+            "manifest_provenance": True,
             "package_artifacts": [
                 {"name": "cascade.whl", "sha256": "sha256:" + "1" * 64,
                  "bytes": 100},
@@ -355,6 +356,15 @@ def test_candidate_requires_bound_package_supply_chain():
     manifest, classification, runtime, before, after = inputs()
     manifest["candidate"]["package_provenance"] = False
     manifest["candidate"]["package_artifacts"] = []
+    report = build_staging_evidence(
+        manifest, classification, runtime, before, after,
+    )
+    assert "candidate_artifact_bound" in report["failed_gates"]
+
+
+def test_candidate_manifest_itself_requires_provenance():
+    manifest, classification, runtime, before, after = inputs()
+    manifest["candidate"]["manifest_provenance"] = False
     report = build_staging_evidence(
         manifest, classification, runtime, before, after,
     )

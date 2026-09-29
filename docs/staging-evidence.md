@@ -14,12 +14,13 @@ cascade-stage-evidence \
   --output staging-evidence.json
 ```
 
-The manifest uses `cascade.staging-manifest.v1alpha4` and declares the exact commit, image digest,
+The manifest uses `cascade.staging-manifest.v1alpha5` and declares the exact commit, image digest,
 configuration digest, taxonomy revision, frozen model revisions, runtime run ID, an audit snapshot
 window that brackets the run, the complete candidate manifest downloaded from the manual staging
 workflow, release verification, and ledger health. The candidate manifest must identify the same
 commit and immutable image digest, predate the test window, and attest both target architectures,
-container SBOM/provenance, package SBOM/provenance, and exact wheel/source/SBOM hashes. The staging
+container SBOM/provenance, package SBOM/provenance, candidate-manifest provenance, and exact
+wheel/source/SBOM hashes. The staging
 manifest must also include a healthy, capacity-monitored ledger outbox using the fixed
 `immutable-relay-and-archive-v1` policy. The outbox must have no pending,
 in-flight, or failed rows; no undelivered row may have been deleted; archival must be verified; the
@@ -54,3 +55,11 @@ manifest, classification report, runtime report, and both audit snapshots. It ex
 signal payloads, credentials, cluster names, routes, and deployment manifests. Inputs containing
 private evidence should remain in ignored or external evidence storage; only the sanitized output
 is eligible for publication after review.
+
+After downloading the candidate manifest from its workflow run, verify its attestation before
+embedding it in the staging manifest:
+
+```bash
+gh attestation verify staging-candidate-manifest.json \
+  --repo jkershawrh/cascade-compression
+```

@@ -121,7 +121,7 @@ def build_staging_evidence(
     stats_after: Dict[str, Any],
 ) -> dict:
     """Bind sanitized artifacts and apply explicit release-proof gates."""
-    if manifest.get("schema_version") != "cascade.staging-manifest.v1alpha4":
+    if manifest.get("schema_version") != "cascade.staging-manifest.v1alpha5":
         raise ValueError("unsupported staging manifest version")
     if classification.get("schema_version") != "cascade.classification-evaluation.v1alpha2":
         raise ValueError("classification artifact has an unsupported version")
@@ -155,7 +155,7 @@ def build_staging_evidence(
     candidate = manifest.get("candidate") or {}
     candidate_bound = (
         candidate.get("schema_version")
-        == "cascade.staging-candidate.v1alpha2"
+        == "cascade.staging-candidate.v1alpha3"
         and bool(candidate.get("repository"))
         and bool(candidate.get("image"))
         and candidate.get("commit") == run.get("commit")
@@ -166,6 +166,7 @@ def build_staging_evidence(
         and candidate.get("container_provenance") is True
         and candidate.get("package_sbom") is True
         and candidate.get("package_provenance") is True
+        and candidate.get("manifest_provenance") is True
         and len(candidate.get("package_artifacts") or []) >= 3
         and all(
             bool(item.get("name"))
@@ -469,6 +470,7 @@ def build_staging_evidence(
             "container_provenance": candidate.get("container_provenance"),
             "package_sbom": candidate.get("package_sbom"),
             "package_provenance": candidate.get("package_provenance"),
+            "manifest_provenance": candidate.get("manifest_provenance"),
             "package_artifacts": len(candidate.get("package_artifacts") or []),
         }),
         _gate("classification_same_run", run_matches, {

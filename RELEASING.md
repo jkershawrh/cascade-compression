@@ -9,8 +9,9 @@
 3. Run the manual **Staging candidate** workflow on that exact commit. It reruns tests and package
    smoke checks, generates and attests the wheel, source archive, and package SBOM, then publishes a
    multi-architecture `candidate-<commit>` image with container SBOM and provenance. Retain its
-   candidate manifest and immutable image digest; embed that unmodified manifest in the staging
-   manifest so `cascade-stage-evidence` can bind the tested run to exact package and image artifacts.
+   attested candidate manifest and immutable image digest; verify the manifest attestation and embed
+   that unmodified manifest in the staging manifest so `cascade-stage-evidence` can bind the tested
+   run to exact package and image artifacts.
 4. Deploy that digest—not a mutable tag—to the isolated staging allocation. Run the classification,
    runtime, audit-delivery, capacity, and clean-clone checks over one declared window. Assemble them
    with `cascade-stage-evidence`; do not proceed unless it returns `staging_success` with no failed
