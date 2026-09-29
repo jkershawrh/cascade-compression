@@ -40,6 +40,8 @@ def main() -> int:
     parser.add_argument("--dataset-name", required=True)
     parser.add_argument("--dataset-revision", required=True)
     parser.add_argument("--stratification-basis", required=True)
+    parser.add_argument("--source-window-start", required=True)
+    parser.add_argument("--source-window-end", required=True)
     parser.add_argument("--frozen-at")
     parser.add_argument("--output-corpus", required=True)
     parser.add_argument("--output-manifest", required=True)
@@ -60,6 +62,8 @@ def main() -> int:
         dataset_name=args.dataset_name,
         dataset_revision=args.dataset_revision,
         stratification_basis=args.stratification_basis,
+        source_window_start=args.source_window_start,
+        source_window_end=args.source_window_end,
         frozen_at=args.frozen_at,
     )
     _write_jsonl(args.output_corpus, corpus)

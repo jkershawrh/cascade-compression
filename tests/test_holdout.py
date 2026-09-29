@@ -33,6 +33,8 @@ def freeze(rows=None, quotas=None, seed="private-seed"):
         dataset_name="blind-holdout",
         dataset_revision="v1",
         stratification_basis="source family",
+        source_window_start="2026-09-01T00:00:00Z",
+        source_window_end="2026-09-01T01:00:00Z",
         frozen_at="2026-09-01T00:00:00Z",
     )
 
@@ -86,7 +88,20 @@ def test_freeze_timestamp_requires_timezone():
             candidates(), {"source-a": 3, "source-b": 3},
             seed="seed", dataset_name="held-out", dataset_revision="v1",
             stratification_basis="source family",
+            source_window_start="2026-09-01T00:00:00Z",
+            source_window_end="2026-09-01T01:00:00Z",
             frozen_at="2026-09-01T00:00:00",
+        )
+
+
+def test_source_observation_window_must_be_positive():
+    with pytest.raises(ValueError, match="observation window"):
+        freeze_stratified_holdout(
+            candidates(), {"source-a": 3, "source-b": 3},
+            seed="seed", dataset_name="held-out", dataset_revision="v1",
+            stratification_basis="source family",
+            source_window_start="2026-09-01T01:00:00Z",
+            source_window_end="2026-09-01T00:00:00Z",
         )
 
 

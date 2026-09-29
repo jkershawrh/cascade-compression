@@ -87,15 +87,17 @@ cascade-freeze-holdout \
   --seed "$PRIVATE_HOLDOUT_SEED" \
   --dataset-name held-out-v1 --dataset-revision review-1 \
   --stratification-basis "source family and time window" \
+  --source-window-start 2026-09-01T00:00:00Z \
+  --source-window-end 2026-09-08T00:00:00Z \
   --output-corpus private-blinded-corpus.jsonl \
   --output-manifest holdout-manifest.json
 ```
 
 The quota set must cover every candidate stratum, and undersized strata fail closed. Signals that
 contain nested ground-truth or model-output fields are rejected instead of exposing them to
-reviewers. The manifest aliases stratum names and contains selection counts and digests but no raw
-records. Keep the seed and blinded corpus private; still review all free-text manifest metadata
-before publishing it.
+reviewers. The manifest aliases stratum names and records the bounded source observation window,
+selection counts, and digests but no raw records. Keep the seed and blinded corpus private; still
+review all free-text manifest metadata before publishing it.
 Stratification can ensure class coverage for balanced accuracy, but it changes prevalence; do not
 present overall accuracy on a balanced corpus as the natural production rate.
 

@@ -45,6 +45,16 @@ def _forbidden_signal_keys(value: Any) -> set:
     return found
 
 
+def _aware_timestamp(value: str, label: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (AttributeError, ValueError) as exc:
+        raise ValueError(f"{label} must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise ValueError(f"{label} must include a timezone")
+    return parsed
+
+
 def freeze_stratified_holdout(
     candidates: Iterable[dict],
     quotas: Mapping[str, int],
@@ -53,6 +63,8 @@ def freeze_stratified_holdout(
     dataset_name: str,
     dataset_revision: str,
     stratification_basis: str,
+    source_window_start: str,
+    source_window_end: str,
     frozen_at: Optional[str] = None,
 ) -> Tuple[List[dict], dict]:
     """Select exact per-stratum quotas and return blinded records plus a manifest.
@@ -64,6 +76,10 @@ def freeze_stratified_holdout(
         raise ValueError("holdout seed must not be empty")
     if not dataset_name or not dataset_revision or not stratification_basis:
         raise ValueError("dataset identity and stratification basis are required")
+    source_start = _aware_timestamp(source_window_start, "source_window_start")
+    source_end = _aware_timestamp(source_window_end, "source_window_end")
+    if source_end <= source_start:
+        raise ValueError("source observation window must be positive")
     normalized_quotas = {str(key): int(value) for key, value in quotas.items()}
     if not normalized_quotas or any(value <= 0 for value in normalized_quotas.values()):
         raise ValueError("every holdout quota must be a positive integer")
@@ -147,12 +163,7 @@ def freeze_stratified_holdout(
         raise ValueError("opaque case identifier collision")
 
     timestamp = frozen_at or datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    try:
-        parsed_timestamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-    except ValueError as exc:
-        raise ValueError("frozen_at must be an ISO-8601 timestamp") from exc
-    if parsed_timestamp.tzinfo is None:
-        raise ValueError("frozen_at must include a timezone")
+    _aware_timestamp(timestamp, "frozen_at")
     selected_identity = sorted(
         ({"case_id": row["case_id"], "signal_sha256": row["signal_sha256"]}
          for row in blinded),
@@ -161,6 +172,10 @@ def freeze_stratified_holdout(
     manifest = {
         "schema_version": "cascade.holdout-manifest.v1alpha1",
         "dataset": {"name": dataset_name, "revision": dataset_revision},
+        "source_window": {
+            "start": source_window_start,
+            "end": source_window_end,
+        },
         "frozen_at": timestamp,
         "selection": {
             "algorithm": "sha256-rank-v1",

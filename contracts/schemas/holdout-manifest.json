@@ -3,7 +3,7 @@
   "$id": "https://cascade-compression.org/contracts/cascade.holdout-manifest/1.0.0-alpha.1",
   "title": "Cascade Holdout Manifest",
   "type": "object",
-  "required": ["schema_version", "dataset", "frozen_at", "selection", "candidate_digest", "holdout_digest", "blinding", "contains_raw_records"],
+  "required": ["schema_version", "dataset", "source_window", "frozen_at", "selection", "candidate_digest", "holdout_digest", "blinding", "contains_raw_records"],
   "properties": {
     "schema_version": {"const": "cascade.holdout-manifest.v1alpha1"},
     "dataset": {
@@ -16,6 +16,15 @@
       "additionalProperties": false
     },
     "frozen_at": {"type": "string", "format": "date-time"},
+    "source_window": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": {"type": "string", "format": "date-time"},
+        "end": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
     "selection": {
       "type": "object",
       "required": ["algorithm", "seed_digest", "stratification_basis", "candidate_records", "selected_records", "strata"],
