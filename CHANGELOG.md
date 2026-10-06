@@ -4,6 +4,16 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## Unreleased
 
+## 0.2.0rc5 - 2026-10-06
+
+- Publish the verified public mechanics as an explicitly incubating OSS prerelease without
+  classification-effectiveness, natural-compression-rate, staging-readiness, production-readiness,
+  or customer-outcome claims.
+- Preserve the independent staging-qualified gate for human-adjudicated three-arm classification,
+  governed audit delivery, ledger archive/recovery, and candidate-bound operational evidence.
+- Carry forward the exact CPU runtime benchmark, packaging, SBOM, provenance, and public/private
+  boundary mechanics while keeping raw evidence and deployment configuration private.
+
 ## 0.2.0rc4 - 2026-10-06
 
 - Prepare an immutable staging-qualified candidate whose release remains fail-closed until the

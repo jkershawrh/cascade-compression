@@ -95,7 +95,7 @@ remain mandatory for the separate `staging_qualified` claim.
 With the GitHub CLI installed, verify a downloaded artifact:
 
 ```bash
-gh attestation verify cascade_compression-0.2.0rc4-py3-none-any.whl \
+gh attestation verify cascade_compression-0.2.0rc5-py3-none-any.whl \
   --repo jkershawrh/cascade-compression
 ```
 
