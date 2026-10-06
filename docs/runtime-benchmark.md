@@ -73,6 +73,43 @@ concurrency. Start with a low concurrency and increase only within the
 endpoint's assigned CPU budget. The optional semantic path requires
 `pip install -e ".[semantic-classifier]"`.
 
+For an llm-d-sc runtime comparison, bind the benchmark to the exact runtime and
+artifact contract rather than a floating image tag:
+
+```bash
+python -m cascade_compression.benchmarks.cascade_runtime \
+  --output .benchmark-results/llm-d-sc-v02.json \
+  --environment-label isolated-cpu \
+  --sc-address llm-d-sc.example:50051 \
+  --sc-source-revision 5c4bb80b732065c765d8ac2ae75e07fba19546cd \
+  --sc-expected-model-revision c5f55ef419d268ba843c544dc00988d1e9878044 \
+  --sc-expected-tokenizer-revision c5f55ef419d268ba843c544dc00988d1e9878044 \
+  --sc-expected-taxonomy-revision cascade-classification-anchors-v1 \
+  --sc-expected-classifier-id cascade-classification \
+  --sc-scoring-mode anchor_cosine
+```
+
+The run aborts during warmup if the response identity, model revision,
+taxonomy revision, label set, ranking order, or declared score semantics do not
+match the contract. Classification-head probability mode is a separate
+experiment and must not reuse anchor-cosine confidence thresholds without an
+adjudicated recalibration.
+
+After collecting the same matrix from the old and candidate runtimes, apply the
+runtime-only regression gate:
+
+```bash
+python -m cascade_compression.benchmarks.compare_semantic_runtime \
+  .benchmark-results/llm-d-sc-old.json \
+  .benchmark-results/llm-d-sc-v02.json \
+  --output .benchmark-results/llm-d-sc-v02-comparison.json
+```
+
+The default gate requires identical classifier artifact identity, 100% request
+success, no error increase, no more than 10% p95 regression, and at least 90%
+of baseline throughput in every workload/concurrency cell. Passing this gate
+does not establish classification quality or safe compression.
+
 Raw output belongs under the ignored `.benchmark-results/` directory. Review
 and sanitize any aggregate result before publication. This runtime benchmark
 must be paired with a frozen, adjudicated end-to-end evaluation before making

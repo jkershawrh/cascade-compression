@@ -65,6 +65,10 @@ four policies:
 
 Hybrid suppression requires a separately configurable, typically higher margin. A semantic result
 that would suppress a high- or critical-severity signal is always sent to the generative fallback.
+The semantic contract also binds the model and taxonomy revisions and declares the score mode:
+`anchor_cosine` for embedding-and-anchor artifacts or `classification_head_probability` for a
+trained classification head. Cascade validates finite descending scores and the declared range;
+probability mode must also sum to approximately one. Margins are calibrated separately by mode.
 The comparison recorder exposes agreement, fallback, semantic failure, margin distribution, and
 latency evidence without writing signal payloads unless an operator explicitly configures an
 evidence file.

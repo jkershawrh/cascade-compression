@@ -112,11 +112,12 @@ The operator chooses a classifier policy with `CASCADE_CLASSIFIER_MODE`:
   margin and severity gates.
 - `hybrid` grants llm-d-sc bounded authority and uses the generative backend as fallback.
 
-In hybrid mode, Cascade checks the top-two score margin, taxonomy revision, response status, label
-set, and severity before accepting semantic evidence. Suppressive labels use a separately
+In hybrid mode, Cascade checks the top-two score margin, model and taxonomy revisions, response
+identity, declared scoring semantics, response status, label set, and severity before accepting
+semantic evidence. Suppressive labels use a separately
 configurable margin. High- and critical-severity suppressive answers always fall back. Timeouts,
-unavailability, abstention, malformed responses, revision mismatch, and insufficient margin also
-fall back.
+unavailability, abstention, malformed responses, revision mismatch, scoring-mode mismatch, and
+insufficient margin also fall back.
 
 The classifier records which backend was authoritative and exposes aggregate coverage, fallback,
 failure, margin, agreement, and latency statistics. Payload persistence is off unless an operator

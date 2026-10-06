@@ -4,6 +4,7 @@
   "taxonomy_revision": "cascade-classification-anchors-v1",
   "model_repo": "cnuland/llm-d-sc-complexity",
   "model_revision": "c5f55ef419d268ba843c544dc00988d1e9878044",
+  "scoring_mode": "anchor_cosine",
   "method": "anchor-topk-mean",
   "top_k": 3,
   "labels": ["routine_noise", "known_pattern", "needs_attention", "real_incident"],

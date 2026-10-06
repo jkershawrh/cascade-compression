@@ -10,6 +10,7 @@ import hashlib
 import ipaddress
 import json
 import logging
+import math
 import os
 import re
 import threading
@@ -31,6 +32,9 @@ CASCADE_LABELS = frozenset({
 SUPPRESSIVE_LABELS = frozenset({"routine_noise", "known_pattern"})
 SERIALIZER_REVISION = "cascade-classifier-text-v2"
 VALID_MODES = frozenset({"generative", "compare", "semantic", "hybrid"})
+VALID_SCORING_MODES = frozenset({
+    "anchor_cosine", "classification_head_probability",
+})
 
 STRUCTURED_CONFIDENCE_INSTRUCTION = """
 Return compact JSON only with keys label and confidence. label must be exactly one of
@@ -97,6 +101,16 @@ class RankedLabel:
     score: float
 
 
+@dataclass(frozen=True)
+class SemanticContract:
+    classifier_id: str
+    signal_name: str
+    taxonomy_revision: str
+    model_revision: str
+    tokenizer_revision: str
+    scoring_mode: str
+
+
 @dataclass
 class ClassificationResult:
     label: str = ""
@@ -110,6 +124,7 @@ class ClassificationResult:
     tokenizer_revision: str = ""
     taxonomy_revision: str = ""
     classifier_id: str = ""
+    scoring_mode: str = ""
     status: str = "ok"
     error_code: str = ""
     error: str = ""
@@ -242,6 +257,10 @@ class SemanticClassifierBackend:
 
     def __init__(self, *, address: str, signal_name: str,
                  deadline_seconds: float, expected_taxonomy_revision: str = "",
+                 expected_model_revision: str = "",
+                 expected_tokenizer_revision: str = "",
+                 expected_classifier_id: str = "",
+                 scoring_mode: str = "anchor_cosine",
                  tls_enabled: bool = False, tls_ca_path: str = "",
                  tls_cert_path: str = "", tls_key_path: str = "",
                  server_name: str = "", allow_insecure_remote: bool = False,
@@ -250,6 +269,14 @@ class SemanticClassifierBackend:
         self.signal_name = signal_name
         self.deadline_seconds = deadline_seconds
         self.expected_taxonomy_revision = expected_taxonomy_revision
+        self.expected_model_revision = expected_model_revision
+        self.expected_tokenizer_revision = expected_tokenizer_revision
+        self.expected_classifier_id = expected_classifier_id
+        if scoring_mode not in VALID_SCORING_MODES:
+            raise ValueError(
+                f"scoring_mode must be one of {sorted(VALID_SCORING_MODES)}"
+            )
+        self.scoring_mode = scoring_mode
         self._channel = None
         self._stub = stub
         if self._stub is None:
@@ -328,14 +355,23 @@ class SemanticClassifierBackend:
                     code = "unavailable"
             except Exception:
                 pass
-            return self._failure(started, code, str(exc))
+            return self._failure(
+                started, code, str(exc), scoring_mode=self.scoring_mode
+            )
 
         revisions = dict(
             classifier_id=response.classifier_id,
             model_revision=response.model_revision,
             tokenizer_revision=response.tokenizer_revision,
             taxonomy_revision=response.taxonomy_revision,
+            scoring_mode=self.scoring_mode,
         )
+        if response.request_id != request_id:
+            return self._failure(
+                started, "request_id_mismatch",
+                f"expected {request_id}, got {response.request_id}",
+                **revisions,
+            )
         if response.status != classify_pb2.OK:
             code = "abstain" if response.status == classify_pb2.ABSTAIN else "unavailable"
             return self._failure(started, code, f"llm-d-sc status={response.status}", **revisions)
@@ -346,11 +382,56 @@ class SemanticClassifierBackend:
                 f"expected {self.expected_taxonomy_revision}, got {response.taxonomy_revision}",
                 **revisions,
             )
+        if (self.expected_model_revision
+                and response.model_revision != self.expected_model_revision):
+            return self._failure(
+                started, "model_revision_mismatch",
+                f"expected {self.expected_model_revision}, got {response.model_revision}",
+                **revisions,
+            )
+        if (self.expected_tokenizer_revision
+                and response.tokenizer_revision != self.expected_tokenizer_revision):
+            return self._failure(
+                started, "tokenizer_revision_mismatch",
+                f"expected {self.expected_tokenizer_revision}, "
+                f"got {response.tokenizer_revision}",
+                **revisions,
+            )
+        if (self.expected_classifier_id
+                and response.classifier_id != self.expected_classifier_id):
+            return self._failure(
+                started, "classifier_id_mismatch",
+                f"expected {self.expected_classifier_id}, got {response.classifier_id}",
+                **revisions,
+            )
         ranked = [RankedLabel(normalize_label(item.label), float(item.score))
                   for item in response.ranked]
-        if (not ranked or any(not item.label for item in ranked)
+        if (len(ranked) != len(CASCADE_LABELS)
+                or any(not item.label for item in ranked)
                 or {item.label for item in ranked} != CASCADE_LABELS):
             return self._failure(started, "malformed_labels", "invalid ranked label set", **revisions)
+        scores = [item.score for item in ranked]
+        if any(not math.isfinite(score) for score in scores):
+            return self._failure(
+                started, "malformed_scores", "scores must be finite", **revisions,
+            )
+        if any(left < right for left, right in zip(scores, scores[1:])):
+            return self._failure(
+                started, "malformed_scores", "scores must be ranked descending", **revisions,
+            )
+        if self.scoring_mode == "anchor_cosine":
+            valid_scores = all(-1.0 <= score <= 1.0 for score in scores)
+        else:
+            valid_scores = (
+                all(0.0 <= score <= 1.0 for score in scores)
+                and math.isclose(sum(scores), 1.0, abs_tol=0.02)
+            )
+        if not valid_scores:
+            return self._failure(
+                started, "scoring_mode_mismatch",
+                f"scores do not match declared mode {self.scoring_mode}",
+                **revisions,
+            )
         margin = ranked[0].score - ranked[1].score if len(ranked) > 1 else None
         return ClassificationResult(
             label=ranked[0].label, ranked=ranked,
@@ -799,6 +880,44 @@ def load_taxonomy_metadata(path: str) -> tuple[str, str]:
     )
 
 
+def load_semantic_contract(path: str) -> SemanticContract:
+    """Load the immutable classifier contract declared by a taxonomy file."""
+    signal_name, taxonomy_revision = load_taxonomy_metadata(path)
+    if not path:
+        return SemanticContract(
+            classifier_id="", signal_name=signal_name,
+            taxonomy_revision=taxonomy_revision, model_revision="",
+            tokenizer_revision="", scoring_mode="anchor_cosine",
+        )
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
+    scoring_mode = str(data.get("scoring_mode", "")).strip()
+    if scoring_mode not in VALID_SCORING_MODES:
+        raise ValueError(
+            "taxonomy scoring_mode must be one of "
+            f"{sorted(VALID_SCORING_MODES)}"
+        )
+    model_revision = str(data.get("model_revision", "")).strip()
+    if not model_revision:
+        raise ValueError("taxonomy model_revision is required")
+    classifier_id = str(data.get("classifier_id", "")).strip()
+    if not classifier_id:
+        raise ValueError("taxonomy classifier_id is required")
+    tokenizer_revision = str(
+        data.get("tokenizer_revision", model_revision)
+    ).strip()
+    if not tokenizer_revision:
+        raise ValueError("taxonomy tokenizer_revision is required")
+    return SemanticContract(
+        classifier_id=classifier_id,
+        signal_name=signal_name,
+        taxonomy_revision=taxonomy_revision,
+        model_revision=model_revision,
+        tokenizer_revision=tokenizer_revision,
+        scoring_mode=scoring_mode,
+    )
+
+
 def classifier_from_environment(*, url: str, key: str, micro_model: str,
                                 macro_model: str, system_prompt: str,
                                 mode_override: str = "") -> CascadeClassifier:
@@ -826,11 +945,19 @@ def classifier_from_environment(*, url: str, key: str, micro_model: str,
     taxonomy_path = os.getenv("CASCADE_SC_TAXONOMY", "").strip()
     if mode != "generative" and address:
         try:
-            signal_name, revision = load_taxonomy_metadata(taxonomy_path)
+            if not taxonomy_path:
+                raise ValueError(
+                    "CASCADE_SC_TAXONOMY is required outside generative mode"
+                )
+            contract = load_semantic_contract(taxonomy_path)
             semantic = SemanticClassifierBackend(
-                address=address, signal_name=signal_name,
+                address=address, signal_name=contract.signal_name,
                 deadline_seconds=float(os.getenv("CASCADE_SC_DEADLINE_SECONDS", "0.05")),
-                expected_taxonomy_revision=revision,
+                expected_taxonomy_revision=contract.taxonomy_revision,
+                expected_model_revision=contract.model_revision,
+                expected_tokenizer_revision=contract.tokenizer_revision,
+                expected_classifier_id=contract.classifier_id,
+                scoring_mode=contract.scoring_mode,
                 tls_enabled=os.getenv("CASCADE_SC_TLS", "").strip().lower()
                 in {"1", "true", "yes"},
                 tls_ca_path=os.getenv("CASCADE_SC_TLS_CA", "").strip(),

@@ -9,7 +9,7 @@ The project is not another classifier. It is the governed lifecycle around class
 nano agents remove duplicates, transient conditions, known patterns, and validated repetitive
 traffic; model capacity is reserved for signals that are new or ambiguous; repeated judgments can
 be promoted into inspectable, expiring, and revocable rules; and surviving signals can become
-durable memory. [llm-d-sc](https://github.com/llm-d/llm-d-semantic-router) can be used as an optional
+durable memory. [llm-d-sc](https://github.com/llm-d-incubation/llm-d-semantic-classifier) can be used as an optional
 semantic classification fast path, while Cascade retains authority over confidence policy,
 fallback, custom anchor engineering, promotion, demotion, provenance, memory, and federation.
 
@@ -118,6 +118,10 @@ python -m uvicorn cascade_compression.service:app --port 8090
 `semantic` mode is available for deployments that intentionally want llm-d-sc to classify without
 a generative endpoint; Cascade still applies margin and severity gates, and service errors produce
 explicit failures rather than silent drops.
+The taxonomy contract pins the expected model revision and declares whether scores are anchor
+cosines or classification-head probabilities. Cascade rejects revision mismatches, malformed
+rankings, and scores that do not satisfy the declared semantics. Confidence margins calibrated for
+one scoring mode must not be reused for the other without a frozen adjudicated evaluation.
 The generated protocol client is pinned by the `semantic-classifier` optional dependency group.
 The Python package keeps that group optional. Official release-candidate and tagged-release
 containers include it and run an import smoke test during the image build, so an image advertised

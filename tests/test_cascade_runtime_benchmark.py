@@ -138,3 +138,55 @@ def test_run_labels_measurement_semantics(monkeypatch):
     assert result["environment"]["label"] == "test"
     assert set(result["results"]) == {"nano"}
     assert "asynchronous" in result["semantics"]["http"]
+
+
+def test_run_records_pinned_semantic_runtime_contract(monkeypatch):
+    from cascade_compression.benchmarks import cascade_runtime
+
+    monkeypatch.setattr(cascade_runtime, "_cpu_limit", lambda: 1.0)
+    observed = {
+        "classifier_id": "cascade-classification",
+        "model_revision": "model-sha",
+        "tokenizer_revision": "tokenizer-sha",
+        "taxonomy_revision": "taxonomy-v1",
+        "scoring_mode": "anchor_cosine",
+    }
+    monkeypatch.setattr(
+        cascade_runtime,
+        "benchmark_semantic",
+        lambda **kwargs: ([{"workload": "normalized_cache_hit", "errors": 0}], observed),
+    )
+    args = Namespace(
+        output="unused.json",
+        environment_label="test",
+        run_id="test-run",
+        iterations=1,
+        samples=1,
+        warmup=1,
+        batch_sizes=[1],
+        concurrencies=[1],
+        http_batch_size=1,
+        http_url="",
+        sc_address="classifier:50051",
+        sc_signal="cascade_classification",
+        sc_deadline=1.0,
+        sc_source_revision="runtime-sha",
+        sc_expected_model_revision="model-sha",
+        sc_expected_tokenizer_revision="tokenizer-sha",
+        sc_expected_taxonomy_revision="taxonomy-v1",
+        sc_expected_classifier_id="cascade-classification",
+        sc_scoring_mode="anchor_cosine",
+        recall_sizes=[],
+    )
+
+    result = run(args)
+
+    assert result["semantic_contract"] == {
+        "runtime_source_revision": "runtime-sha",
+        "expected_model_revision": "model-sha",
+        "expected_tokenizer_revision": "tokenizer-sha",
+        "expected_taxonomy_revision": "taxonomy-v1",
+        "expected_classifier_id": "cascade-classification",
+        "declared_scoring_mode": "anchor_cosine",
+        "observed": observed,
+    }

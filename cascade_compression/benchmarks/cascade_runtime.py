@@ -31,7 +31,7 @@ from cascade_compression.cascade.memory import MemoryArchive
 from cascade_compression.cascade.pipeline import CascadePipeline
 from cascade_compression.cascade.protocol import Signal
 from cascade_compression.cascade.recall import RecallEngine
-from cascade_compression.classifier import serialize_signal
+from cascade_compression.classifier import SemanticClassifierBackend, serialize_signal
 
 
 SCHEMA_VERSION = 1
@@ -72,6 +72,7 @@ def _summary(latencies_ms: list[float], signals: int, elapsed_seconds: float,
         "signals": signals,
         "successful_signals": successful,
         "errors": errors,
+        "success_rate": round(successful / signals, 6) if signals else 0.0,
         "elapsed_seconds": round(elapsed_seconds, 6),
         "latency_ms": {
             "p50": round(percentile(latencies_ms, 50), 6),
@@ -350,15 +351,25 @@ def benchmark_http(*, base_url: str, samples: int, warmup: int,
 
 def benchmark_semantic(*, address: str, signal_name: str, run_id: str, samples: int,
                        warmup: int, concurrencies: list[int],
-                       cpu_limit: float | None, deadline_seconds: float) -> list[dict[str, Any]]:
-    import grpc
+                       cpu_limit: float | None, deadline_seconds: float,
+                       expected_model_revision: str = "",
+                       expected_tokenizer_revision: str = "",
+                       expected_taxonomy_revision: str = "",
+                       expected_classifier_id: str = "",
+                       scoring_mode: str = "anchor_cosine") -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    backend = SemanticClassifierBackend(
+        address=address,
+        signal_name=signal_name,
+        deadline_seconds=deadline_seconds,
+        expected_model_revision=expected_model_revision,
+        expected_tokenizer_revision=expected_tokenizer_revision,
+        expected_taxonomy_revision=expected_taxonomy_revision,
+        expected_classifier_id=expected_classifier_id,
+        scoring_mode=scoring_mode,
+        allow_insecure_remote=True,
+    )
 
-    from cascade_compression.integrations.llm_d_sc import classify_pb2, classify_pb2_grpc
-
-    channel = grpc.insecure_channel(address)
-    stub = classify_pb2_grpc.ClassifyStub(channel)
-
-    def classify(index: int, normalize: bool) -> tuple[float, bool]:
+    def classify_result(index: int, normalize: bool):
         signal = {
             "signal_id": str(uuid4()),
             "signal_type": "scheduled_reconciliation",
@@ -373,26 +384,32 @@ def benchmark_semantic(*, address: str, signal_name: str, run_id: str, samples: 
         }
         text = serialize_signal(signal, normalize=normalize)
         started = time.perf_counter_ns()
-        try:
-            response = stub.Classify(
-                classify_pb2.ClassifyRequest(
-                    request_id=signal["signal_id"],
-                    session_id="",
-                    context=text,
-                    signals=[signal_name],
-                    context_completeness=classify_pb2.FULL,
-                ),
-                timeout=deadline_seconds,
-            )
-            ok = response.status == classify_pb2.OK and bool(response.ranked)
-        except grpc.RpcError:
-            ok = False
-        return (time.perf_counter_ns() - started) / 1_000_000, ok
+        result = backend.classify(signal, text)
+        return (time.perf_counter_ns() - started) / 1_000_000, result
 
+    def classify(index: int, normalize: bool) -> tuple[float, bool]:
+        latency, result = classify_result(index, normalize)
+        return latency, result.ok
+
+    identity = None
     for index in range(warmup):
-        _, ok = classify(index, True)
-        if not ok:
-            raise RuntimeError("llm-d-sc warmup classification failed")
+        _, result = classify_result(index, True)
+        if not result.ok:
+            raise RuntimeError(
+                "llm-d-sc warmup classification failed: "
+                f"{result.error_code}: {result.error}"
+            )
+        observed = {
+            "classifier_id": result.classifier_id,
+            "model_revision": result.model_revision,
+            "tokenizer_revision": result.tokenizer_revision,
+            "taxonomy_revision": result.taxonomy_revision,
+            "scoring_mode": result.scoring_mode,
+        }
+        if identity is None:
+            identity = observed
+        elif observed != identity:
+            raise RuntimeError("llm-d-sc identity changed during warmup")
 
     cells = []
     for workload_index, (workload, normalize) in enumerate(
@@ -417,7 +434,7 @@ def benchmark_semantic(*, address: str, signal_name: str, run_id: str, samples: 
             cell = _summary(latencies, samples, elapsed, cpu_limit, errors)
             cell.update({"workload": workload, "concurrency": concurrency})
             cells.append(cell)
-    return cells
+    return cells, identity or {}
 
 
 def benchmark_recall(*, memory_sizes: list[int], samples: int, warmup: int,
@@ -545,7 +562,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             cpu_limit=cpu_limit,
         )
     if args.sc_address:
-        result["results"]["semantic"] = benchmark_semantic(
+        semantic_cells, semantic_identity = benchmark_semantic(
             address=args.sc_address,
             signal_name=args.sc_signal,
             run_id=run_id,
@@ -554,7 +571,38 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             concurrencies=args.concurrencies,
             cpu_limit=cpu_limit,
             deadline_seconds=args.sc_deadline,
+            expected_model_revision=getattr(args, "sc_expected_model_revision", ""),
+            expected_tokenizer_revision=getattr(
+                args, "sc_expected_tokenizer_revision", ""
+            ),
+            expected_taxonomy_revision=getattr(
+                args, "sc_expected_taxonomy_revision", ""
+            ),
+            expected_classifier_id=getattr(
+                args, "sc_expected_classifier_id", ""
+            ),
+            scoring_mode=getattr(args, "sc_scoring_mode", "anchor_cosine"),
         )
+        result["results"]["semantic"] = semantic_cells
+        result["semantic_contract"] = {
+            "runtime_source_revision": getattr(args, "sc_source_revision", ""),
+            "expected_model_revision": getattr(
+                args, "sc_expected_model_revision", ""
+            ),
+            "expected_tokenizer_revision": getattr(
+                args, "sc_expected_tokenizer_revision", ""
+            ),
+            "expected_taxonomy_revision": getattr(
+                args, "sc_expected_taxonomy_revision", ""
+            ),
+            "expected_classifier_id": getattr(
+                args, "sc_expected_classifier_id", ""
+            ),
+            "declared_scoring_mode": getattr(
+                args, "sc_scoring_mode", "anchor_cosine"
+            ),
+            "observed": semantic_identity,
+        }
     if getattr(args, "recall_sizes", []):
         result["results"]["recall"] = benchmark_recall(
             memory_sizes=args.recall_sizes,
@@ -608,6 +656,16 @@ def main() -> None:
     parser.add_argument("--sc-address", default="")
     parser.add_argument("--sc-signal", default="cascade_classification")
     parser.add_argument("--sc-deadline", type=float, default=5.0)
+    parser.add_argument("--sc-source-revision", default="")
+    parser.add_argument("--sc-expected-model-revision", default="")
+    parser.add_argument("--sc-expected-tokenizer-revision", default="")
+    parser.add_argument("--sc-expected-taxonomy-revision", default="")
+    parser.add_argument("--sc-expected-classifier-id", default="")
+    parser.add_argument(
+        "--sc-scoring-mode",
+        choices=["anchor_cosine", "classification_head_probability"],
+        default="anchor_cosine",
+    )
     parser.add_argument(
         "--recall-sizes", type=_positive, nargs="+", default=[],
         help="Measure exact-precedent recall for each synthetic archive size",

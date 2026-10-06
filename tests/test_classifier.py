@@ -14,6 +14,7 @@ from cascade_compression.classifier import (
     GenerativeClassifierBackend,
     RankedLabel,
     classifier_from_environment,
+    load_semantic_contract,
     load_taxonomy_metadata,
     normalize_label,
     normalize_signal_text,
@@ -89,6 +90,20 @@ def test_default_mode_preserves_generative_behavior(monkeypatch):
     assert instance.mode == "generative"
     assert instance.semantic is None
     assert instance.config_error == ""
+
+
+def test_semantic_factory_requires_immutable_taxonomy_contract(monkeypatch):
+    monkeypatch.setenv("CASCADE_CLASSIFIER_MODE", "compare")
+    monkeypatch.setenv("CASCADE_SC_ADDRESS", "127.0.0.1:50051")
+    monkeypatch.delenv("CASCADE_SC_TAXONOMY", raising=False)
+
+    instance = classifier_from_environment(
+        url="", key="", micro_model="small", macro_model="large",
+        system_prompt="Classify the signal.",
+    )
+
+    assert instance.semantic is None
+    assert "CASCADE_SC_TAXONOMY is required" in instance.config_error
 
 
 def test_structured_generative_mode_exposes_calibratable_confidence(monkeypatch):
@@ -243,6 +258,15 @@ def test_public_taxonomy_matches_classifier_contract():
     )
     assert signal_name == "cascade_classification"
     assert revision
+    contract = load_semantic_contract("config/cascade-sc-taxonomy.json")
+    assert contract.classifier_id == "cascade-classification"
+    assert contract.signal_name == "cascade_classification"
+    assert contract.taxonomy_revision == revision
+    assert contract.model_revision == (
+        "c5f55ef419d268ba843c544dc00988d1e9878044"
+    )
+    assert contract.tokenizer_revision == contract.model_revision
+    assert contract.scoring_mode == "anchor_cosine"
 
 
 def test_candidate_taxonomy_cannot_be_loaded(tmp_path):
