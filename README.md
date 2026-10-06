@@ -21,11 +21,12 @@ collectors.
 ## Install and test
 
 The latest stable OSS release is `0.1.0`. The governed semantic-classification and custom-anchor
-work is available for evaluation as release candidate `0.2.0rc3`; it is not the final 0.2.0
-release. The repository is currently configured for an **incubating OSS** prerelease: its mechanics,
-build, and supply chain are tested, but it makes no staging-readiness, production-readiness,
-classification-effectiveness, or natural compression-rate claim. The Python package supports
-Python 3.9 through 3.13.
+work is on the `0.2.0rc4` candidate line; it is not the final 0.2.0 release. This source tree is
+configured for a **staging-qualified** prerelease, which cannot be published unless the exact
+candidate's human-adjudicated classification, CPU runtime, audit delivery, ledger capacity,
+clean-clone, package/container, SBOM, provenance, and CI evidence reports `staging_success`.
+That qualification is not a production-readiness or customer-outcome claim. The Python package
+supports Python 3.9 through 3.13.
 
 ```bash
 python -m venv .venv

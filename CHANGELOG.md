@@ -4,6 +4,15 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## Unreleased
 
+## 0.2.0rc4 - 2026-10-06
+
+- Prepare an immutable staging-qualified candidate whose release remains fail-closed until the
+  complete human-adjudicated classification, CPU runtime, audit-delivery, ledger-capacity,
+  clean-clone, package/container, SBOM, provenance, and CI evidence chain reports
+  `staging_success`.
+- Preserve the separation between the public candidate and private review records, operational
+  logs, environment configuration, and deployment manifests.
+
 ## 0.2.0rc3 - 2026-09-29
 
 - Separate incubating OSS publication from staging qualification: prereleases may publish verified,
