@@ -4,6 +4,12 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## Unreleased
 
+- Add fail-closed memory verification provenance so classification, similarity, strength, recall,
+  and federated approval remain advisory until an exact match has a current locally governed
+  benign outcome.
+- Add verification lifecycle contracts and audit events while preserving backward compatibility:
+  existing and imported memories default to unverified.
+
 ## 0.2.0rc5 - 2026-10-06
 
 - Publish the verified public mechanics as an explicitly incubating OSS prerelease without

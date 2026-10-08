@@ -87,7 +87,8 @@ timestamp. An unhandled signal becomes a survivor.
 Every survivor is written to the memory archive with `needs_attention` as its conservative initial
 classification. Classification happens asynchronously, so model latency or temporary service
 failure cannot erase the event. When an authoritative answer arrives, Cascade updates that exact
-memory record.
+memory record. That classification remains advisory: it does not verify a benign outcome or make
+the memory eligible to authorize future suppression.
 
 ## 4. Classify the survivor
 
@@ -169,6 +170,12 @@ keeping the change reversible.
 Memory is strength-weighted and capacity-bounded. Recall reinforces useful records, consolidation
 decays noise, and priming temporarily increases attention for related signal types. Optional
 federation imports and exports memories across Cascade instances with source provenance intact.
+
+All new and federated memories begin `unverified`. Before a memory can support suppression,
+Cascade requires an exact match and a local verification record containing an approved benign
+outcome, verifier source, policy revision, timestamp, sufficient strength, and no contradiction or
+expiry. Remote approval is never trusted implicitly. Missing or malformed evidence fails open to
+escalation.
 
 Federation does not centralize the fast path: each Cascade can continue compressing locally while
 an aggregate Cascade builds broader organizational context.

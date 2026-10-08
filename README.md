@@ -66,7 +66,10 @@ classification.
 6. A separate anchor-engineering loop can propose taxonomy improvements from low-margin patterns.
    Candidates require adjudicated held-out evaluation and explicit approval before activation.
 7. Optional memory and federation retain important survivors and share them across Cascade
-   instances without changing the compression contract.
+   instances without changing the compression contract. Memory classification, similarity, and
+   strength are advisory: suppression evidence must be an exact local match with an independently
+   approved benign outcome, named verifier, policy revision, and current non-conflicting status.
+   Existing and federated memories default to unverified.
 
 See [the architecture](docs/architecture.md) and [the event workflow](docs/event-workflow.md) for
 the full mechanics. [Custom anchor engineering](docs/anchor-engineering.md) documents the separate

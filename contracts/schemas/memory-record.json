@@ -80,6 +80,28 @@
     "cluster": {
       "type": "string",
       "description": "Original signal cluster"
+    },
+    "verification": {
+      "type": "object",
+      "description": "Independent governed outcome evidence. Missing or unverified evidence cannot authorize suppression.",
+      "required": ["status", "outcome", "source", "policy_revision", "contradictory"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["unverified", "approved", "rejected", "revoked"]
+        },
+        "outcome": {
+          "type": "string",
+          "enum": ["unknown", "benign", "actionable"]
+        },
+        "source": {"type": "string"},
+        "policy_revision": {"type": "string"},
+        "evidence_ref": {"type": "string"},
+        "verified_at": {"type": ["string", "null"]},
+        "expires_at": {"type": ["string", "null"]},
+        "contradictory": {"type": "boolean"}
+      },
+      "additionalProperties": false
     }
   }
 }

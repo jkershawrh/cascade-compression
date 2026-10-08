@@ -100,6 +100,65 @@ class MemoryEvent:
 
 
 @dataclass
+class MemoryVerification:
+    """Independent outcome evidence governing suppression use.
+
+    Classification, similarity, and memory strength are deliberately excluded
+    from approval. Existing and federated memories therefore fail closed until
+    a local verifier records an approved outcome and policy revision.
+    """
+
+    status: str = "unverified"
+    outcome: str = "unknown"
+    source: str = ""
+    policy_revision: str = ""
+    evidence_ref: str = ""
+    verified_at: Optional[str] = None
+    expires_at: Optional[str] = None
+    contradictory: bool = False
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "status": self.status,
+            "outcome": self.outcome,
+            "source": self.source,
+            "policy_revision": self.policy_revision,
+            "evidence_ref": self.evidence_ref,
+            "verified_at": self.verified_at,
+            "expires_at": self.expires_at,
+            "contradictory": self.contradictory,
+        }
+
+    @staticmethod
+    def from_dict(data: Optional[Dict[str, Any]]) -> "MemoryVerification":
+        data = data if isinstance(data, dict) else {}
+        return MemoryVerification(
+            status=str(data.get("status", "unverified")),
+            outcome=str(data.get("outcome", "unknown")),
+            source=str(data.get("source", "")),
+            policy_revision=str(data.get("policy_revision", "")),
+            evidence_ref=str(data.get("evidence_ref", "")),
+            verified_at=data.get("verified_at"),
+            expires_at=data.get("expires_at"),
+            contradictory=bool(data.get("contradictory", False)),
+        )
+
+    def is_current(self, now: Optional[datetime] = None) -> bool:
+        if not self.expires_at:
+            return True
+        try:
+            expires = datetime.fromisoformat(self.expires_at.replace("Z", "+00:00"))
+            current = now or datetime.now(timezone.utc)
+            if current.tzinfo is None:
+                current = current.replace(tzinfo=timezone.utc)
+            if expires.tzinfo is None:
+                expires = expires.replace(tzinfo=timezone.utc)
+            return expires > current
+        except (TypeError, ValueError):
+            return False
+
+
+@dataclass
 class Memory:
     """A survivor signal persisted as institutional memory."""
     memory_id: UUID
@@ -116,6 +175,25 @@ class Memory:
     last_modified_at: Optional[str] = None
     last_consolidated_at: Optional[str] = None
     analysis: Optional[Dict[str, Any]] = None
+    verification: MemoryVerification = field(default_factory=MemoryVerification)
+
+    def suppression_evidence_admissible(
+        self, *, exact_match: bool, min_strength: float = 0.8,
+        now: Optional[datetime] = None,
+    ) -> bool:
+        """Return whether this memory may support (not decide) suppression."""
+        verification = self.verification
+        return bool(
+            exact_match
+            and self.strength >= min_strength
+            and verification.status == "approved"
+            and verification.outcome == "benign"
+            and verification.source
+            and verification.policy_revision
+            and verification.verified_at
+            and not verification.contradictory
+            and verification.is_current(now)
+        )
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -139,6 +217,7 @@ class Memory:
             "last_modified_at": self.last_modified_at,
             "last_consolidated_at": self.last_consolidated_at,
             "analysis": self.analysis,
+            "verification": self.verification.to_dict(),
         }
 
     @staticmethod
@@ -167,6 +246,7 @@ class Memory:
             last_modified_at=d.get("last_modified_at"),
             last_consolidated_at=d.get("last_consolidated_at"),
             analysis=d.get("analysis"),
+            verification=MemoryVerification.from_dict(d.get("verification")),
         )
 
 
@@ -299,6 +379,52 @@ class MemoryArchive:
 
     def get(self, memory_id: UUID) -> Optional[Memory]:
         return self._memories.get(memory_id)
+
+    def verify_memory(
+        self, memory_id: UUID, *, outcome: str, source: str,
+        policy_revision: str, evidence_ref: str = "",
+        expires_at: Optional[str] = None, contradictory: bool = False,
+    ) -> Memory:
+        """Record locally governed outcome evidence for a memory.
+
+        Verification never arrives implicitly from classification, strength,
+        recall, or federation. Callers must name the verifier and policy used.
+        """
+        memory = self._memories.get(memory_id)
+        if memory is None:
+            raise KeyError(str(memory_id))
+        if outcome not in {"benign", "actionable"}:
+            raise ValueError("verification outcome must be benign or actionable")
+        if not source.strip():
+            raise ValueError("verification source is required")
+        if not policy_revision.strip():
+            raise ValueError("verification policy_revision is required")
+
+        now = datetime.now(timezone.utc).isoformat()
+        memory.verification = MemoryVerification(
+            status="approved",
+            outcome=outcome,
+            source=source.strip(),
+            policy_revision=policy_revision.strip(),
+            evidence_ref=evidence_ref.strip(),
+            verified_at=now,
+            expires_at=expires_at,
+            contradictory=contradictory,
+        )
+        memory.last_modified_at = now
+        self._events.append(MemoryEvent(
+            memory_id=memory.memory_id,
+            event_type="verified",
+            details={
+                "outcome": outcome,
+                "source": source.strip(),
+                "policy_revision": policy_revision.strip(),
+                "evidence_ref": evidence_ref.strip(),
+                "expires_at": expires_at,
+                "contradictory": contradictory,
+            },
+        ))
+        return memory
 
     def query(self, signal_type: str = None, labels: Dict[str, str] = None,
               min_strength: float = 0.0, limit: int = 100) -> List[Memory]:

@@ -102,6 +102,12 @@ consolidation weakens noise and preserves repeated important patterns. Federatio
 memories from several Cascade instances while retaining source provenance. These capabilities are
 optional consumers of the same signal and decision contracts, not requirements for compression.
 
+A memory is not suppression authority merely because it is strong, similar, repeatedly recalled,
+or classified as noise. New and federated records are `unverified`. Suppression evidence is
+admissible only for an exact match with a locally approved benign outcome, verifier provenance,
+policy revision, sufficient strength, and current non-conflicting verification. A downstream
+classifier may interpret admitted evidence, but Cascade retains the final policy decision.
+
 ### Governance
 
 Cascade's in-process safety controls are always available. Independent governance is a separate

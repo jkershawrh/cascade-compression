@@ -59,8 +59,37 @@ class TestMemoryRecordSchema:
             "source": "node-01",
             "namespace": "production",
             "cluster": "benchmark-host",
+            "verification": {
+                "status": "approved",
+                "outcome": "benign",
+                "source": "human-review",
+                "policy_revision": "memory-policy-v1",
+                "evidence_ref": "review:case-1",
+                "verified_at": "2026-08-13T12:00:00Z",
+                "expires_at": "2026-08-14T12:00:00Z",
+                "contradictory": False,
+            },
         }
         jsonschema.validate(record, memory_schema)
+
+    def test_invalid_verification_status_fails(self, memory_schema):
+        record = {
+            "memory_id": "abc-123",
+            "signal_type": "pod_crashloop",
+            "severity": "high",
+            "formed_at": "2026-08-13T00:00:00Z",
+            "strength": 0.7,
+            "content_hash": "sha256:deadbeef",
+            "verification": {
+                "status": "trusted",
+                "outcome": "benign",
+                "source": "human-review",
+                "policy_revision": "memory-policy-v1",
+                "contradictory": False,
+            },
+        }
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate(record, memory_schema)
 
     def test_missing_memory_id_fails(self, memory_schema):
         record = {
