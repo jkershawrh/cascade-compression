@@ -70,6 +70,9 @@ classification.
    strength are advisory: suppression evidence must be an exact local match with an independently
    approved benign outcome, named verifier, policy revision, and current non-conflicting status.
    Existing and federated memories default to unverified.
+8. An experimental, disabled-by-default blended policy can use llm-d-sc to propose a suppressive
+   candidate and a Vela-compatible Noul verifier to test admitted outcome evidence. Cascade still
+   owns severity gating and the final decision; verifier failure or uncertainty escalates.
 
 See [the architecture](docs/architecture.md) and [the event workflow](docs/event-workflow.md) for
 the full mechanics. [Custom anchor engineering](docs/anchor-engineering.md) documents the separate

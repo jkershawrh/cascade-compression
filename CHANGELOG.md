@@ -9,6 +9,9 @@ All notable changes are documented here. This project follows Semantic Versionin
   benign outcome.
 - Add verification lifecycle contracts and audit events while preserving backward compatibility:
   existing and imported memories default to unverified.
+- Add a disabled-by-default experimental blend contract in which llm-d-sc proposes a suppressive
+  candidate, governed memory supplies admissible evidence, and a Vela-compatible Noul verifier
+  provides a thresholded second check without receiving final policy authority.
 
 ## 0.2.0rc5 - 2026-10-06
 

@@ -177,6 +177,12 @@ outcome, verifier source, policy revision, timestamp, sufficient strength, and n
 expiry. Remote approval is never trusted implicitly. Missing or malformed evidence fails open to
 escalation.
 
+An optional experimental blend may then require both a suppressive llm-d-sc candidate and a
+high-confidence answer from a Vela-compatible Noul verifier. The verifier receives a fixed,
+content-addressed question and independently supplied evidence text. It is not called until memory
+admission succeeds, and its output only supports a later Cascade policy decision. The experimental
+policy will not accept a verifier threshold below `0.95`.
+
 Federation does not centralize the fast path: each Cascade can continue compressing locally while
 an aggregate Cascade builds broader organizational context.
 

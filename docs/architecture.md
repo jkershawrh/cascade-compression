@@ -108,6 +108,15 @@ admissible only for an exact match with a locally approved benign outcome, verif
 policy revision, sufficient strength, and current non-conflicting verification. A downstream
 classifier may interpret admitted evidence, but Cascade retains the final policy decision.
 
+The experimental blended path implements that separation directly: llm-d-sc supplies candidate
+semantic evidence, the memory contract admits only governed exact matches, and a Vela-compatible
+Noul verifier evaluates one fixed question about benign self-resolution. The path is not enabled
+by the service and does not grant either model suppression authority. Missing evidence, malformed
+responses, unversioned semantic output, verifier probability below the fixed `0.95` safety floor,
+and high-severity signals all escalate. Assessments bind the semantic model and taxonomy, memory
+policy and evidence reference, verifier model, question digest, evidence digest, threshold, and
+latency.
+
 ### Governance
 
 Cascade's in-process safety controls are always available. Independent governance is a separate
