@@ -73,6 +73,9 @@ classification.
 8. An experimental, disabled-by-default blended policy can use llm-d-sc to propose a suppressive
    candidate and a Vela-compatible Noul verifier to test admitted outcome evidence. Cascade still
    owns severity gating and the final decision; verifier failure or uncertainty escalates.
+9. The outcome-evidence contract captures the independently observed intervention, impact,
+   resolution, time window, and authoritative reference needed to verify a memory. Classification
+   labels alone cannot produce this approval.
 
 See [the architecture](docs/architecture.md) and [the event workflow](docs/event-workflow.md) for
 the full mechanics. [Custom anchor engineering](docs/anchor-engineering.md) documents the separate

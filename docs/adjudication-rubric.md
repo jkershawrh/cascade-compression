@@ -47,3 +47,16 @@ signal evidence before the evaluator can report `decision_grade`.
 Balanced or challenge sampling is suitable for per-label recall, balanced accuracy, and safety
 testing. It does not preserve production prevalence, so its overall accuracy and label mix must not
 be presented as natural production rates.
+
+## Outcome evidence for memory-assisted suppression
+
+Classification receipts are not sufficient to authorize future suppression. A separate private
+`cascade.outcome-evidence.v1alpha1` receipt records what happened after the signal: whether an
+intervention occurred, whether service impact occurred, how the condition resolved, the complete
+observation window, and an authoritative source reference. The receipt is independently recorded,
+content-addressed, and bound to the frozen signal digest.
+
+Cascade derives `benign` only when the observation shows no intervention, no service impact, and
+self-resolution. Automated recovery, degraded service, an ongoing condition, an unknown value, or
+any operator intervention remains actionable. The public repository contains only the schema and
+validation mechanics; completed receipts and internal source references remain private.

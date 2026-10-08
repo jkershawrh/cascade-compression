@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cascade-compression.org/contracts/cascade.outcome-evidence/1.0.0-alpha.1",
+  "title": "Cascade Observed Outcome Evidence",
+  "description": "Private, independently sourced operational outcome evidence used to verify one memory. The public contract defines structure only; receipts remain private.",
+  "type": "object",
+  "required": [
+    "schema_version", "case_id", "signal_sha256", "intervention_required",
+    "service_impact", "resolution", "observation_window", "source",
+    "source_record_ref", "narrative", "reviewer_ref", "recorded_at",
+    "independent_of_evaluated_arms", "evidence_ref"
+  ],
+  "properties": {
+    "schema_version": {"const": "cascade.outcome-evidence.v1alpha1"},
+    "case_id": {"type": "string", "minLength": 1},
+    "signal_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "intervention_required": {"type": "boolean"},
+    "service_impact": {"enum": ["none", "degraded", "outage", "unknown"]},
+    "resolution": {
+      "enum": ["self_resolved", "automated_recovery", "operator_resolved", "ongoing", "unknown"]
+    },
+    "observation_window": {
+      "type": "object",
+      "required": ["start", "end"],
+      "properties": {
+        "start": {"type": "string", "format": "date-time"},
+        "end": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": false
+    },
+    "source": {
+      "enum": ["independent_human_review", "authoritative_record", "gcl_verdict"]
+    },
+    "source_record_ref": {"type": "string", "minLength": 1},
+    "narrative": {"type": "string", "minLength": 1},
+    "reviewer_ref": {"type": "string", "minLength": 1},
+    "recorded_at": {"type": "string", "format": "date-time"},
+    "independent_of_evaluated_arms": {"const": true},
+    "evidence_ref": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"resolution": {"const": "self_resolved"}}},
+      "then": {"properties": {"intervention_required": {"const": false}}}
+    },
+    {
+      "if": {"properties": {"resolution": {"const": "operator_resolved"}}},
+      "then": {"properties": {"intervention_required": {"const": true}}}
+    }
+  ],
+  "additionalProperties": false
+}

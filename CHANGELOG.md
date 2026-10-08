@@ -12,6 +12,8 @@ All notable changes are documented here. This project follows Semantic Versionin
 - Add a disabled-by-default experimental blend contract in which llm-d-sc proposes a suppressive
   candidate, governed memory supplies admissible evidence, and a Vela-compatible Noul verifier
   provides a thresholded second check without receiving final policy authority.
+- Add a private-receipt outcome-evidence contract and validator that derives benign memory status
+  only from no intervention, no service impact, and observed self-resolution.
 
 ## 0.2.0rc5 - 2026-10-06
 
