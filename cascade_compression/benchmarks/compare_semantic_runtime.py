@@ -53,6 +53,8 @@ def compare_runtime(
     min_throughput_ratio: float = 0.90,
     min_success_rate: float = 1.0,
 ) -> dict[str, Any]:
+    if baseline.get("serializer_revision") != candidate.get("serializer_revision"):
+        raise ValueError("runtime comparison changed classifier input serializer revision")
     baseline_identity = _identity(baseline)
     candidate_identity = _identity(candidate)
     if baseline_identity != candidate_identity:

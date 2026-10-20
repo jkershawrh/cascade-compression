@@ -2,14 +2,14 @@
 
 import logging
 
-from .base import DomainCollector
+from .base import DomainCollector, record_signal_id
 
 log = logging.getLogger(__name__)
 
 
 class HealthcareSignal:
     def __init__(self, evt: dict):
-        self.signal_id = evt.get("id", 0)
+        self.signal_id = record_signal_id(evt)
         self.cluster_id = "healthcare"
         self.namespace = evt.get("department", "general")
         self.resource_kind = "clinical_event"

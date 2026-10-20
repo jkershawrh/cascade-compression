@@ -120,11 +120,14 @@ class SeverityGate:
     def process(self, signals: List[Signal]) -> List[CascadeDecision]:
         decisions = []
         for s in signals:
-            if s.severity != "info":
-                continue
-
             label = s.labels.get("label", "") if s.labels else ""
             if label in self.GATE_BYPASS_LABELS:
+                decisions.append(CascadeDecision(
+                    signal_id=s.signal_id, agent_name=self.name,
+                    outcome=Outcome.ESCALATE, evidence=f"protected {label} event",
+                ))
+                continue
+            if s.severity not in ("info", "low"):
                 continue
 
             content_str = str(s.content)
@@ -133,14 +136,29 @@ class SeverityGate:
             if escalate:
                 decisions.append(CascadeDecision(
                     signal_id=s.signal_id, agent_name=self.name,
-                    outcome=Outcome.ESCALATE, evidence="info with critical pattern",
+                    outcome=Outcome.ESCALATE, evidence="critical pattern in content",
                 ))
-            else:
+            elif s.severity == "info":
                 decisions.append(CascadeDecision(
                     signal_id=s.signal_id, agent_name=self.name,
                     outcome=Outcome.DROP, evidence="info severity, no escalation pattern",
                 ))
         return decisions
+
+
+class SafetyEscalator(SeverityGate):
+    """Apply protected-label and critical-content checks before any removal.
+
+    Reuse the severity gate's policy, but emit escalation decisions only. The
+    ordinary gate can drop unprotected info traffic later, after numeric checks.
+    """
+
+    name = "safety_escalator"
+    stage = 0
+
+    def process(self, signals: List[Signal]) -> List[CascadeDecision]:
+        return [decision for decision in super().process(signals)
+                if decision.outcome == Outcome.ESCALATE]
 
 
 class PatternClassifier:
@@ -177,68 +195,37 @@ class PatternClassifier:
 
 
 class ThresholdClassifier:
-    """Classifies signals based on numeric thresholds in content."""
+    """Check every critical measurement before warnings or suppression."""
 
     name = "threshold_classifier"
-    stage = 2
+    stage = 0
 
     def process(self, signals: List[Signal]) -> List[CascadeDecision]:
         decisions = []
-        for s in signals:
-            c = s.content
+        for signal in signals:
+            measurements = []
+            for name in ("cpu", "memory", "disk"):
+                value = signal.content.get(f"{name}_percent")
+                if value is None:
+                    value = signal.content.get(f"{name}_usage")
+                if isinstance(value, (int, float)) and not isinstance(value, bool):
+                    measurements.append((name, value))
 
-            # CPU usage
-            cpu = c.get("cpu_percent") or c.get("cpu_usage")
-            if cpu is not None and isinstance(cpu, (int, float)):
-                if cpu > 95:
+            # A CPU warning must not mask critical memory or disk pressure.
+            for threshold, outcome, suffix, confidence in (
+                (95, Outcome.ESCALATE, "critical", 0.95),
+                (80, Outcome.CLASSIFY, "warning", 0.90),
+            ):
+                matched = next(((name, value) for name, value in measurements
+                                if value > threshold), None)
+                if matched is not None:
+                    name, value = matched
                     decisions.append(CascadeDecision(
-                        signal_id=s.signal_id, agent_name=self.name,
-                        outcome=Outcome.ESCALATE, classification="cpu_critical",
-                        evidence=f"cpu={cpu}%", confidence=0.95,
+                        signal_id=signal.signal_id, agent_name=self.name,
+                        outcome=outcome, classification=f"{name}_{suffix}",
+                        evidence=f"{name}={value}%", confidence=confidence,
                     ))
-                    continue
-                elif cpu > 80:
-                    decisions.append(CascadeDecision(
-                        signal_id=s.signal_id, agent_name=self.name,
-                        outcome=Outcome.CLASSIFY, classification="cpu_warning",
-                        evidence=f"cpu={cpu}%", confidence=0.90,
-                    ))
-                    continue
-
-            # Memory usage
-            mem = c.get("memory_percent") or c.get("memory_usage")
-            if mem is not None and isinstance(mem, (int, float)):
-                if mem > 95:
-                    decisions.append(CascadeDecision(
-                        signal_id=s.signal_id, agent_name=self.name,
-                        outcome=Outcome.ESCALATE, classification="memory_critical",
-                        evidence=f"memory={mem}%", confidence=0.95,
-                    ))
-                    continue
-                elif mem > 80:
-                    decisions.append(CascadeDecision(
-                        signal_id=s.signal_id, agent_name=self.name,
-                        outcome=Outcome.CLASSIFY, classification="memory_warning",
-                        evidence=f"memory={mem}%", confidence=0.90,
-                    ))
-                    continue
-
-            # Disk usage
-            disk = c.get("disk_percent") or c.get("disk_usage")
-            if disk is not None and isinstance(disk, (int, float)):
-                if disk > 95:
-                    decisions.append(CascadeDecision(
-                        signal_id=s.signal_id, agent_name=self.name,
-                        outcome=Outcome.ESCALATE, classification="disk_critical",
-                        evidence=f"disk={disk}%", confidence=0.95,
-                    ))
-                elif disk > 80:
-                    decisions.append(CascadeDecision(
-                        signal_id=s.signal_id, agent_name=self.name,
-                        outcome=Outcome.CLASSIFY, classification="disk_warning",
-                        evidence=f"disk={disk}%", confidence=0.90,
-                    ))
-
+                    break
         return decisions
 
 
@@ -413,9 +400,10 @@ def default_agents() -> list:
     """Return the standard built-in cascade agents."""
     return [
         TrendDetector(),
+        SafetyEscalator(),
+        ThresholdClassifier(),
         DeduplicateAgent(),
         TransientSuppressor(),
         SeverityGate(),
         PatternClassifier(),
-        ThresholdClassifier(),
     ]

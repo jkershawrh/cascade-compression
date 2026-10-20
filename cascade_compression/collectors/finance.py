@@ -12,7 +12,7 @@ import logging
 from pathlib import Path
 from typing import List
 
-from .base import BaseCollector
+from .base import BaseCollector, record_signal_id
 
 log = logging.getLogger(__name__)
 
@@ -46,7 +46,7 @@ class FinanceSignal:
     """Maps a financial transaction to the cascade Signal interface."""
 
     def __init__(self, txn: dict):
-        self.signal_id = txn.get("id", 0)
+        self.signal_id = record_signal_id(txn)
         self.cluster_id = "finance"
         self.namespace = txn.get("account_id", "unknown")
         self.resource_kind = "transaction"

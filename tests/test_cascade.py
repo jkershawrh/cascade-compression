@@ -161,7 +161,9 @@ class TestPipeline:
                     outcome=Outcome.ESCALATE, evidence="anomaly detected",
                 ) for s in signals if "CRITICAL" in s.content.get("message", "")]
 
-        pipeline = CascadePipeline([EscalateFirst()])
+        from cascade_compression.cascade.agents import SeverityGate
+
+        pipeline = CascadePipeline([EscalateFirst(), SeverityGate()])
         signals = [
             Signal(severity="info", content={"message": "CRITICAL anomaly"}),
             Signal(severity="info"),
@@ -192,7 +194,7 @@ class TestPipeline:
 
     def test_compression_ratio(self):
         pipeline = CascadePipeline([DedupeAgent(), PatternMatcher()])
-        signals = [Signal(signal_type="known_noise", severity="low")] * 10 + \
+        signals = [Signal(signal_type="known_noise", severity="low") for _ in range(10)] + \
                   [Signal(severity="high")]
         result = pipeline.run(signals)
         assert result.compression_ratio > 0.5
