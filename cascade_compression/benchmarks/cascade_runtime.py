@@ -31,7 +31,9 @@ from cascade_compression.cascade.memory import MemoryArchive
 from cascade_compression.cascade.pipeline import CascadePipeline
 from cascade_compression.cascade.protocol import Signal
 from cascade_compression.cascade.recall import RecallEngine
-from cascade_compression.classifier import SemanticClassifierBackend, serialize_signal
+from cascade_compression.classifier import (
+    SERIALIZER_REVISION, SemanticClassifierBackend, serialize_signal,
+)
 
 
 SCHEMA_VERSION = 1
@@ -377,7 +379,7 @@ def benchmark_semantic(*, address: str, signal_name: str, run_id: str, samples: 
             "namespace": "benchmark",
             "content": {
                 "message": (
-                    f"Benchmark run {run_id} scheduled reconciliation {index} "
+                    f"Benchmark run {run_id} scheduled reconciliation {0 if normalize else index} "
                     "completed successfully"
                 )
             },
@@ -422,7 +424,8 @@ def benchmark_semantic(*, address: str, signal_name: str, run_id: str, samples: 
             # Never reuse raw cache-miss inputs between concurrency cells. A
             # previous version reused the same range, causing the serial cell
             # to warm the service cache for later cells and mislabeling their
-            # results. Normalized inputs intentionally collapse to one key.
+            # results. The legacy normalized_cache_hit label now measures
+            # identical evidence; v3 never erases values to create a cache hit.
             offset = 1_000_000 + (
                 workload_index * len(concurrencies) + concurrency_index
             ) * samples
@@ -498,6 +501,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     started = time.perf_counter()
     result: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
+        "serializer_revision": SERIALIZER_REVISION,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "benchmark": "cascade-runtime",
         "semantics": {

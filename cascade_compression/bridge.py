@@ -29,7 +29,7 @@ from .cascade.promotion import AgentMetrics, Baseline, PromotionEngine, RuleAgen
 from .cascade.protocol import Signal, llm_complete
 from .cascade.protocol import Outcome
 from .cascade.triage import ExactRepeatTriage
-from .classifier import SERIALIZER_REVISION, classifier_from_environment
+from .classifier import SERIALIZER_REVISION, classifier_from_environment, serialize_signal
 from .durable_queue import DURABLE_QUEUE_OVERFLOW_POLICY, DurableLedgerQueue
 
 log = logging.getLogger(__name__)
@@ -40,6 +40,7 @@ _PROMOTION_ALLOWED_IMPORTANT = 0
 _BUILTIN_AGENT_NAMES = frozenset({
     "deduplicate", "transient_suppressor", "severity_gate",
     "pattern_classifier", "threshold_classifier", "trend_detector",
+    "safety_escalator",
 })
 
 
@@ -63,7 +64,10 @@ class BridgeStats:
 def _to_cascade_signal(sig: Any) -> Signal:
     """Convert any signal object to the cascade Signal protocol."""
     return Signal(
-        signal_id=getattr(sig, "signal_id", uuid4()),
+        signal_id=(
+            uuid4() if getattr(sig, "signal_id", None) in (None, "")
+            else sig.signal_id
+        ),
         signal_type=getattr(sig, "signal_type", ""),
         severity=getattr(sig, "severity", "info"),
         source=getattr(sig, "resource_name", ""),
@@ -341,6 +345,7 @@ class CascadeBridge:
         cascade_signals = [_to_cascade_signal(s) for s in signals]
 
         t0 = time.monotonic()
+        self._check_activation_ttl()
         cascade_result = self.pipeline.run(cascade_signals)
         cascade_ms = (time.monotonic() - t0) * 1000
 
@@ -478,6 +483,9 @@ class CascadeBridge:
                     "signal_type": sig.signal_type,
                     "severity": sig.severity,
                     "namespace": sig.namespace,
+                    "source": sig.source,
+                    "cluster": sig.cluster,
+                    "labels": dict(sig.labels or {}),
                     "content": content,
                 }
                 entry["_queue_bytes"] = self._estimate_llm_entry_bytes(entry)
@@ -1290,6 +1298,9 @@ class CascadeBridge:
                 "signal_type": sig.signal_type,
                 "severity": sig.severity,
                 "namespace": sig.namespace,
+                "source": sig.source,
+                "cluster": sig.cluster,
+                "labels": dict(sig.labels or {}),
                 "content": sig.content,
             })
         if len(self._shadow_buffer) > self._shadow_max_buffer:
@@ -1309,11 +1320,7 @@ class CascadeBridge:
             shadow_model = self._gpu_model if self._gpu_url else self._macro_model
             with httpx.Client(timeout=60) as client:
                 for sig in signals:
-                    text = (
-                        f"{sig['signal_type']} {sig['severity']}: "
-                        f"{sig.get('content', {}).get('message', '')} "
-                        f"namespace={sig.get('namespace', '')}"
-                    )
+                    text = serialize_signal(sig)
                     try:
                         ans = llm_complete(
                             client, shadow_url, shadow_key, shadow_model,
@@ -1800,6 +1807,7 @@ class CascadeBridge:
         try:
             state = {
                 "version": 3,
+                "serializer_revision": SERIALIZER_REVISION,
                 "activated_agents": dict(self._activated_patterns),
                 "activated_contexts": {k: sorted(v) for k, v in self._activated_contexts.items()},
                 "llm_noise_counts": dict(self._llm_noise_counts),
@@ -1852,9 +1860,12 @@ class CascadeBridge:
         try:
             with open(self._state_file) as f:
                 state = json.load(f)
-            self._llm_noise_counts = defaultdict(int, state.get("llm_noise_counts", {}))
+            evidence = state if state.get("serializer_revision") == SERIALIZER_REVISION else {}
+            if not evidence:
+                log.warning("Classifier input revision changed; learned rules require fresh qualification")
+            self._llm_noise_counts = defaultdict(int, evidence.get("llm_noise_counts", {}))
             self._llm_important_counts = defaultdict(
-                int, state.get("llm_important_counts", {})
+                int, evidence.get("llm_important_counts", {})
             )
 
             self._verdict_watermark = state.get("verdict_watermark", "")
@@ -1891,10 +1902,10 @@ class CascadeBridge:
             self._ledger_memory_last_success = state.get(
                 "ledger_memory_last_success", "",
             )
-            self._activation_timestamps = state.get("activation_timestamps", {})
-            if state.get("version") in (2, 3):
-                self.corpus_analyzer._known_patterns = set(state.get("known_patterns", []))
-                for candidate in state.get("candidate_agents", []):
+            self._activation_timestamps = evidence.get("activation_timestamps", {})
+            if evidence.get("version") in (2, 3):
+                self.corpus_analyzer._known_patterns = set(evidence.get("known_patterns", []))
+                for candidate in evidence.get("candidate_agents", []):
                     metrics = AgentMetrics(
                         name=candidate["name"],
                         tier=candidate.get("tier", "draft"),
@@ -1903,7 +1914,7 @@ class CascadeBridge:
                     self._agent_metrics[metrics.name] = metrics
                     self._agent_rules[metrics.name] = RuleAgent(candidate["rule"])
 
-                self._activated_patterns = dict(state.get("activated_agents", {}))
+                self._activated_patterns = dict(evidence.get("activated_agents", {}))
                 self._activated_types = set(self._activated_patterns)
                 for sig_type, pattern_type in self._activated_patterns.items():
                     if pattern_type == "repeat_flood":
@@ -1911,9 +1922,9 @@ class CascadeBridge:
                     elif pattern_type == "dominant_type":
                         self._noise_suppressor.add_noise_type(sig_type)
 
-                self._llm_context_noise = defaultdict(int, state.get("llm_context_noise", {}))
-                self._llm_context_important = defaultdict(int, state.get("llm_context_important", {}))
-                if state.get("activated_contexts"):
+                self._llm_context_noise = defaultdict(int, evidence.get("llm_context_noise", {}))
+                self._llm_context_important = defaultdict(int, evidence.get("llm_context_important", {}))
+                if evidence.get("activated_contexts"):
                     log.warning(
                         "Persisted contextual suppressors require fresh qualification"
                     )

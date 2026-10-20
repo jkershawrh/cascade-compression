@@ -61,6 +61,13 @@ class CascadePipeline:
         self._agents.sort(key=lambda a: a.stage)
 
     def run(self, signals: List[Signal]) -> CascadeResult:
+        # Ambiguous IDs make a decision for one input affect another. Reject the
+        # whole batch before invoking stateful agents, so the caller can retry.
+        ids = [signal.signal_id for signal in signals]
+        if any(value is None or value == "" for value in ids):
+            raise ValueError("signal IDs must be non-empty and unique within a batch")
+        if len(set(ids)) != len(ids) or len({str(value) for value in ids}) != len(ids):
+            raise ValueError("signal IDs must be unique within a batch")
         if self._triage_only:
             return CascadeResult(total_signals=len(signals), remaining=list(signals))
         result = CascadeResult(total_signals=len(signals))
@@ -78,14 +85,17 @@ class CascadePipeline:
                 log.exception("Agent %s failed, skipping", agent.name)
                 continue
 
-            if not self._verified_repeat_only:
-                result.decisions.extend(decisions)
-
+            active_by_id = {signal.signal_id: signal for signal in active}
             for d in decisions:
-                signal = next(
-                    (candidate for candidate in active
-                     if candidate.signal_id == d.signal_id), None,
-                )
+                signal = active_by_id.get(d.signal_id)
+                if signal is None:
+                    continue
+                if (d.signal_id in escalated_ids and d.outcome in {
+                    Outcome.SUPPRESS, Outcome.DROP, Outcome.DEDUPE,
+                }):
+                    # Ignored removal attempts must not appear as suppression
+                    # evidence or inflate the archive and compression counters.
+                    continue
                 if self._verified_repeat_only and d.outcome in {Outcome.SUPPRESS, Outcome.DROP}:
                     continue
                 if self._verified_repeat_only and d.outcome == Outcome.DEDUPE:
@@ -118,8 +128,9 @@ class CascadePipeline:
                         removed_ids.add(d.signal_id)
                     result.dropped_count += 1
                 elif d.outcome == Outcome.ESCALATE:
+                    if d.signal_id not in escalated_ids:
+                        result.escalated_count += 1
                     escalated_ids.add(d.signal_id)
-                    result.escalated_count += 1
                 elif d.outcome == Outcome.CLASSIFY:
                     result.classified_count += 1
                     # Only skip inference for info-severity classified signals.
@@ -130,18 +141,12 @@ class CascadePipeline:
                             and d.signal_id not in escalated_ids):
                         removed_ids.add(d.signal_id)
 
-                if self._verified_repeat_only and d.outcome == Outcome.DEDUPE:
+                if not self._verified_repeat_only or d.outcome == Outcome.DEDUPE:
                     result.decisions.append(d)
 
             active = [s for s in active if s.signal_id not in removed_ids]
 
-        # Drop remaining info-severity signals that weren't explicitly escalated
-        result.remaining = (
-            active if self._verified_repeat_only else [
-                s for s in active
-                if s.severity != "info" or s.signal_id in escalated_ids
-            ]
-        )
-        result.dropped_count += len(active) - len(result.remaining)
+        # Only explicit, accepted agent decisions may remove a signal.
+        result.remaining = active
 
         return result

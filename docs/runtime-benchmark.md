@@ -67,11 +67,15 @@ policy thresholds, not universal hardware guarantees.
 
 Optional `--http-url` and `--sc-address` activate external tests. Point them
 only at benchmark services you own; do not benchmark a shared production
-endpoint. The semantic section intentionally distinguishes normalized cache
-hits from unique misses and reports failures and tail latency for each
+endpoint. The semantic section distinguishes repeated identical evidence from
+unique misses and reports failures and tail latency for each
 concurrency. Start with a low concurrency and increase only within the
 endpoint's assigned CPU budget. The optional semantic path requires
 `pip install -e ".[semantic-classifier]"`.
+
+For contract compatibility, the cache-hit cell retains its `normalized_cache_hit` name. With the
+v3 serializer it repeats identical evidence without replacing measurements or identifiers.
+Results from older serializer revisions must not be reused as v3 runtime evidence.
 
 For an llm-d-sc runtime comparison, bind the benchmark to the exact runtime and
 artifact contract rather than a floating image tag:

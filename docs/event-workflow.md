@@ -19,12 +19,12 @@ sequenceDiagram
 
     Source->>Collector: domain record
     Collector->>Nano: normalized Signal
-    Nano->>Nano: dedupe, transient, severity, patterns, learned rules
+    Nano->>Nano: safety checks, dedupe, transient, severity, patterns, learned rules
     alt handled deterministically
         Nano-->>Source: decision record
     else survives nano
         Nano->>Memory: preserve survivor as needs_attention
-        Nano->>Policy: versioned normalized text
+        Nano->>Policy: versioned canonical JSON evidence
         opt semantic evidence enabled
             Policy->>SC: ClassifyRequest
             SC-->>Policy: all labels ranked + revisions
@@ -67,20 +67,28 @@ Signal(
 
 The contract carries evidence but does not prescribe a domain taxonomy. Collectors should avoid
 making suppression decisions; that policy belongs to the cascade.
+Collectors assign a fresh ID when the source record has no ID. Explicit source IDs are preserved
+and must be unique within a batch. The pipeline rejects duplicate or empty IDs before running
+stateful agents so a decision for one record cannot remove an unrelated event.
 
 ## 2. Compress in the nano tier
 
 The pipeline evaluates the signal in ordered stages:
 
-1. Priming may escalate a related type during a bounded attention window. It can never suppress.
+1. Trend, protected-label, critical-content, and numeric-critical checks run before removal.
+   Priming may also escalate a related type during a bounded attention window. Escalated inputs
+   cannot be removed by later suppression, deduplication, or classification decisions.
 2. Deduplication removes the same content inside its time window.
 3. Transient and severity agents suppress only their narrow safe cases and fail open on escalation
    evidence.
-4. Pattern and threshold agents add deterministic classifications.
+4. Pattern agents add deterministic classifications; numeric checks already ran in stage zero.
 5. Promoted dynamic agents may handle repeat floods, dominant types, or context-specific noise.
 
 A handled signal receives a `CascadeDecision` with the agent, outcome, confidence, evidence, and
 timestamp. An unhandled signal becomes a survivor.
+The bridge checks learned-rule expiry before each batch, independently of promotion maintenance.
+The pipeline never silently drops undecided info-level signals; info filtering requires an
+explicit agent decision.
 
 ## 3. Preserve before asynchronous work
 
@@ -92,9 +100,16 @@ the memory eligible to authorize future suppression.
 
 ## 4. Classify the survivor
 
-Cascade serializes the survivor into a versioned text projection and normalizes variable tokens
-such as UUIDs, addresses, hashes, and numeric values. This improves semantic-cache reuse while the
-original structured signal remains available in memory.
+The `cascade-classifier-text-v3` serializer sends canonical JSON containing the supplied type,
+severity, source, cluster, namespace, labels, and complete structured content to each backend.
+Measurements, addresses, and entity identifiers retain their values. Correlation IDs and top-level
+private review annotations are excluded. Identical evidence with different correlation IDs can
+still share a cache entry, but different readings do not collapse into one model request.
+
+The legacy `normalize` keyword remains accepted and no longer removes information. Input revision
+v3 requires fresh classifier calibration and runtime measurements. Persisted learned rules and
+qualification counts from older or unversioned input formats are not reactivated; memories and
+audit-delivery telemetry are retained. Shadow classification uses the same evidence serializer.
 
 The classification contract has exactly four labels:
 

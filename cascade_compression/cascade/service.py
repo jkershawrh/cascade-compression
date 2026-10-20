@@ -13,7 +13,7 @@ from uuid import UUID, uuid4
 
 import httpx
 from fastapi import FastAPI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .agents import default_agents
 from .pipeline import CascadePipeline, CascadeResult
@@ -56,6 +56,14 @@ class SignalInput(BaseModel):
 class BatchRequest(BaseModel):
     signals: List[SignalInput]
     forward_to_inference: bool = True
+
+    @field_validator("signals")
+    @classmethod
+    def unique_signal_ids(cls, signals):
+        ids = [signal.signal_id for signal in signals if signal.signal_id is not None]
+        if len(set(ids)) != len(ids):
+            raise ValueError("signal IDs must be unique within a batch")
+        return signals
 
 
 class CascadeStats(BaseModel):
