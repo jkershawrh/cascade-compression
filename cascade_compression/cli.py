@@ -130,7 +130,15 @@ def replay():
     parser.add_argument("--ledger-url", default="")
     parser.add_argument("--ledger-token", default="")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument("--deterministic-only", action="store_true",
+                        help="Run local routing only; never dispatch model classification or shadow calls")
+    parser.add_argument("--allow-empty", action="store_true",
+                        help="Explicitly permit a zero-record replay (not a functional validation)")
     args = parser.parse_args()
+    if args.llm_drain_timeout < 0:
+        parser.error("--llm-drain-timeout must be non-negative")
+    if args.batch_size <= 0:
+        parser.error("--batch-size must be positive")
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -152,108 +160,124 @@ def replay():
         domain=domain.DOMAIN,
         ledger_url=args.ledger_url,
         ledger_token=args.ledger_token,
+        classify_signals=not args.deterministic_only,
     )
 
-    collector_cls = domain.COLLECTOR_CLASS
-    if not collector_cls:
-        print(f"Domain '{args.domain}' has no collector configured")
-        sys.exit(1)
-
-    collector = collector_cls()
-    config = _collector_config(args.db_url, args.data)
-
-    if hasattr(collector, "connect"):
-        connected = collector.connect(config)
-        if connected is False and (args.data or args.db_url):
-            print("Collector failed to connect to the requested data source")
+    try:
+        collector_cls = domain.COLLECTOR_CLASS
+        if not collector_cls:
+            print(f"Domain '{args.domain}' has no collector configured")
             sys.exit(1)
 
-    log = logging.getLogger("cascade")
-    log.info("Replaying all historical data for domain=%s", args.domain)
+        collector = collector_cls()
+        config = _collector_config(args.db_url, args.data)
 
-    all_signals = collector.collect_all()
-    log.info("Loaded %d historical signals", len(all_signals))
+        if hasattr(collector, "connect"):
+            connected = collector.connect(config)
+            if connected is False and (args.data or args.db_url or not args.allow_empty):
+                parser.error("Collector has no usable data source; supply --data or --db-url")
 
-    consolidate_every = args.consolidate_every
-    batch_num = 0
-    for i in range(0, len(all_signals), args.batch_size):
-        batch = all_signals[i : i + args.batch_size]
-        bridge.process(batch)
-        batch_num += 1
-        if batch_num % 10 == 0:
-            log.info(
-                "Progress: %d/%d | compression=%.1f%%",
-                min(i + args.batch_size, len(all_signals)),
-                len(all_signals),
-                bridge.stats.compression_ratio * 100,
-            )
-        if consolidate_every and batch_num % consolidate_every == 0 and bridge.memory_archive:
-            from .cascade.pipeline import CascadePipeline
-            from .cascade.agents import default_agents
-            bridge.memory_archive.consolidate(
-                lambda: CascadePipeline(default_agents()),
-                batch_size=1000,
-            )
-            log.info("Consolidation at batch %d: %d memories, avg strength %.2f",
-                     batch_num, bridge.memory_archive.size,
-                     bridge.memory_archive.avg_strength)
+        log = logging.getLogger("cascade")
+        log.info("Replaying all historical data for domain=%s", args.domain)
 
-    llm_complete = bridge.wait_for_llm(args.llm_drain_timeout)
+        all_signals = collector.collect_all()
+        log.info("Loaded %d historical signals", len(all_signals))
+        if not all_signals and not args.allow_empty:
+            parser.error("Replay contains zero records; use --allow-empty only for explicit empty-input checks")
 
-    stats = bridge.get_stats()
-    summary = bridge.get_llm_summary()
-    log.info("Replay complete:")
-    log.info("  Signals:     %d", stats["signals_processed"])
-    log.info("  Compression: %.1f%%", stats["compression_ratio"] * 100)
-    log.info("  Classified:  %d (noise: %d, important: %d)",
-             summary["classified"], summary["noise"], summary["important"])
-    log.info("  Activated:   %d agents", len(summary["activated_types"]))
-    if stats["fn_status"] == "measured":
-        log.info("  FN:          %d", stats["fn_count"])
-    else:
-        log.info("  FN:          not measured (no ground-truth feedback)")
+        consolidate_every = args.consolidate_every
+        batch_num = 0
+        for i in range(0, len(all_signals), args.batch_size):
+            batch = all_signals[i : i + args.batch_size]
+            bridge.process(batch)
+            batch_num += 1
+            if batch_num % 10 == 0:
+                log.info(
+                    "Progress: %d/%d | compression=%.1f%%",
+                    min(i + args.batch_size, len(all_signals)),
+                    len(all_signals),
+                    bridge.stats.compression_ratio * 100,
+                )
+            if consolidate_every and batch_num % consolidate_every == 0 and bridge.memory_archive:
+                from .cascade.pipeline import CascadePipeline
+                from .cascade.agents import default_agents
+                bridge.memory_archive.consolidate(
+                    lambda: CascadePipeline(default_agents()),
+                    batch_size=1000,
+                )
+                log.info("Consolidation at batch %d: %d memories, avg strength %.2f",
+                         batch_num, bridge.memory_archive.size,
+                         bridge.memory_archive.avg_strength)
 
-    if bridge.memory_archive:
-        mem_stats = bridge.memory_archive.stats()
-        log.info("  Memories:    %d (avg strength %.3f, evictions %d)",
-                 mem_stats["size"], mem_stats["avg_strength"], mem_stats["evictions_total"])
-
-    if args.export_memories and bridge.memory_archive:
-        import json as _json
-        memories = bridge.memory_archive.export_memories(min_strength=0.1)
-        with open(args.export_memories, "w") as f:
-            _json.dump(memories, f)
-        log.info("Exported %d memories to %s", len(memories.get("memories", [])), args.export_memories)
-
-    if args.export_route_ledger:
-        identity_rows = [
-            {
-                "signal_id": str(getattr(signal, "signal_id", "")),
-                "signal_type": str(getattr(signal, "signal_type", "")),
-                "severity": str(getattr(signal, "severity", "")),
-            }
-            for signal in all_signals
-        ]
-        workload_digest = "sha256:" + sha256(
-            json.dumps(identity_rows, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        route_ledger = bridge.get_route_ledger()
-        artifact = {
-            "schema_version": "cascade.replay-arm.v1alpha1",
-            "workload_digest": workload_digest,
-            "total_signals": len(all_signals),
-            "model_calls": sum(route["ai_calls"] for route in route_ledger),
-            "dangerous_misses": stats["fn_count"] if stats["fn_count"] is not None else 0,
-            "dangerous_misses_measured": stats["fn_status"] == "measured",
-            "ai_work_complete": llm_complete,
-            "routes": route_ledger,
-            "shadow_sampled_suppressions": stats["shadow_checks"],
-            "total_suppressions": sum(
-                route["signal_count"] for route in route_ledger
-                if route["route"] in {"suppressed", "classified_without_ai"}
-            ),
-        }
-        Path(args.export_route_ledger).write_text(
-            json.dumps(artifact, indent=2, sort_keys=True) + "\n"
+        drained = args.deterministic_only or bridge.wait_for_llm(args.llm_drain_timeout)
+        stats = bridge.get_stats()
+        llm_complete = args.deterministic_only or (
+            drained and stats["llm_signal_outcomes_since_start"]["terminal_complete"]
         )
-        log.info("Exported aggregate route ledger to %s", args.export_route_ledger)
+        classification_status = "not_requested" if args.deterministic_only else ("complete" if llm_complete else "incomplete")
+        log.info("Classification: %s", classification_status)
+
+        summary = bridge.get_llm_summary()
+        log.info("Replay complete:")
+        log.info("  Signals:     %d", stats["signals_processed"])
+        log.info("  Compression: %.1f%%", stats["compression_ratio"] * 100)
+        log.info("  Classified:  %d (noise: %d, important: %d)",
+                 summary["classified"], summary["noise"], summary["important"])
+        log.info("  Activated:   %d agents", len(summary["activated_types"]))
+        if stats["fn_status"] == "measured":
+            log.info("  FN:          %d", stats["fn_count"])
+        else:
+            log.info("  FN:          not measured (no ground-truth feedback)")
+
+        if bridge.memory_archive:
+            mem_stats = bridge.memory_archive.stats()
+            log.info("  Memories:    %d (avg strength %.3f, evictions %d)",
+                     mem_stats["size"], mem_stats["avg_strength"], mem_stats["evictions_total"])
+
+        if args.export_memories and bridge.memory_archive:
+            import json as _json
+            memories = bridge.memory_archive.export_memories(min_strength=0.1)
+            with open(args.export_memories, "w") as f:
+                _json.dump(memories, f)
+            log.info("Exported %d memories to %s", len(memories.get("memories", [])), args.export_memories)
+
+        if args.export_route_ledger:
+            identity_rows = [
+                {
+                    "signal_id": str(getattr(signal, "signal_id", "")),
+                    "signal_type": str(getattr(signal, "signal_type", "")),
+                    "severity": str(getattr(signal, "severity", "")),
+                }
+                for signal in all_signals
+            ]
+            workload_digest = "sha256:" + sha256(
+                json.dumps(identity_rows, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            route_ledger = bridge.get_route_ledger()
+            artifact = {
+                "schema_version": "cascade.replay-arm.v1alpha1",
+                "workload_digest": workload_digest,
+                "total_signals": len(all_signals),
+                "model_calls": sum(route["ai_calls"] for route in route_ledger),
+                "dangerous_misses": stats["fn_count"] if stats["fn_count"] is not None else 0,
+                "dangerous_misses_measured": stats["fn_status"] == "measured",
+                "ai_work_complete": llm_complete,
+                "run_mode": "deterministic_only" if args.deterministic_only else "model_backed",
+                "classification_status": classification_status,
+                "routes": route_ledger,
+                "shadow_sampled_suppressions": stats["shadow_checks"],
+                "total_suppressions": sum(
+                    route["signal_count"] for route in route_ledger
+                    if route["route"] in {"suppressed", "classified_without_ai"}
+                ),
+            }
+            Path(args.export_route_ledger).write_text(
+                json.dumps(artifact, indent=2, sort_keys=True) + "\n"
+            )
+            log.info("Exported aggregate route ledger to %s", args.export_route_ledger)
+
+        if not llm_complete:
+            log.error("Replay classification is incomplete; inspect ai_work_complete in the exported evidence")
+            raise SystemExit(2)
+    finally:
+        bridge.close()

@@ -2,6 +2,10 @@
 """Smoke-test an installed OSS package without repository import paths."""
 
 import json
+import os
+import subprocess
+import sys
+import tempfile
 from importlib.metadata import version
 
 from fastapi.testclient import TestClient
@@ -39,9 +43,22 @@ def main() -> None:
     assert collector.connect({})
     assert collector.collect_all()
 
-    client = TestClient(app)
-    assert client.get("/health").status_code == 200
-    assert client.get("/").status_code == 200
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+        assert client.get("/health").json()["package_version"] == __version__
+        assert client.get("/").status_code == 200
+    with tempfile.TemporaryDirectory() as directory:
+        env = {key: value for key, value in os.environ.items() if not key.startswith(("CASCADE_", "LITELLM_"))}
+        result = subprocess.run([
+            sys.executable, "-c", "from cascade_compression.cli import replay; replay()",
+            "--domain", "finance", "--data", str(resource_path("data", "first-run-finance.json")),
+            "--deterministic-only", "--export-route-ledger", "first-run.json",
+        ], cwd=directory, env=env, capture_output=True, text=True, timeout=15)
+        assert result.returncode == 0, result.stderr
+        from pathlib import Path
+        replay = json.loads((Path(directory) / "first-run.json").read_text())
+        assert replay["total_signals"] == 2 and replay["model_calls"] == 0
+        assert replay["classification_status"] == "not_requested"
     print("release smoke: PASS")
 
 

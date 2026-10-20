@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.0rc7 (candidate)
+
+- Add a bundled nonempty first-run replay and explicit deterministic-only mode.
+- Reject missing/empty sources by default and return exit 2 for incomplete AI work.
+- Expose runtime package version in health and document verified artifact adoption.
+- Reconcile reusable roadmap/proof-handoff guidance without transferring private release claims.
+
+
 All notable changes are documented here. This project follows Semantic Versioning.
 
 ## Unreleased

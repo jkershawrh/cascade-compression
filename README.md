@@ -2,8 +2,8 @@
 
 Cascade Compression is a domain-agnostic, three-tier signal compression engine for CPU inference.
 It learns deterministic rules for routine traffic, continuously validates those rules against a
-model oracle, and escalates uncertain or important signals. One false negative demotes an active
-rule immediately.
+model oracle, and escalates uncertain or important signals. A detected, attributable important miss can demote an active
+rule; this does not establish zero unknown population risk.
 
 The project is not another classifier. It is the governed lifecycle around classification: fast
 nano agents remove duplicates, transient conditions, known patterns, and validated repetitive
@@ -21,7 +21,7 @@ collectors.
 ## Install and test
 
 The latest stable OSS release is `0.1.0`. The governed semantic-classification and custom-anchor
-work is on the `0.2.0rc6` candidate line; it is not the final 0.2.0 release. This source tree is
+work is on the `0.2.0rc7` candidate line; it is not the final 0.2.0 release. This source tree is
 configured as an **incubating OSS** prerelease. It verifies the public mechanics, build,
 packaging, tests, and supply-chain evidence without claiming classification effectiveness,
 natural compression rates, staging readiness, production readiness, or customer outcomes. The
@@ -55,6 +55,35 @@ python -m uvicorn cascade_compression.service:app --port 8090
 Then open <http://localhost:8090>. The service starts without an LLM for deterministic and
 synthetic evaluation; configure an OpenAI-compatible endpoint only when testing model-backed
 classification.
+
+## First successful run (no model required)
+
+After installation, replay the bundled two-record synthetic example. This works from any
+working directory and does not dispatch model or shadow-classification calls, even if model
+endpoint environment variables exist:
+
+```bash
+SAMPLE=$(python -c 'from cascade_compression.resources import resource_path; print(resource_path("data", "first-run-finance.json"))')
+cascade-replay --domain finance --data "$SAMPLE" --deterministic-only \
+  --export-route-ledger first-run.json
+python -c 'import json; d=json.load(open("first-run.json")); assert d["total_signals"] == 2; assert d["model_calls"] == 0; assert d["classification_status"] == "not_requested"; print("first run: PASS")'
+```
+
+Expected: two processed signals, zero model calls and `classification_status: not_requested`.
+Routing is synthetic; any reported compression is not accuracy or demonstrated cost savings.
+The default nano profile may exclude routine records; use `CASCADE_NANO_PROFILE=triage_only`
+for an observation-first evaluation that preserves every input. Empty or missing-source replays
+fail unless explicitly permitted with `--allow-empty`.
+
+For model-backed replay, configure your endpoint/model and omit `--deterministic-only`.
+Incomplete classification returns exit 2 after writing the aggregate evidence. Inspect
+`classification_status`, `ai_work_complete` and `dangerous_misses_measured`; zero measured misses
+cannot be inferred from an unmeasured counter. Follow [the evaluation guide](docs/classification-evaluation.md)
+for independent ground truth.
+
+See [the adopter/release checklist](docs/adopter-release.md), [roadmap](docs/roadmap.md) and
+[proof handoff](docs/proof-handoff.md). Start with a frozen incubation candidate; final 0.2
+and staging-qualified claims require their own release gates.
 
 ## How signal compression works
 

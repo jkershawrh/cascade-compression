@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .biography import generate_biography, _compute_health_score
+from . import __version__
 from .bridge import CascadeBridge
 from .cascade.memory import MemoryArchive
 from .cascade.inverse import SuppressionArchive, inverse_analysis, export_learned_agents
@@ -155,6 +156,7 @@ def health():
     return {
         "status": "ok",
         "service": "cascade-compression",
+        "package_version": __version__,
         "enabled": _bridge.enabled if _bridge else False,
         "nano_profile": _bridge.nano_profile if _bridge else "",
     }

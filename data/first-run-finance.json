@@ -1,0 +1,4 @@
+[
+  {"id":"example-1","account_id":"example-a","merchant":"Example Shop","amount":12,"transaction_type":"card_purchase","country":"US"},
+  {"id":"example-2","account_id":"example-b","merchant":"Example Bank","amount":20000,"transaction_type":"wire_transfer","country":"GB","is_first_time_country":true}
+]

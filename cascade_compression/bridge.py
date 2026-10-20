@@ -106,8 +106,10 @@ class CascadeBridge:
         domain: str = "default",
         ledger_url: str = "",
         ledger_token: str = "",
+        classify_signals: bool = True,
     ):
         self.domain = domain
+        self._classify_signals = classify_signals
         self._closed = False
         self._llm_url = llm_url or os.getenv("CASCADE_LLM_URL", os.getenv("LITELLM_API_BASE", ""))
         self._llm_key = llm_key or os.getenv("CASCADE_LLM_KEY", os.getenv("LITELLM_API_KEY", ""))
@@ -368,7 +370,7 @@ class CascadeBridge:
         self.corpus_analyzer.observe(cascade_signals)
 
         has_suppressors = self._activated_types or self._activated_contexts
-        if has_suppressors and self._shadow_sample_rate > 0 and self._llm_url:
+        if has_suppressors and self._shadow_sample_rate > 0 and self._llm_url and self._classify_signals:
             self._queue_shadow_samples(cascade_result, cascade_signals)
 
         if self.suppression_archive is not None:
@@ -400,7 +402,8 @@ class CascadeBridge:
                     capacity=self.memory_archive._max_capacity,
                 )
 
-        self._enqueue_llm_signals(cascade_result.remaining)
+        if self._classify_signals:
+            self._enqueue_llm_signals(cascade_result.remaining)
 
         # Meta: detect LLM starvation (buffer above 80% and all threads busy)
         buffer_pct = len(self._llm_buffer) / max(1, self._llm_max_buffer)
@@ -419,7 +422,7 @@ class CascadeBridge:
 
         self._dispatch_llm_batches()
 
-        if self._shadow_buffer and not self._shadow_running and self._llm_url:
+        if self._shadow_buffer and not self._shadow_running and self._llm_url and self._classify_signals:
             batch = list(self._shadow_buffer[:20])
             self._shadow_buffer = self._shadow_buffer[20:]
             threading.Thread(target=self._run_shadow_llm, args=(batch,), daemon=True).start()
@@ -549,6 +552,8 @@ class CascadeBridge:
 
     def _classification_dispatch_enabled(self) -> bool:
         """Return whether queued survivors have an available classifier path."""
+        if not self._classify_signals:
+            return False
         if self._llm_url:
             return True
         return self.classifier.mode == "semantic" and self.classifier.semantic is not None
