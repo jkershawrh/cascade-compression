@@ -21,12 +21,17 @@ collectors.
 ## Install and test
 
 The latest stable OSS release is `0.1.0`. The governed semantic-classification and custom-anchor
-work is on the `0.2.0rc5` candidate line; it is not the final 0.2.0 release. This source tree is
+work is on the `0.2.0rc6` candidate line; it is not the final 0.2.0 release. This source tree is
 configured as an **incubating OSS** prerelease. It verifies the public mechanics, build,
 packaging, tests, and supply-chain evidence without claiming classification effectiveness,
 natural compression rates, staging readiness, production readiness, or customer outcomes. The
 stronger staging-qualified profile remains separately fail-closed on human-adjudicated
 classification and operational evidence. The Python package supports Python 3.9 through 3.13.
+
+Classifier input revision v3 preserves structured evidence, measurements, and entity identity.
+Upgrading requires fresh classifier calibration and runtime measurements; learned rules from
+older input revisions must requalify. Existing memories and audit telemetry are retained. Do not
+reuse earlier normalization-based cache-hit results as evidence for this candidate.
 
 ```bash
 python -m venv .venv

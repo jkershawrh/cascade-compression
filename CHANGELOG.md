@@ -4,6 +4,11 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## Unreleased
 
+## 0.2.0rc6 - 2026-10-20
+
+- Prepare a new incubating OSS candidate with suppression-safety and classifier-evidence fixes.
+  This candidate does not establish classification accuracy, reduced LLM fallback, natural
+  compression rates, staging readiness, or production readiness.
 - Generate missing collector IDs and reject ambiguous batch IDs before agents run, preventing
   unrelated critical events from being removed together.
 - Run protected-label, critical-content, and numeric safety checks before suppression; remove the
