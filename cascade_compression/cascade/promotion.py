@@ -17,6 +17,7 @@ are instantly demoted to draft with a cooling-off period.
 from __future__ import annotations
 
 import logging
+import math
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -171,9 +172,12 @@ class PromotionEngine:
     candidate and nano, requiring human_approved=True to activate.
     """
 
-    def __init__(self, thresholds: Optional[Dict] = None, human_gate_enabled: bool = False):
+    def __init__(self, thresholds: Optional[Dict] = None, human_gate_enabled: bool = False, approval_ttl_hours: float = 24):
         self.thresholds = thresholds or DEFAULT_THRESHOLDS
         self.human_gate_enabled = human_gate_enabled
+        if not math.isfinite(approval_ttl_hours) or approval_ttl_hours <= 0:
+            raise ValueError('approval_ttl_hours must be finite and positive')
+        self.approval_ttl_hours = approval_ttl_hours
         self._pending_events: List[PromotionEvent] = []
 
     @property
@@ -308,6 +312,17 @@ class PromotionEngine:
                 and bool(agent.human_approved_by)
                 and bool(agent.human_approved_at)
             )
+            if approval_bound:
+                try:
+                    instant = datetime.fromisoformat(agent.human_approved_at.replace('Z','+00:00'))
+                    age = (datetime.now(timezone.utc)-instant).total_seconds()
+                    approval_bound = instant.tzinfo is not None and 0 <= age < self.approval_ttl_hours*3600
+                except (ValueError,TypeError,AttributeError):
+                    approval_bound = False
+                if not approval_bound:
+                    agent.human_approved = False
+                    agent.human_approved_by = None
+                    agent.human_approved_at = None
             if approval_bound and self._meets_requirements(
                 agent, nano_requirements,
             ):
@@ -359,6 +374,10 @@ class PromotionEngine:
             raise ValueError("approved_at must be an ISO-8601 timestamp") from exc
         if parsed.tzinfo is None:
             raise ValueError("approved_at must include a timezone")
+        if parsed > datetime.now(timezone.utc):
+            raise ValueError("approved_at cannot be in the future")
+        if (datetime.now(timezone.utc)-parsed).total_seconds() >= self.approval_ttl_hours*3600:
+            raise ValueError('approved_at has expired')
         agent.human_approved = True
         agent.human_approved_by = approved_by.strip()
         agent.human_approved_at = parsed.isoformat()

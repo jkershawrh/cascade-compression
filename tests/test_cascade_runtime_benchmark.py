@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from argparse import Namespace
+from collections import Counter
 
 import pytest
 from fastapi.testclient import TestClient
@@ -134,10 +135,47 @@ def test_run_labels_measurement_semantics(monkeypatch):
     result = run(args)
 
     assert result["schema_version"] == 1
+    assert result["serializer_revision"] == "cascade-classifier-text-v3"
     assert result["completed_at"] >= result["generated_at"]
     assert result["environment"]["label"] == "test"
     assert set(result["results"]) == {"nano"}
     assert "asynchronous" in result["semantics"]["http"]
+
+
+def test_semantic_cache_workloads_preserve_values_and_measure_actual_reuse(monkeypatch):
+    from cascade_compression.benchmarks import cascade_runtime
+    from cascade_compression.classifier import ClassificationResult
+
+    requests = []
+
+    class Backend:
+        def __init__(self, **kwargs):
+            pass
+
+        def classify(self, signal, text):
+            requests.append(text)
+            return ClassificationResult(label="needs_attention")
+
+    monkeypatch.setattr(cascade_runtime, "SemanticClassifierBackend", Backend)
+    cells, _ = cascade_runtime.benchmark_semantic(
+        address="unused", signal_name="test", run_id="test-run",
+        samples=2, warmup=1, concurrencies=[1, 2],
+        cpu_limit=1, deadline_seconds=1,
+    )
+    # One warmed input reused five times; four distinct cache-miss inputs.
+    assert sorted(Counter(requests).values()) == [1, 1, 1, 1, 5]
+    assert all("<N>" not in request for request in requests)
+    assert all(cell["errors"] == 0 for cell in cells)
+
+
+def test_runtime_comparison_rejects_different_classifier_input_revisions():
+    from cascade_compression.benchmarks.compare_semantic_runtime import compare_runtime
+
+    with pytest.raises(ValueError, match="serializer revision"):
+        compare_runtime(
+            {"serializer_revision": "cascade-classifier-text-v2"},
+            {"serializer_revision": "cascade-classifier-text-v3"},
+        )
 
 
 def test_run_records_pinned_semantic_runtime_contract(monkeypatch):

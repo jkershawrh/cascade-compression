@@ -1,5 +1,9 @@
 # Architecture
 
+The [proof handoff](proof-handoff.md) defines how findings and reviewed evidence enter
+OSS. The [roadmap](roadmap.md) prioritizes qualification of the exact public artifact.
+Related private-engine runs do not substitute for the checks described here.
+
 Cascade Compression reduces high-volume signal streams without letting the reduction mechanism
 silently become the source of truth. Classification is evidence; Cascade owns the policy that
 decides when that evidence is safe to use and whether a learned behavior may move into the fast

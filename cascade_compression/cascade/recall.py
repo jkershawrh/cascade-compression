@@ -9,11 +9,12 @@ score weighted by memory strength.
 from __future__ import annotations
 
 import math
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from .memory import Memory, MemoryArchive
+from .memory import Memory, MemoryArchive, _compute_content_hash
 from .protocol import Signal
 
 
@@ -77,6 +78,7 @@ class RecallResult:
     memory: Memory
     score: float
     breakdown: Dict[str, float] = field(default_factory=dict)
+    exact_match: bool = False
 
 
 class RecallEngine:
@@ -90,14 +92,28 @@ class RecallEngine:
 
     def recall(self, signal: Signal, archive: MemoryArchive,
                top_k: int = 5, min_score: float = 0.1,
-               reinforce: bool = False) -> List[RecallResult]:
+               reinforce: bool = False, *, namespace: Optional[str] = None,
+               cluster: Optional[str] = None) -> List[RecallResult]:
+        """Global by default; optional exact filters run before ranking.
+
+        These are similarity-query filters, not authorization. None omits a
+        filter. Explicit empty or invalid scope returns no results.
+        """
+        if any(value is not None and
+               (not isinstance(value, str) or not value.strip())
+               for value in (namespace, cluster)):
+            return []
         memories = archive.query(limit=archive.size or 1)
+        memories = [memory for memory in memories
+                    if (namespace is None or memory.signal.namespace == namespace)
+                    and (cluster is None or memory.signal.cluster == cluster)]
         if not memories:
             return []
 
         query_message = _extract_message(signal)
         query_trigrams = _trigrams(query_message.lower())
         query_features = _extract_features(signal)
+        query_context_hash = _compute_content_hash(signal)
 
         results = []
         for memory in memories:
@@ -117,9 +133,14 @@ class RecallEngine:
             score = raw_score * memory.strength
 
             if score >= min_score:
+                # Keep global/similar context available, but do not transfer
+                # another decision context's approval to the query. The archive
+                # retains its original verification and provenance unchanged.
+                exact = memory.content_hash == query_context_hash
                 results.append(RecallResult(
                     memory=memory,
                     score=score,
+                    exact_match=exact,
                     breakdown={
                         "type_match": tm,
                         "label_overlap": lj,
@@ -132,12 +153,20 @@ class RecallEngine:
 
         results.sort(key=lambda r: r.score, reverse=True)
         results = results[:top_k]
+        for r in results:
+            r.memory = deepcopy(r.memory)
+            if not r.exact_match:
+                r.memory.verification_context_hash = ""
 
         if reinforce:
             now = datetime.now(timezone.utc).isoformat()
             for r in results:
                 archive.reinforce(r.memory.memory_id)
-                r.memory.recall_count += 1
+                stored = archive.get(r.memory.memory_id)
+                stored.recall_count += 1
+                stored.last_recalled_at = now
+                r.memory.recall_count = stored.recall_count
                 r.memory.last_recalled_at = now
+                r.memory.strength = stored.strength
 
         return results

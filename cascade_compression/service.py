@@ -23,6 +23,7 @@ Environment variables:
 """
 
 import logging
+import math
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -30,9 +31,10 @@ from typing import Any, Dict, List
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool, model_validator
+from .cascade.protocol import severity_input_is_valid
 
 from .biography import generate_biography, _compute_health_score
 from .bridge import CascadeBridge
@@ -125,11 +127,17 @@ app.add_middleware(
 class SignalInput(BaseModel):
     signal_type: str = ""
     severity: str = "info"
+    severity_input_valid: StrictBool = True
     source: str = ""
     cluster: str = ""
     namespace: str = ""
     content: Dict[str, Any] = Field(default_factory=dict)
     labels: Dict[str, str] = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def preserve_severity_validity(self):
+        self.severity_input_valid = severity_input_is_valid(self.severity, self.severity_input_valid)
+        return self
 
 
 class BatchRequest(BaseModel):
@@ -142,6 +150,7 @@ class _SignalAdapter:
         self.signal_id = uuid4()
         self.signal_type = s.signal_type
         self.severity = s.severity
+        self.severity_input_valid = s.severity_input_valid
         self.resource_name = s.source
         self.namespace = s.namespace
         self.cluster_id = s.cluster
@@ -152,12 +161,25 @@ class _SignalAdapter:
 
 @app.get("/health")
 def health():
-    return {
-        "status": "ok",
+    snapshot_healthy = getattr(_bridge, "_state_healthy", None) if _bridge else None
+    enabled = bool(_bridge and _bridge.enabled)
+    if _bridge is None:
+        status, code = "not_ready", 503
+    elif snapshot_healthy is False:
+        status, code = "degraded", 503
+    elif snapshot_healthy is not True:
+        status, code = "unknown", 503
+    else:
+        status, code = ("ok" if enabled else "paused"), 200
+    body = {
+        "status": status,
         "service": "cascade-compression",
-        "enabled": _bridge.enabled if _bridge else False,
+        "enabled": enabled,
+        "ready": status == "ok",
+        "state_snapshot_healthy": snapshot_healthy,
         "nano_profile": _bridge.nano_profile if _bridge else "",
     }
+    return body if code == 200 else JSONResponse(status_code=code, content=body)
 
 
 @app.get("/stats")
@@ -172,16 +194,103 @@ def stats():
     }
 
 
+def _retained_response(request, *, status, code, processing_started=False,
+                       backpressure=False, adapted=None, cascade_ms=0.0):
+    """Retain the validated original batch; never imply rollback or safe replay."""
+    originals = [signal.model_dump(mode="json") for signal in request.signals]
+    body = {
+        "schema_version": "cascade.service-admission.v1",
+        "status": status, "enabled": False, "accepted": False,
+        "durable_acceptance": False, "backpressure": backpressure,
+        "processing_started": processing_started,
+        "recovery_required": processing_started,
+        "disposition": "retained_for_reconciliation" if processing_started else "not_processed",
+        "total": len(originals), "compressed": 0, "survivors": len(originals),
+        "retained": len(originals), "compression_ratio": 0.0,
+        "cascade_ms": round(cascade_ms, 1), "signals_needing_attention": originals,
+        "retry_safe": None,
+        "retry_semantics": "reconcile_before_replay" if processing_started else "not_processed",
+        "reconciliation": {
+            "required": processing_started,
+            "observation_ids_by_input_index": [str(item.signal_id) for item in (adapted or [])],
+            "id_origin": "generated_for_this_request" if adapted else "not_generated",
+            "idempotency_guaranteed": False,
+            "processing_may_have_changed_state": processing_started,
+            "prior_inference_execution": "unknown" if processing_started else "not_dispatched",
+        },
+        "action": (
+            "Retain original inputs; reconcile checkpoint and generated observation IDs before replay. "
+            "Automatic replay may duplicate work already processed or queued."
+            if processing_started else "Inputs were not processed; retain them until service admission resumes."
+        ),
+    }
+    return body if code == 200 else JSONResponse(status_code=code, content=body)
+
+
+def _accepted_bridge_result(result, adapted):
+    """Only the explicit v5 acceptance shape may authorize survivor accounting."""
+    if not isinstance(result, dict):
+        return False
+    if (result.get("enabled") is not True or result.get("accepted") is not True
+            or result.get("backpressure") is not False
+            or type(result.get("durable_acceptance")) is not bool):
+        return False
+    remaining = result.get("_remaining_signal_ids")
+    if (type(remaining) is not list or any(type(value) is not str or not value for value in remaining)
+            or len(set(remaining)) != len(remaining)
+            or not set(remaining).issubset({str(item.signal_id) for item in adapted})):
+        return False
+    persistence = result.get("queue_persistence")
+    if type(persistence) is not str or persistence not in {"snapshot", "memory_only"}:
+        return False
+    if result["durable_acceptance"] and persistence != "snapshot":
+        return False
+    if type(result.get("signals")) is not int or result["signals"] != len(adapted):
+        return False
+    compression = result.get("compression")
+    if (type(compression) not in (int, float) or not 0 <= compression <= 1
+            or not math.isfinite(compression)):
+        return False
+    if type(result.get("_triage")) is not dict:
+        return False
+    if "recovery_required" in result and result["recovery_required"] is not False:
+        return False
+    if "status" in result and (type(result["status"]) is not str
+                              or result["status"] not in {"ok", "accepted"}):
+        return False
+    return True
+
+
 @app.post("/cascade")
 def cascade(request: BatchRequest):
-    if not _bridge or not _bridge.enabled:
-        return {"error": "cascade not ready"}
+    if _bridge is None:
+        return _retained_response(request, status="not_ready", code=503, backpressure=True)
+    if not _bridge.enabled:
+        return _retained_response(request, status="paused", code=200)
+    if not request.signals:
+        body = _retained_response(request, status="empty", code=200)
+        body.update(enabled=True, accepted=True)
+        return body
 
     adapted = [_SignalAdapter(s) for s in request.signals]
 
     t0 = __import__("time").monotonic()
-    bridge_result = _bridge.process(adapted)
+    try:
+        bridge_result = _bridge.process(adapted)
+    except Exception as exc:
+        log.warning("Bridge processing did not establish admission (%s)", type(exc).__name__)
+        return _retained_response(request, status="bridge_processing_failed", code=503,
+            processing_started=True, backpressure=True, adapted=adapted,
+            cascade_ms=(__import__("time").monotonic() - t0) * 1000)
     cascade_ms = (__import__("time").monotonic() - t0) * 1000
+    if not _accepted_bridge_result(bridge_result, adapted):
+        status = "bridge_admission_invalid"
+        if isinstance(bridge_result, dict) and bridge_result.get("accepted") is False:
+            reason = bridge_result.get("status")
+            if type(reason) is str and reason.strip():
+                status = reason
+        return _retained_response(request, status=status, code=503,
+            processing_started=True, backpressure=True, adapted=adapted, cascade_ms=cascade_ms)
 
     survivors = []
     if bridge_result.get("enabled"):
@@ -192,10 +301,12 @@ def cascade(request: BatchRequest):
                 item = {
                     "signal_type": original.signal_type,
                     "severity": original.severity,
+                    "severity_input_valid": adapter.severity_input_valid,
                     "source": original.source,
                     "cluster": original.cluster,
                     "namespace": original.namespace,
                     "content": original.content,
+                    "labels": original.labels,
                 }
                 tag = triage_tags.get(str(adapter.signal_id))
                 if tag:
@@ -203,6 +314,11 @@ def cascade(request: BatchRequest):
                 survivors.append(item)
 
     return {
+        "enabled": True,
+        "accepted": bridge_result["accepted"],
+        "durable_acceptance": bridge_result["durable_acceptance"],
+        "backpressure": False,
+        "queue_persistence": bridge_result.get("queue_persistence"),
         "total": len(request.signals),
         "compressed": len(request.signals) - len(survivors),
         "survivors": len(survivors),
@@ -254,6 +370,7 @@ def recall(signal: SignalInput):
     query = CascadeSignal(
         signal_type=signal.signal_type,
         severity=signal.severity,
+        severity_input_valid=signal.severity_input_valid,
         source=signal.source,
         cluster=signal.cluster,
         namespace=signal.namespace,

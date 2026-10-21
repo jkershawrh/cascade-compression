@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -176,6 +177,9 @@ class Memory:
     last_consolidated_at: Optional[str] = None
     analysis: Optional[Dict[str, Any]] = None
     verification: MemoryVerification = field(default_factory=MemoryVerification)
+    # Exact context reviewed by verify_memory; missing legacy bindings cannot
+    # be upgraded implicitly by restore, similarity, or caller assertions.
+    verification_context_hash: str = ""
 
     def suppression_evidence_admissible(
         self, *, exact_match: bool, min_strength: float = 0.8,
@@ -185,6 +189,10 @@ class Memory:
         verification = self.verification
         return bool(
             exact_match
+            and _has_event_identity(self.signal)
+            and self.signal.severity_input_valid is True
+            and self.verification_context_hash == self.content_hash
+            and self.content_hash == _compute_content_hash(self.signal)
             and self.strength >= min_strength
             and verification.status == "approved"
             and verification.outcome == "benign"
@@ -198,8 +206,10 @@ class Memory:
     def to_dict(self) -> Dict[str, Any]:
         return {
             "memory_id": str(self.memory_id),
+            "signal_id": str(self.signal.signal_id),
             "signal_type": self.signal.signal_type,
             "severity": self.signal.severity,
+            "severity_input_valid": self.signal.severity_input_valid,
             "formed_at": self.formed_at,
             "strength": self.strength,
             "recall_count": self.recall_count,
@@ -208,8 +218,8 @@ class Memory:
             "source_instance": self.source_instance,
             "classification": self.classification,
             "content_hash": self.content_hash,
-            "content": self.signal.content,
-            "labels": self.signal.labels,
+            "content": deepcopy(self.signal.content),
+            "labels": deepcopy(self.signal.labels),
             "feature_vector": self.feature_vector,
             "source": self.signal.source,
             "namespace": self.signal.namespace,
@@ -218,19 +228,26 @@ class Memory:
             "last_consolidated_at": self.last_consolidated_at,
             "analysis": self.analysis,
             "verification": self.verification.to_dict(),
+            "verification_context_hash": self.verification_context_hash,
         }
 
     @staticmethod
     def from_dict(d: Dict[str, Any]) -> Memory:
-        signal = Signal(
+        signal_kwargs: Dict[str, Any] = dict(
             signal_type=d.get("signal_type", ""),
             severity=d.get("severity", "info"),
+            severity_input_valid=d.get("severity_input_valid", False) is True,
             source=d.get("source", ""),
             namespace=d.get("namespace", ""),
             cluster=d.get("cluster", ""),
-            content=d.get("content", {}),
-            labels=d.get("labels", {}),
+            content=deepcopy(d.get("content", {})),
+            labels=deepcopy(d.get("labels", {})),
         )
+        restored_signal_id = _parse_signal_id(d.get("signal_id"))
+        if restored_signal_id is not None:
+            # Exported observation identity keeps serialized hashes stable.
+            signal_kwargs["signal_id"] = restored_signal_id
+        signal = Signal(**signal_kwargs)
         return Memory(
             memory_id=UUID(d["memory_id"]),
             signal=signal,
@@ -241,12 +258,13 @@ class Memory:
             consolidation_count=d.get("consolidation_count", 0),
             source_instance=d.get("source_instance", ""),
             classification=d.get("classification", ""),
-            content_hash=d.get("content_hash", ""),
+            content_hash=_compute_content_hash(signal),
             feature_vector=d.get("feature_vector", {}),
             last_modified_at=d.get("last_modified_at"),
             last_consolidated_at=d.get("last_consolidated_at"),
             analysis=d.get("analysis"),
             verification=MemoryVerification.from_dict(d.get("verification")),
+            verification_context_hash=d.get("verification_context_hash", ""),
         )
 
 
@@ -294,12 +312,48 @@ def _normalize_content(content: dict) -> dict:
     return normalized
 
 
+def _has_event_identity(signal: Signal) -> bool:
+    """Complete identity fields enable exact reuse, not source authentication."""
+    scoped = all(isinstance(value, str) and value.strip() for value in
+                 (signal.source, signal.namespace, signal.cluster))
+    event = any(
+        (isinstance(value, str) and bool(value.strip())) or type(value) is int
+        for value in (signal.content.get("event_id"), signal.content.get("event_uid"))
+    )
+    return bool(scoped and event)
+
+
 def _compute_content_hash(signal: Signal) -> str:
-    normalized = json.dumps({
+    # Event identity and payload must remain exact: UUID/time normalization
+    # collapses distinct observations. Unknown provenance must retain work.
+    exact = json.dumps({
         "signal_type": signal.signal_type,
-        "content": _normalize_content(signal.content),
+        "severity": signal.severity,
+        "labels": signal.labels,
+        "source": signal.source,
+        "namespace": signal.namespace,
+        "cluster": signal.cluster,
+        "content": signal.content,
+        "observation_id": None if _has_event_identity(signal) else str(signal.signal_id),
     }, sort_keys=True)
-    return hashlib.sha256(normalized.encode()).hexdigest()
+    return hashlib.sha256(exact.encode()).hexdigest()
+
+
+def _parse_signal_id(value) -> Optional[UUID]:
+    """Parse an exported observation identity; invalid input stays unbound.
+
+    Serialization boundaries (to_dict/from_dict, export/import, state restore)
+    must preserve the observation identity a content hash was bound to, or the
+    same record is re-hashed with a fresh UUID and can no longer deduplicate,
+    reinforce, or be rejected. Legacy packets without this field remain
+    unbound and keep their historical fresh-identity behavior.
+    """
+    if value is None or value == "":
+        return None
+    try:
+        return UUID(str(value))
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def _extract_features(signal: Signal) -> Dict[str, float]:
@@ -332,12 +386,17 @@ class MemoryArchive:
 
     def store(self, signal: Signal, classification: str = "",
               metadata: Optional[Dict[str, Any]] = None) -> Memory:
+        # Hash and retain the same snapshot, independent of caller mutation.
+        signal = deepcopy(signal)
         content_hash = _compute_content_hash(signal)
 
         if content_hash in self._hash_index:
             existing_id = self._hash_index[content_hash]
             existing = self._memories.get(existing_id)
             if existing is not None:
+                existing.signal.severity_input_valid = (
+                    existing.signal.severity_input_valid is True and signal.severity_input_valid is True
+                )
                 existing.strength += 0.1 * (1.0 - existing.strength)
                 existing.last_modified_at = datetime.now(timezone.utc).isoformat()
                 if metadata and "analysis" in metadata:
@@ -411,6 +470,7 @@ class MemoryArchive:
             expires_at=expires_at,
             contradictory=contradictory,
         )
+        memory.verification_context_hash = _compute_content_hash(memory.signal)
         memory.last_modified_at = now
         self._events.append(MemoryEvent(
             memory_id=memory.memory_id,
@@ -420,6 +480,7 @@ class MemoryArchive:
                 "source": source.strip(),
                 "policy_revision": policy_revision.strip(),
                 "evidence_ref": evidence_ref.strip(),
+                "verification_context_hash": memory.verification_context_hash,
                 "expires_at": expires_at,
                 "contradictory": contradictory,
             },
@@ -537,6 +598,7 @@ class MemoryArchive:
                 signal_id=fresh_id,
                 signal_type=m.signal.signal_type,
                 severity=m.signal.severity,
+                severity_input_valid=m.signal.severity_input_valid,
                 source=m.signal.source,
                 namespace=m.signal.namespace,
                 cluster=m.signal.cluster,
@@ -616,7 +678,25 @@ class MemoryArchive:
         imported = 0
         rejected = 0
         for entry in data.get("memories", []):
-            content_hash = entry.get("content_hash", "")
+            signal_kwargs: Dict[str, Any] = dict(
+                signal_type=entry.get("signal_type", ""),
+                severity=entry.get("severity", "info"),
+                severity_input_valid=entry.get("severity_input_valid", False) is True,
+                source=entry.get("source", ""),
+                namespace=entry.get("namespace", ""),
+                cluster=entry.get("cluster", ""),
+                content=deepcopy(entry.get("content", {})),
+                labels=deepcopy(entry.get("labels", {})),
+            )
+            restored_signal_id = _parse_signal_id(entry.get("signal_id"))
+            if restored_signal_id is not None:
+                # The sender's identity restores merge continuity, but the
+                # hash below is still recomputed locally; a sender's stated
+                # hash never grants merge authority.
+                signal_kwargs["signal_id"] = restored_signal_id
+            signal = Signal(**signal_kwargs)
+            # A sender's old or forged hash cannot grant merge authority.
+            content_hash = _compute_content_hash(signal)
 
             if content_hash and content_hash in self._rejection_set:
                 rejected += 1
@@ -625,20 +705,14 @@ class MemoryArchive:
             if content_hash and content_hash in self._hash_index:
                 existing = self._memories.get(self._hash_index[content_hash])
                 if existing is not None:
+                    existing.signal.severity_input_valid = (
+                        existing.signal.severity_input_valid is True
+                        and entry.get("severity_input_valid", False) is True
+                    )
                     existing.strength += 0.1 * (1.0 - existing.strength)
                     existing.strength = min(existing.strength, 1.0)
                     existing.last_modified_at = datetime.now(timezone.utc).isoformat()
                     continue
-
-            signal = Signal(
-                signal_type=entry.get("signal_type", ""),
-                severity=entry.get("severity", "info"),
-                source=entry.get("source", ""),
-                namespace=entry.get("namespace", ""),
-                cluster=entry.get("cluster", ""),
-                content=entry.get("content", {}),
-                labels=entry.get("labels", {}),
-            )
 
             if self.size >= self._max_capacity:
                 self._evict_weakest()
@@ -651,7 +725,7 @@ class MemoryArchive:
                 recall_count=entry.get("recall_count", 0),
                 last_recalled_at=entry.get("last_recalled_at"),
                 consolidation_count=entry.get("consolidation_count", 0),
-                source_instance=source_instance,
+                source_instance=entry.get("source_instance") or source_instance,
                 classification=entry.get("classification", ""),
                 content_hash=content_hash or _compute_content_hash(signal),
                 feature_vector=entry.get("feature_vector", {}),

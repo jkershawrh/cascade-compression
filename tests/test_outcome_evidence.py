@@ -23,8 +23,11 @@ def frozen_signal(message="public test signal"):
         "severity": "critical",
         "source": "node-01",
         "namespace": "production",
-        "cluster": "",
-        "content": {"message": message},
+        "cluster": "prod-cluster",
+        "content": {
+            "message": message,
+            "event_uid": "40000000-0000-4000-8000-000000000002",
+        },
         "labels": {},
     }
 
@@ -109,6 +112,7 @@ def test_validated_outcome_can_verify_exact_memory():
     signal_data = frozen_signal()
     memory = archive.store(make_signal(
         severity="critical", content=signal_data["content"],
+        cluster=signal_data["cluster"],
     ))
     verified = verify_memory_from_outcome(
         archive, memory.memory_id, evidence(signal_data), signal=signal_data,

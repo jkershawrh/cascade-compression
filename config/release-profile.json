@@ -5,6 +5,7 @@
   "limitations": [
     "This experimental prerelease verifies public mechanics, build reproducibility, packaging, and supply-chain evidence; it does not establish classification effectiveness or natural compression rates.",
     "This release is not a staging-readiness, production-readiness, or customer-outcome claim.",
-    "Raw operational evidence, reviewer receipts, and environment configuration remain private."
+    "Raw operational evidence, reviewer receipts, and environment configuration remain private.",
+    "Classifier input revision v3 requires fresh calibration and runtime evidence; learned rules from older input revisions must requalify, and previous normalization-based cache-hit results do not qualify this candidate."
   ]
 }

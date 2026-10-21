@@ -1,5 +1,9 @@
 # Classification evaluation
 
+The [proof handoff](proof-handoff.md) defines how findings and reviewed evidence enter
+OSS. The [roadmap](roadmap.md) prioritizes qualification of the exact public artifact.
+Related private-engine runs do not substitute for the checks described here.
+
 Classifier agreement is not accuracy. Cascade reports accuracy only when every arm is evaluated
 against the same frozen records with adjudicated truth labels. The public evaluator accepts local
 JSON containing record identifiers, truth labels, and predictions, then emits a sanitized aggregate

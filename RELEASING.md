@@ -1,5 +1,9 @@
 # Release policy
 
+The [proof handoff](docs/proof-handoff.md) defines how findings and reviewed evidence enter
+OSS. The [roadmap](docs/roadmap.md) prioritizes qualification of the exact public artifact.
+Related private-engine runs do not substitute for the checks described here.
+
 ## Release levels
 
 `config/release-profile.json` declares the claim level for the exact release commit:

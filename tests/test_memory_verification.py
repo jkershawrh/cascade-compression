@@ -24,7 +24,11 @@ def test_new_memory_is_unverified_and_cannot_authorize_suppression():
 
 def test_approved_exact_benign_memory_is_admissible():
     archive = MemoryArchive()
-    memory = archive.store(make_signal(severity="critical"))
+    memory = archive.store(make_signal(
+        severity="critical", cluster="prod-cluster",
+        content={"message": "crashloop detected",
+                 "event_uid": "40000000-0000-4000-8000-000000000001"},
+    ))
     approve(archive, memory)
     assert memory.suppression_evidence_admissible(exact_match=True)
 
@@ -63,12 +67,17 @@ def test_admission_fails_closed_for_malformed_expiration():
 
 def test_verification_roundtrips_through_archive_state():
     archive = MemoryArchive()
-    memory = archive.store(make_signal(severity="critical"))
+    memory = archive.store(make_signal(
+        severity="critical", cluster="prod-cluster",
+        content={"message": "crashloop detected",
+                 "event_uid": "40000000-0000-4000-8000-000000000001"},
+    ))
     approve(archive, memory)
     restored = MemoryArchive.from_dict(archive.to_dict())
     restored_memory = restored.get(memory.memory_id)
     assert restored_memory.verification.status == "approved"
     assert restored_memory.verification.outcome == "benign"
+    assert restored_memory.content_hash == memory.content_hash
     assert restored_memory.suppression_evidence_admissible(exact_match=True)
 
 

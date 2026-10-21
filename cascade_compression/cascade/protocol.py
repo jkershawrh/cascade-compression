@@ -24,6 +24,11 @@ class Outcome(str, Enum):
 VALID_SEVERITIES = {"info", "low", "medium", "high", "critical"}
 
 
+def severity_input_is_valid(raw, prior=True):
+    """Only withdraw validity; no prior approval overrides invalid raw input."""
+    return type(raw) is str and raw in VALID_SEVERITIES and prior is True
+
+
 @dataclass
 class Signal:
     """Generic input signal — domain packs map their types to this."""
@@ -35,9 +40,14 @@ class Signal:
     labels: Dict[str, str] = field(default_factory=dict)
     namespace: str = ""
     cluster: str = ""
+    # Negative admission evidence, not a caller-granted approval. AND with raw
+    # validation before normalizing; False stays False on dataclass round-trips.
+    severity_input_valid: bool = field(default=True, repr=False, compare=False)
 
     def __post_init__(self):
-        if not self.severity or self.severity not in VALID_SEVERITIES:
+        raw_valid = type(self.severity) is str and self.severity in VALID_SEVERITIES
+        self.severity_input_valid = severity_input_is_valid(self.severity, self.severity_input_valid)
+        if not raw_valid:
             self.severity = "medium"
 
 

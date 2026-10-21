@@ -7,9 +7,16 @@ import ssl
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from typing import Iterator, Optional, Union
+from uuid import uuid4
 from urllib.request import Request, urlopen
 
 log = logging.getLogger(__name__)
+
+
+def record_signal_id(record: dict):
+    """Preserve a supplied correlation ID, or identify this observation uniquely."""
+    value = record.get("id")
+    return uuid4() if value is None or value == "" else value
 
 
 @dataclass(frozen=True)

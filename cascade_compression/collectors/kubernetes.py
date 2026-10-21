@@ -11,14 +11,14 @@ from typing import Iterator, Optional
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from .base import BaseCollector, detect_in_cluster, load_sa_token
+from .base import BaseCollector, detect_in_cluster, load_sa_token, record_signal_id
 
 logger = logging.getLogger(__name__)
 
 
 class KubernetesSignal:
     def __init__(self, record: dict):
-        self.signal_id = hash(f"{record.get('type','')}{record.get('name','')}{record.get('timestamp','')}")
+        self.signal_id = record_signal_id(record)
         self.cluster_id = record.get("cluster", "k8s")
         self.namespace = record.get("namespace", "")
         self.resource_kind = record.get("type", "unknown")

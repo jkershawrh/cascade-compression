@@ -80,15 +80,22 @@ class TestImport:
         assert memories[0].source_instance == "cluster-alpha"
 
     def test_import_dedup_same_content(self):
-        """Importing a memory with same content_hash as existing reinforces."""
+        """Importing a memory for the same identified event reinforces.
+
+        Content-only merging across distinct observations was withdrawn;
+        deduplication requires complete event identity.
+        """
         archive = MemoryArchive()
-        content = {"message": "shared incident"}
-        m1 = archive.store(make_signal(content=content), classification="x")
+        content = {"message": "shared incident",
+                   "event_uid": "40000000-0000-4000-8000-000000000003"}
+        m1 = archive.store(make_signal(content=content, cluster="prod"),
+                           classification="x")
         original_strength = m1.strength
 
-        # Simulate export from another instance with same content
+        # A second instance observed the same identified event.
         other = MemoryArchive(instance_id="other")
-        other.store(make_signal(content=content), classification="x")
+        other.store(make_signal(content=dict(content), cluster="prod"),
+                    classification="x")
         exported = other.export_memories()
 
         archive.import_memories(exported)
@@ -98,14 +105,16 @@ class TestImport:
 
 class TestCrossSourceCorrelation:
     def test_same_content_from_two_sources_boosts_strength(self):
-        """GIVEN same content_hash from 2 different instances
+        """GIVEN the same identified event observed by 2 instances
         WHEN both imported into a third
         THEN memory strength is boosted beyond either individual."""
         target = MemoryArchive(instance_id="central")
-        content = {"message": "network partition detected"}
+        content = {"message": "network partition detected",
+                   "event_uid": "40000000-0000-4000-8000-000000000004"}
 
         source_a = MemoryArchive(instance_id="cluster-a")
-        source_a.store(make_signal(severity="high", content=content),
+        source_a.store(make_signal(severity="high", content=dict(content),
+                                   cluster="prod"),
                        classification="incident")
         target.import_memories(source_a.export_memories())
 
@@ -113,10 +122,12 @@ class TestCrossSourceCorrelation:
         strength_after_first = first_memory.strength
 
         source_b = MemoryArchive(instance_id="cluster-b")
-        source_b.store(make_signal(severity="high", content=content),
+        source_b.store(make_signal(severity="high", content=dict(content),
+                                   cluster="prod"),
                        classification="incident")
         target.import_memories(source_b.export_memories())
 
+        assert target.size == 1
         assert first_memory.strength > strength_after_first
 
     def test_federated_sources_count(self):

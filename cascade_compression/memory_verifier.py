@@ -12,10 +12,12 @@ import hashlib
 import json
 import math
 import time
+from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Dict, Optional, Protocol, runtime_checkable
 
-from .cascade.memory import Memory
+from .cascade.memory import Memory, _compute_content_hash, _has_event_identity
+from .cascade.protocol import Signal, VALID_SEVERITIES
 from .classifier import ClassificationResult, SUPPRESSIVE_LABELS, serialize_signal
 
 
@@ -146,6 +148,52 @@ class BlendedSuppressionAssessment:
     verifier_latency_ms: float = 0.0
 
 
+def _json_context(value: Any) -> bool:
+    """Accept JSON values without coercing keys, numbers, or nested identity."""
+    if value is None or type(value) in (str, bool, int):
+        return True
+    if type(value) is float:
+        return math.isfinite(value)
+    if type(value) is list:
+        return all(_json_context(item) for item in value)
+    if type(value) is dict:
+        return all(type(key) is str and _json_context(item)
+                   for key, item in value.items())
+    return False
+
+
+def _current_signal(packet: Any) -> Optional[Signal]:
+    """Validate a complete native request without normalizing invalid input."""
+    if type(packet) is not dict:
+        return None
+    for name in ("signal_type", "source", "namespace", "cluster"):
+        if type(packet.get(name)) is not str or not packet[name].strip():
+            return None
+    severity = packet.get("severity")
+    if type(severity) is not str or severity not in VALID_SEVERITIES:
+        return None
+    if packet.get("severity_input_valid", True) is not True:
+        return None
+    labels, content = packet.get("labels"), packet.get("content")
+    if type(labels) is not dict or type(content) is not dict:
+        return None
+    if not all(type(key) is str and type(value) is str
+               for key, value in labels.items()):
+        return None
+    try:
+        if not _json_context(content):
+            return None
+        current = Signal(
+            signal_type=packet["signal_type"], source=packet["source"],
+            namespace=packet["namespace"], cluster=packet["cluster"],
+            severity=severity, severity_input_valid=True,
+            content=deepcopy(content), labels=deepcopy(labels),
+        )
+        return current if _has_event_identity(current) else None
+    except (TypeError, ValueError, RecursionError):
+        return None
+
+
 class BlendedMemorySuppressionPolicy:
     """Fail-closed llm-d-sc + governed memory + Vela policy experiment.
 
@@ -165,7 +213,10 @@ class BlendedMemorySuppressionPolicy:
         memory: Memory, exact_match: bool, evidence_text: str,
     ) -> BlendedSuppressionAssessment:
         label = semantic.label
-        if signal.get("severity", "info") in {"high", "critical"}:
+        current = _current_signal(signal)
+        if current is None:
+            return self._assessment(False, "invalid_signal_context", semantic, memory)
+        if current.severity in {"high", "critical"}:
             return self._assessment(False, "severity_gated", semantic, memory)
         if not semantic.ok:
             return self._assessment(False, "semantic_unavailable", semantic, memory)
@@ -178,13 +229,53 @@ class BlendedMemorySuppressionPolicy:
             return self._assessment(False, "semantic_unversioned", semantic, memory)
         if label not in SUPPRESSIVE_LABELS:
             return self._assessment(False, "semantic_not_suppressive", semantic, memory)
-        if not memory.suppression_evidence_admissible(exact_match=exact_match):
+        # Caller hints can withdraw support, never establish context equality.
+        try:
+            context_hash = _compute_content_hash(current)
+        except (TypeError, ValueError, RecursionError):
+            return self._assessment(False, "invalid_signal_context", semantic, memory)
+        derived_exact = (
+            context_hash == memory.content_hash
+            and context_hash == memory.verification_context_hash
+        )
+        if not derived_exact:
+            return self._assessment(False, "memory_context_mismatch", semantic, memory)
+        try:
+            admitted = memory.suppression_evidence_admissible(
+                exact_match=exact_match is True and derived_exact,
+            )
+        except (TypeError, ValueError, AttributeError, RecursionError):
+            return self._assessment(False, "invalid_memory_context", semantic, memory)
+        if not admitted:
             return self._assessment(False, "memory_not_admissible", semantic, memory)
-        if not evidence_text.strip():
+        if not isinstance(evidence_text, str) or not evidence_text.strip():
             return self._assessment(False, "missing_evidence", semantic, memory)
 
-        verified = self.verifier.verify(signal, memory, evidence_text)
-        if not verified.ok:
+        # The verifier receives snapshots, not mutable archive/request authority.
+        packet = {name: deepcopy(getattr(current, name)) for name in (
+            "signal_type", "source", "namespace", "cluster", "severity", "labels", "content",
+        )}
+        verifier_signal = deepcopy(packet)
+        verifier_memory = deepcopy(memory)
+        before = verifier_memory.to_dict()
+        try:
+            verified = self.verifier.verify(verifier_signal, verifier_memory, evidence_text)
+            if not isinstance(verified, EvidenceVerificationResult):
+                return self._assessment(False, "verifier_invalid_result", semantic, memory)
+            # Do not return support if verification changed the bound evidence,
+            # or concurrent caller mutation changed the request/approval context.
+            after = _current_signal(signal)
+            if (verifier_signal != packet or verifier_memory.to_dict() != before
+                    or after is None or _compute_content_hash(after) != context_hash
+                    or not memory.suppression_evidence_admissible(exact_match=True)
+                    or memory.content_hash != context_hash
+                    or memory.verification.to_dict() != before["verification"]
+                    or memory.verification_context_hash != before["verification_context_hash"]):
+                return self._assessment(False, "verification_context_changed", semantic, memory)
+            verifier_ok = verified.ok
+        except Exception:
+            return self._assessment(False, "verifier_failed", semantic, memory)
+        if not verifier_ok:
             return self._assessment(
                 False, f"verifier_{verified.error_code or 'failed'}", semantic, memory,
                 evidence_text=evidence_text, verification=verified,

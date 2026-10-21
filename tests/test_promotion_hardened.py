@@ -9,6 +9,7 @@ Validates:
 """
 
 import pytest
+from datetime import datetime, timedelta, timezone
 
 from cascade_compression.cascade.promotion import (
     ACTIVATED_TIERS,
@@ -358,17 +359,27 @@ class TestHumanGate:
         agent.samples_tested = 300
         agent.false_positive_rate = 0.01
         agent.false_negative_rate = 0.0
-        gated_engine.approve(
-            agent, approved_by="reviewer-a",
-            approved_at="2026-09-01T00:00:00Z",
-        )
+        approved_at = (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()
+        gated_engine.approve(agent, approved_by="reviewer-a", approved_at=approved_at)
         agent = gated_engine.check_promotion(agent)
         events = gated_engine.drain_events()
         assert len(events) == 1
         assert events[0].to_tier == "nano"
         assert events[0].human_approved is True
         assert events[0].human_approved_by == "reviewer-a"
-        assert events[0].human_approved_at == "2026-09-01T00:00:00+00:00"
+        assert events[0].human_approved_at == approved_at
+
+
+@pytest.mark.parametrize("offset_hours,aware", [(-48, True), (1, True), (-1, False)])
+def test_expired_future_or_timezone_free_approval_never_grants_authority(gated_engine, offset_hours, aware):
+    agent = AgentMetrics(name="synthetic-approval", tier="pending_approval")
+    stamp = datetime.now(timezone.utc) + timedelta(hours=offset_hours)
+    if not aware:
+        stamp = stamp.replace(tzinfo=None)
+    with pytest.raises(ValueError):
+        gated_engine.approve(agent, approved_by="reviewer-a", approved_at=stamp.isoformat())
+    assert agent.tier == "pending_approval"
+    assert agent.human_approved is False
 
 
 class TestLedgerSchema:

@@ -30,7 +30,7 @@ CASCADE_LABELS = frozenset({
     "routine_noise", "known_pattern", "needs_attention", "real_incident",
 })
 SUPPRESSIVE_LABELS = frozenset({"routine_noise", "known_pattern"})
-SERIALIZER_REVISION = "cascade-classifier-text-v2"
+SERIALIZER_REVISION = "cascade-classifier-text-v3"
 VALID_MODES = frozenset({"generative", "compare", "semantic", "hybrid"})
 VALID_SCORING_MODES = frozenset({
     "anchor_cosine", "classification_head_probability",
@@ -44,43 +44,32 @@ normal behavior; known_pattern requires a familiar documented interpretation; ne
 unusual or ambiguous and should be investigated; real_incident is an active harmful condition.
 """.strip()
 
-# Signal normalization patterns — collapse variable tokens to placeholders so
-# near-duplicate signals become exact cache hits on the SC.  Order matters:
-# UUID before generic hex, specific patterns before general numeric.
-_NORM_PATTERNS = [
-    # UUIDs: 8-4-4-4-12 hex
-    (re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I), "<UUID>"),
-    # K8s-style pod/replicaset hashes (trailing 5-10 alphanum after a dash)
-    (re.compile(r"(?<=-)[a-z0-9]{5,10}(?=\s|$|[\.\-/])"), "<HASH>"),
-    # IP addresses
-    (re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(:\d+)?\b"), "<IP>"),
-    # Hostnames with numbered suffixes (e.g., ocp-virt7-host12, node-03)
-    (re.compile(r"\b[a-z][\w.-]*\d+[-.][\w.-]*\d+\b", re.I), "<HOST>"),
-    # Numeric values (e.g., value=338.00, count=42, restarts: 5)
-    (re.compile(r"(?<=[=:\s])\d+(?:\.\d+)?(?=\s|$|[,;])"), "<N>"),
-]
-
-
 def normalize_signal_text(text: str) -> str:
-    """Collapse variable tokens so near-duplicate signals share a cache key."""
-    for pattern, replacement in _NORM_PATTERNS:
-        text = pattern.sub(replacement, text)
+    """Compatibility helper that preserves all decision-relevant input verbatim.
+
+    Earlier revisions replaced numbers, addresses, and identifiers with generic
+    tokens. Those values can distinguish routine behavior from an incident.
+    """
     return text
 
 
-def serialize_signal(signal: Dict[str, Any], *, normalize: bool = True) -> str:
-    """Return the versioned text projection used by every classifier backend.
+def serialize_signal(signal: Dict[str, Any], *, normalize: bool = False) -> str:
+    """Serialize full evidence deterministically for every classifier backend.
 
-    When *normalize* is True (default), variable tokens like UUIDs, pod hashes,
-    and numeric values are collapsed to placeholders. This improves exact-cache
-    reuse for repeated signal patterns without changing Cascade's decision policy.
+    Only routing/evidence fields are admitted; correlation IDs and private review
+    annotations do not become model input. Canonical key ordering lets identical
+    evidence share a cache entry without erasing measurements or entity identity.
+    ``normalize`` remains accepted for compatibility and no longer removes data.
+    The v3 input format requires fresh evaluation before reusing calibration.
     """
-    raw = (
-        f"{signal.get('signal_type', '')} {signal.get('severity', 'medium')}: "
-        f"{signal.get('content', {}).get('message', '')} "
-        f"namespace={signal.get('namespace', '')}"
+    fields = (
+        "signal_type", "severity", "source", "namespace", "cluster",
+        "content", "labels",
     )
-    return normalize_signal_text(raw) if normalize else raw
+    return json.dumps(
+        {key: signal[key] for key in fields if key in signal},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str,
+    )
 
 
 def normalize_label(value: str) -> str:
@@ -268,6 +257,9 @@ class SemanticClassifierBackend:
         self.address = address
         self.signal_name = signal_name
         self.deadline_seconds = deadline_seconds
+        self.identity_contract = dict(tls_enabled=tls_enabled, tls_ca_path=tls_ca_path,
+                                      tls_cert_path=tls_cert_path, tls_key_path=tls_key_path,
+                                      server_name=server_name, allow_insecure_remote=allow_insecure_remote)
         self.expected_taxonomy_revision = expected_taxonomy_revision
         self.expected_model_revision = expected_model_revision
         self.expected_tokenizer_revision = expected_tokenizer_revision

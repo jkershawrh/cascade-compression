@@ -8,6 +8,7 @@ collector, and optionally forwards survivors to an LLM for classification.
 import json
 import hashlib
 import logging
+import math
 import os
 import random
 import threading
@@ -29,8 +30,9 @@ from .cascade.promotion import AgentMetrics, Baseline, PromotionEngine, RuleAgen
 from .cascade.protocol import Signal, llm_complete
 from .cascade.protocol import Outcome
 from .cascade.triage import ExactRepeatTriage
-from .classifier import SERIALIZER_REVISION, classifier_from_environment
+from .classifier import SERIALIZER_REVISION, classifier_from_environment, serialize_signal
 from .durable_queue import DURABLE_QUEUE_OVERFLOW_POLICY, DurableLedgerQueue
+from .lifecycle import LifecycleControls, REVISION, atomic_snapshot, valid_time
 
 log = logging.getLogger(__name__)
 
@@ -40,6 +42,7 @@ _PROMOTION_ALLOWED_IMPORTANT = 0
 _BUILTIN_AGENT_NAMES = frozenset({
     "deduplicate", "transient_suppressor", "severity_gate",
     "pattern_classifier", "threshold_classifier", "trend_detector",
+    "safety_escalator",
 })
 
 
@@ -63,9 +66,13 @@ class BridgeStats:
 def _to_cascade_signal(sig: Any) -> Signal:
     """Convert any signal object to the cascade Signal protocol."""
     return Signal(
-        signal_id=getattr(sig, "signal_id", uuid4()),
+        signal_id=(
+            uuid4() if getattr(sig, "signal_id", None) in (None, "")
+            else sig.signal_id
+        ),
         signal_type=getattr(sig, "signal_type", ""),
         severity=getattr(sig, "severity", "info"),
+        severity_input_valid=getattr(sig, "severity_input_valid", True),
         source=getattr(sig, "resource_name", ""),
         namespace=getattr(sig, "namespace", ""),
         cluster=str(getattr(sig, "cluster_id", "")),
@@ -78,7 +85,7 @@ def _to_cascade_signal(sig: Any) -> Signal:
     )
 
 
-class CascadeBridge:
+class CascadeBridge(LifecycleControls):
     """Standalone cascade bridge.
 
     Usage::
@@ -217,7 +224,8 @@ class CascadeBridge:
         )
         self._triage_advisor = ExactRepeatTriage() if nano_profile == "triage_only" else None
         self._human_gate = bool(os.getenv("CASCADE_HUMAN_GATE", ""))
-        self.promotion = PromotionEngine(human_gate_enabled=self._human_gate)
+        self.promotion = PromotionEngine(human_gate_enabled=self._human_gate,
+                                        approval_ttl_hours=float(os.getenv('CASCADE_APPROVAL_TTL_HOURS','24')))
         self.stats = BridgeStats(started_at=datetime.now(timezone.utc).isoformat())
 
         self._repeat_suppressor = RepeatFloodSuppressor(max_repeats=3, window_seconds=300)
@@ -309,7 +317,19 @@ class CascadeBridge:
         self._shadow_demotions = 0
 
         self._activation_ttl_hours = float(os.getenv("CASCADE_ACTIVATION_TTL_HOURS", "72"))
+        self._qualification_ttl_hours = float(os.getenv('CASCADE_QUALIFICATION_TTL_HOURS','72'))
+        if not math.isfinite(self._qualification_ttl_hours) or self._qualification_ttl_hours <= 0:
+            raise ValueError('CASCADE_QUALIFICATION_TTL_HOURS must be finite and positive')
         self._activation_timestamps: Dict[str, str] = {}
+        self._serializer_revision = SERIALIZER_REVISION
+        self._lifecycle_lock = threading.RLock()
+        self._snapshot_lock = threading.RLock()
+        self._qualification_evidence = {}
+        self._classifier_inflight = {}
+        self._classifier_terminal_receipts = []
+        self._classifier_terminal_evicted = 0
+        self._classifier_terminal_max = max(1, int(os.getenv('CASCADE_CLASSIFIER_TERMINAL_RECEIPTS_MAX', '10000')))
+        self._state_healthy = True
 
         self.baseline = Baseline(normal_ranges={})
         self._observed_ranges: Dict[str, Dict[str, list]] = defaultdict(lambda: defaultdict(list))
@@ -341,7 +361,9 @@ class CascadeBridge:
         cascade_signals = [_to_cascade_signal(s) for s in signals]
 
         t0 = time.monotonic()
-        cascade_result = self.pipeline.run(cascade_signals)
+        with self._lifecycle_lock:
+            self._check_activation_ttl()
+            cascade_result = self.pipeline.run(cascade_signals)
         cascade_ms = (time.monotonic() - t0) * 1000
 
         triage_tags = (
@@ -395,7 +417,15 @@ class CascadeBridge:
                     capacity=self.memory_archive._max_capacity,
                 )
 
-        self._enqueue_llm_signals(cascade_result.remaining)
+        if not self._enqueue_llm_signals(cascade_result.remaining):
+            return {
+                'enabled': False, 'accepted': False, 'durable_acceptance': False,
+                'backpressure': True, 'status': 'classifier_checkpoint_failed',
+                'recovery_required': True, 'signals': len(signals),
+                'action': 'retry checkpoint or reconcile original signal IDs before replay',
+                '_remaining_signal_ids': [str(sig.signal_id) for sig in cascade_result.remaining],
+                'limitation': 'Processing may have changed in-memory state; classifier work is not durably accepted.',
+            }
 
         # Meta: detect LLM starvation (buffer above 80% and all threads busy)
         buffer_pct = len(self._llm_buffer) / max(1, self._llm_max_buffer)
@@ -435,6 +465,9 @@ class CascadeBridge:
 
         return {
             "enabled": True,
+            'accepted': True, 'backpressure': False,
+            'durable_acceptance': bool(self._state_file) and self._state_healthy,
+            'queue_persistence': 'snapshot' if self._state_file else 'memory_only',
             "signals": len(signals),
             "cascade_ms": round(cascade_ms, 1),
             "compression": round(cascade_result.compression_ratio, 3),
@@ -474,10 +507,14 @@ class CascadeBridge:
                 self._llm_accounting_enqueued += 1
                 content, truncated = self._compact_llm_content(sig.content)
                 entry = {
+                    "_work_id": str(uuid4()),
                     "signal_id": str(sig.signal_id),
                     "signal_type": sig.signal_type,
                     "severity": sig.severity,
                     "namespace": sig.namespace,
+                    "source": sig.source,
+                    "cluster": sig.cluster,
+                    "labels": dict(sig.labels or {}),
                     "content": content,
                 }
                 entry["_queue_bytes"] = self._estimate_llm_entry_bytes(entry)
@@ -491,6 +528,13 @@ class CascadeBridge:
                     self._llm_payloads_truncated += 1
             self._enforce_llm_buffer_limit_locked()
             self._enforce_llm_priority_limit_locked()
+        if self._state_file:
+            accepted = self._save_state()
+            if not accepted:
+                with self._lifecycle_lock:
+                    self._fence_learning('enqueue checkpoint failed')
+            return accepted
+        return True
 
     def _dispatch_llm_batches(self) -> None:
         if not self._classification_dispatch_enabled():
@@ -523,6 +567,20 @@ class CascadeBridge:
                     )
                     batch.extend(normal)
                 self._llm_accounting_dispatched += len(batch)
+                for entry in batch:
+                    self._classifier_inflight[entry['_work_id']] = entry
+            if self._state_file and not self._save_state():
+                with self._llm_queue_lock:
+                    for entry in batch:
+                        self._classifier_inflight.pop(entry['_work_id'], None)
+                    self._llm_priority_buffer[:0] = [e for e in batch if e.get('severity') in {'critical', 'high'}]
+                    self._llm_buffer[:0] = [e for e in batch if e.get('severity') not in {'critical', 'high'}]
+                    self._llm_priority_buffer_bytes = sum(self._entry_queue_bytes(e) for e in self._llm_priority_buffer)
+                    self._llm_buffer_bytes = sum(self._entry_queue_bytes(e) for e in self._llm_buffer)
+                    self._llm_accounting_dispatched -= len(batch)
+                with self._llm_lock:
+                    self._llm_active_threads -= 1
+                return
             try:
                 threading.Thread(
                     target=self._run_llm, args=(batch,), daemon=True,
@@ -530,6 +588,8 @@ class CascadeBridge:
             except Exception as exc:
                 with self._llm_queue_lock:
                     self._llm_accounting_failed += len(batch)
+                    for entry in batch:
+                        self._classifier_inflight.pop(entry['_work_id'], None)
                 with self._pending_memory_lock:
                     for entry in batch:
                         self._pending_memory_ids.pop(
@@ -538,6 +598,7 @@ class CascadeBridge:
                 with self._llm_lock:
                     self._llm_active_threads -= 1
                 log.error("Could not start classifier worker: %s", str(exc)[:80])
+                self._save_state()
 
     def _classification_dispatch_enabled(self) -> bool:
         """Return whether queued survivors have an available classifier path."""
@@ -728,6 +789,13 @@ class CascadeBridge:
         )
 
     def _discover_and_promote(self):
+        with self._lifecycle_lock:
+            return self._discover_and_promote_locked()
+
+    def _discover_and_promote_locked(self):
+        self._check_activation_ttl()
+        if self._state_file and not self._state_healthy:
+            return
         new_agents = self.corpus_analyzer.maybe_analyze()
         for agent_metrics, rule in new_agents:
             sig_type = agent_metrics.config.get("signal_type", "")
@@ -756,8 +824,17 @@ class CascadeBridge:
             ):
                 continue
 
-            noise = self._llm_noise_counts.get(sig_type, 0)
-            important = self._llm_important_counts.get(sig_type, 0)
+            rule = self._agent_rules.get(name)
+            record = (self._qualified_record('agent:' + name, self._rule_binding(agent_metrics, rule))
+                      if rule else None)
+            if record is None:
+                agent_metrics.tier = 'draft'
+                agent_metrics.human_approved = False
+                agent_metrics.human_approved_by = None
+                agent_metrics.human_approved_at = None
+                continue
+            noise = record['noise']
+            important = record['important']
             total = noise + important
             if total == 0:
                 continue
@@ -776,7 +853,7 @@ class CascadeBridge:
             )
 
             previous_tier = agent_metrics.tier
-            while agent_metrics.tier in {"draft", "candidate"}:
+            while agent_metrics.tier in {"draft", "candidate", "pending_approval"}:
                 current_tier = agent_metrics.tier
                 self.promotion.check_promotion(agent_metrics)
                 if agent_metrics.tier == current_tier:
@@ -854,7 +931,10 @@ class CascadeBridge:
             if ctx_value in self._activated_contexts.get(sig_type, set()):
                 continue
 
-            important = context_important.get(ctx_key, 0)
+            record = self._qualified_record('context:' + ctx_key, self._context_binding(ctx_key))
+            if record is None:
+                continue
+            noise_count, important = record['noise'], record['important']
             total = noise_count + important
             if total < _CTX_MIN_SAMPLES:
                 continue
@@ -884,6 +964,7 @@ class CascadeBridge:
                     },
                 )
                 self._agent_metrics[agent_name] = metrics
+                self._agent_rules[agent_name] = RuleAgent({'name': agent_name, 'signal_types': [sig_type]})
             metrics.samples_tested = total
             metrics.accuracy = noise_count / total
             metrics.false_positive_rate = important_rate
@@ -921,6 +1002,43 @@ class CascadeBridge:
 
     def _check_activation_ttl(self):
         """Suspend agents whose activation has expired."""
+        with self._lifecycle_lock:
+            return self._check_activation_ttl_locked()
+
+    def _check_activation_ttl_locked(self):
+        if self._state_file and not self._state_healthy:
+            self._fence_learning('unhealthy state must not suppress adaptively')
+            return
+        for kind in list(self._activated_types):
+            if not self._restored_authority_valid(kind, self._activated_patterns.get(kind)):
+                self._deactivate_agent(kind)
+                for name, metrics in self._agent_metrics.items():
+                    if metrics.config.get('signal_type') == kind:
+                        metrics.last_batch_fn_count = 0
+                        self.promotion.demote(metrics, reason='activation evidence, configuration or TTL no longer valid')
+                        self.promotion.reactivate(metrics)
+                        self._qualification_evidence.pop('agent:' + name, None)
+                self._llm_noise_counts[kind] = 0
+                self._llm_important_counts[kind] = 0
+        for kind, contexts in list(self._activated_contexts.items()):
+            for context in list(contexts):
+                identity = f'{kind}:{context}'
+                record = self._qualified_record('context:' + identity, self._context_binding(identity))
+                if (record is None or record['noise'] < 200 or record['important'] != 0
+                        or not valid_time(self._context_activation_timestamps.get(identity), self._activation_ttl_hours)):
+                    contexts.discard(context)
+                    self._contextual_suppressor.remove_noise_context(kind, context)
+                    self._context_activation_timestamps.pop(identity, None)
+                    self._qualification_evidence.pop('context:' + identity, None)
+                    self._llm_context_noise[identity] = 0
+                    self._llm_context_important[identity] = 0
+                    for metrics in self._agent_metrics.values():
+                        if (metrics.config.get('pattern_type') == 'contextual_noise'
+                                and metrics.config.get('signal_type') == kind
+                                and metrics.config.get('context_value') == context):
+                            metrics.last_batch_fn_count = 0
+                            self.promotion.demote(metrics, reason='context evidence, configuration or TTL no longer valid')
+                            self.promotion.reactivate(metrics)
         if (
             not self._activation_timestamps
             and not self._context_activation_timestamps
@@ -937,7 +1055,7 @@ class CascadeBridge:
                 if activated_at.tzinfo is None:
                     raise ValueError("activation timestamp lacks timezone")
                 age_hours = (now - activated_at).total_seconds() / 3600
-                if age_hours >= self._activation_ttl_hours:
+                if age_hours < 0 or age_hours >= self._activation_ttl_hours:
                     expired[sig_type] = "ttl_expired"
             except (AttributeError, ValueError, TypeError):
                 expired[sig_type] = "invalid_activation_timestamp"
@@ -973,6 +1091,9 @@ class CascadeBridge:
             self._activation_timestamps.pop(sig_type, None)
             self._llm_noise_counts[sig_type] = 0
             self._llm_important_counts[sig_type] = 0
+            for name, metrics in self._agent_metrics.items():
+                if metrics.config.get('signal_type') == sig_type:
+                    self._qualification_evidence.pop('agent:' + name, None)
 
         expired_contexts = {}
         for identity, ts_str in list(self._context_activation_timestamps.items()):
@@ -983,7 +1104,7 @@ class CascadeBridge:
                 if activated_at.tzinfo is None:
                     raise ValueError("activation timestamp lacks timezone")
                 age_hours = (now - activated_at).total_seconds() / 3600
-                if age_hours >= self._activation_ttl_hours:
+                if age_hours < 0 or age_hours >= self._activation_ttl_hours:
                     expired_contexts[identity] = "ttl_expired"
             except (AttributeError, ValueError, TypeError):
                 expired_contexts[identity] = "invalid_activation_timestamp"
@@ -995,6 +1116,7 @@ class CascadeBridge:
             self._context_activation_timestamps.pop(identity, None)
             self._llm_context_noise[identity] = 0
             self._llm_context_important[identity] = 0
+            self._qualification_evidence.pop('context:' + identity, None)
             for metrics in self._agent_metrics.values():
                 if (
                     metrics.config.get("pattern_type") == "contextual_noise"
@@ -1019,6 +1141,8 @@ class CascadeBridge:
             )
 
     def _classify_one(self, sig, client):
+        with self._lifecycle_lock:
+            sig['_qualification_bindings'] = self._qualification_bindings(sig)
         return self.classifier.classify(sig, client)
 
     def _build_evidence_bundle(self, sig: dict) -> dict:
@@ -1031,6 +1155,7 @@ class CascadeBridge:
             query_signal = Signal(
                 signal_type=sig.get("signal_type", ""),
                 severity=sig.get("severity", "info"),
+                severity_input_valid=sig.get("severity_input_valid", False) is True,
                 source="", namespace=sig.get("namespace", ""),
                 content=sig.get("content", {}), labels={},
             )
@@ -1159,6 +1284,7 @@ class CascadeBridge:
                     self._llm_accounting_succeeded += 1
                 else:
                     self._llm_accounting_failed += 1
+                self._classifier_inflight.pop(entry.get('_work_id'), None)
             accounted_entries.add(entry_id)
 
         try:
@@ -1214,19 +1340,9 @@ class CascadeBridge:
                                 self._llm_results = self._llm_results[-1000:]
 
                             ctx_key = f"{sig['signal_type']}:{sig.get('namespace', '')}"
-                            if _is_noise_classification(ans):
-                                self.stats.llm_noise += 1
-                                self._llm_noise_counts[sig["signal_type"]] += 1
-                                self._increment_context_count(
-                                    self._llm_context_noise, ctx_key,
-                                )
-                            else:
-                                self.stats.llm_important += 1
-                                self._llm_important_counts[sig["signal_type"]] += 1
-                                self._increment_context_count(
-                                    self._llm_context_important, ctx_key,
-                                )
-
+                            if self._record_qualification(sig, _is_noise_classification(ans)) is False:
+                                raise RuntimeError('qualification checkpoint failed; adaptive authority withdrawn')
+                            if not _is_noise_classification(ans):
                                 if self._gpu_url:
                                     gpu_result = self._escalate_to_gpu(sig, ans, client)
                                     if gpu_result and self.memory_archive:
@@ -1234,6 +1350,7 @@ class CascadeBridge:
                                         mem_sig = CascadeSignal(
                                             signal_type=sig["signal_type"],
                                             severity=sig.get("severity", "info"),
+                                            severity_input_valid=sig.get("severity_input_valid", False) is True,
                                             source="", namespace=sig.get("namespace", ""),
                                             content=sig.get("content", {}), labels={},
                                         )
@@ -1258,6 +1375,7 @@ class CascadeBridge:
         finally:
             with self._llm_lock:
                 self._llm_active_threads -= 1
+            self._save_state()
             self._dispatch_llm_batches()
 
     def _queue_shadow_samples(self, cascade_result, cascade_signals):
@@ -1290,6 +1408,9 @@ class CascadeBridge:
                 "signal_type": sig.signal_type,
                 "severity": sig.severity,
                 "namespace": sig.namespace,
+                "source": sig.source,
+                "cluster": sig.cluster,
+                "labels": dict(sig.labels or {}),
                 "content": sig.content,
             })
         if len(self._shadow_buffer) > self._shadow_max_buffer:
@@ -1309,11 +1430,7 @@ class CascadeBridge:
             shadow_model = self._gpu_model if self._gpu_url else self._macro_model
             with httpx.Client(timeout=60) as client:
                 for sig in signals:
-                    text = (
-                        f"{sig['signal_type']} {sig['severity']}: "
-                        f"{sig.get('content', {}).get('message', '')} "
-                        f"namespace={sig.get('namespace', '')}"
-                    )
+                    text = serialize_signal(sig)
                     try:
                         ans = llm_complete(
                             client, shadow_url, shadow_key, shadow_model,
@@ -1688,10 +1805,9 @@ class CascadeBridge:
     def _deactivate_agent(self, signal_type: str):
         pattern_type = self._activated_patterns.pop(signal_type, None)
         self._activated_types.discard(signal_type)
-        if pattern_type == "repeat_flood":
-            self._repeat_suppressor.remove_signal_type(signal_type)
-        elif pattern_type == "dominant_type":
-            self._noise_suppressor.remove_noise_type(signal_type)
+        self._repeat_suppressor.remove_signal_type(signal_type)
+        self._noise_suppressor.remove_noise_type(signal_type)
+        self._activation_timestamps.pop(signal_type, None)
 
     def _poll_gcl_verdicts(self):
         """Poll the ledger for GCL FAILS verdicts and trigger demotion."""
@@ -1796,12 +1912,22 @@ class CascadeBridge:
 
     def _save_state(self):
         if not self._state_file:
-            return
+            return True
+        with self._lifecycle_lock, self._snapshot_lock:
+            return self._save_state_locked()
+
+    def _save_state_locked(self):
         try:
             state = {
-                "version": 3,
+                "version": 5,
+                "qualification_revision": REVISION,
+                "classifier_identity": self._classifier_identity(),
+                "qualification_evidence": self._qualification_evidence,
+                "classifier_work": self._classifier_work_snapshot(),
+                "serializer_revision": SERIALIZER_REVISION,
                 "activated_agents": dict(self._activated_patterns),
                 "activated_contexts": {k: sorted(v) for k, v in self._activated_contexts.items()},
+                "context_activation_timestamps": dict(self._context_activation_timestamps),
                 "llm_noise_counts": dict(self._llm_noise_counts),
                 "llm_important_counts": dict(self._llm_important_counts),
                 "llm_context_noise": dict(self._prune_context_map(self._llm_context_noise)),
@@ -1811,6 +1937,10 @@ class CascadeBridge:
                     "name": metrics.name,
                     "tier": metrics.tier,
                     "config": metrics.config,
+                    "human_approved": metrics.human_approved,
+                    "human_approved_by": metrics.human_approved_by,
+                    "human_approved_at": metrics.human_approved_at,
+                    "deactivated": metrics.deactivated,
                     "rule": {
                         "name": rule.name,
                         "signal_types": rule.signal_types,
@@ -1841,10 +1971,13 @@ class CascadeBridge:
                 },
                 "memory_archive": self.memory_archive.to_dict() if self.memory_archive else None,
             }
-            with open(self._state_file, "w") as f:
-                json.dump(state, f)
+            atomic_snapshot(self._state_file, state)
+            self._state_healthy = True
+            return True
         except Exception as e:
+            self._fence_learning('snapshot write failed')
             log.warning("Failed to save state: %s", e)
+            return False
 
     def _restore_state(self):
         if not self._state_file or not os.path.exists(self._state_file):
@@ -1852,9 +1985,15 @@ class CascadeBridge:
         try:
             with open(self._state_file) as f:
                 state = json.load(f)
-            self._llm_noise_counts = defaultdict(int, state.get("llm_noise_counts", {}))
+            self._restore_classifier_work(state.get('classifier_work'))
+            uncertain_validation = any(entry.get('phase')=='inflight'
+                                       for entry in state.get('classifier_work',{}).get('outstanding',[]))
+            evidence = state if state.get("serializer_revision") == SERIALIZER_REVISION else {}
+            if not evidence:
+                log.warning("Classifier input revision changed; learned rules require fresh qualification")
+            self._llm_noise_counts = defaultdict(int, evidence.get("llm_noise_counts", {}))
             self._llm_important_counts = defaultdict(
-                int, state.get("llm_important_counts", {})
+                int, evidence.get("llm_important_counts", {})
             )
 
             self._verdict_watermark = state.get("verdict_watermark", "")
@@ -1891,32 +2030,64 @@ class CascadeBridge:
             self._ledger_memory_last_success = state.get(
                 "ledger_memory_last_success", "",
             )
-            self._activation_timestamps = state.get("activation_timestamps", {})
-            if state.get("version") in (2, 3):
-                self.corpus_analyzer._known_patterns = set(state.get("known_patterns", []))
-                for candidate in state.get("candidate_agents", []):
+            self._activation_timestamps = evidence.get("activation_timestamps", {})
+            bound = (not uncertain_validation and evidence.get('version') == 5 and evidence.get('qualification_revision') == REVISION
+                     and evidence.get('classifier_identity') == self._classifier_identity())
+            self._qualification_evidence = evidence.get('qualification_evidence', {}) if bound else {}
+            if evidence.get("version") in (2, 3, 4, 5):
+                self.corpus_analyzer._known_patterns = set(evidence.get("known_patterns", []))
+                for candidate in evidence.get("candidate_agents", []):
                     metrics = AgentMetrics(
                         name=candidate["name"],
                         tier=candidate.get("tier", "draft"),
                         config=candidate.get("config", {}),
+                        human_approved=candidate.get('human_approved', False) if bound else False,
+                        human_approved_by=candidate.get('human_approved_by') if bound else None,
+                        human_approved_at=candidate.get('human_approved_at') if bound else None,
+                        deactivated=candidate.get('deactivated', False),
                     )
                     self._agent_metrics[metrics.name] = metrics
                     self._agent_rules[metrics.name] = RuleAgent(candidate["rule"])
 
-                self._activated_patterns = dict(state.get("activated_agents", {}))
+                self._activated_patterns = {
+                    kind: pattern for kind, pattern in evidence.get('activated_agents', {}).items()
+                    if bound and self._restored_authority_valid(kind, pattern)
+                }
                 self._activated_types = set(self._activated_patterns)
+                for kind in set(evidence.get('activated_agents', {})) - self._activated_types:
+                    self._activation_timestamps.pop(kind, None)
+                    self._llm_noise_counts[kind] = 0
+                    self._llm_important_counts[kind] = 0
+                    for name, metrics in self._agent_metrics.items():
+                        if metrics.config.get('signal_type') == kind:
+                            self._qualification_evidence.pop('agent:' + name, None)
+                            metrics.tier = 'draft'
+                            metrics.human_approved = False
+                            metrics.human_approved_by = None
+                            metrics.human_approved_at = None
                 for sig_type, pattern_type in self._activated_patterns.items():
                     if pattern_type == "repeat_flood":
                         self._repeat_suppressor.add_signal_type(sig_type)
                     elif pattern_type == "dominant_type":
                         self._noise_suppressor.add_noise_type(sig_type)
 
-                self._llm_context_noise = defaultdict(int, state.get("llm_context_noise", {}))
-                self._llm_context_important = defaultdict(int, state.get("llm_context_important", {}))
-                if state.get("activated_contexts"):
-                    log.warning(
-                        "Persisted contextual suppressors require fresh qualification"
-                    )
+                self._llm_context_noise = defaultdict(int, evidence.get("llm_context_noise", {}))
+                self._llm_context_important = defaultdict(int, evidence.get("llm_context_important", {}))
+                for kind, contexts in evidence.get('activated_contexts', {}).items():
+                    for context in contexts:
+                        identity = f'{kind}:{context}'
+                        timestamp = evidence.get('context_activation_timestamps', {}).get(identity)
+                        record = self._qualified_record('context:' + identity, self._context_binding(identity))
+                        if (bound and not self._human_gate and record and record['noise'] >= 200
+                                and record['important'] == 0 and valid_time(timestamp, self._activation_ttl_hours)):
+                            self._activated_contexts[kind].add(context)
+                            self._contextual_suppressor.add_noise_context(kind, context)
+                            self._context_activation_timestamps[identity] = timestamp
+                        else:
+                            self._qualification_evidence.pop('context:' + identity, None)
+                            self._llm_context_noise[identity] = 0
+                            self._llm_context_important[identity] = 0
+                self._validate_restored_tiers()
             else:
                 # Legacy state did not preserve the suppressor kind. Revalidate it
                 # instead of restoring a type with broader suppression semantics.
@@ -1927,11 +2098,22 @@ class CascadeBridge:
                 self.memory_archive = MemoryArchive.from_dict(memory_data)
 
             self._promote_orphaned_noise_types()
+            if state.get('classifier_work', {}).get('outstanding'):
+                if not self._save_state():
+                    raise OSError('could not persist interrupted classifier-work receipts')
 
             log.info("Restored: %d activated, %d LLM counts, %d patterns",
                      len(self._activated_types), len(self._llm_noise_counts),
                      len(self.corpus_analyzer._known_patterns))
         except Exception as e:
+            self._state_healthy = False
+            for kind in list(self._activated_types):
+                self._deactivate_agent(kind)
+            for kind, contexts in self._activated_contexts.items():
+                for context in list(contexts):
+                    self._contextual_suppressor.remove_noise_context(kind, context)
+                contexts.clear()
+            self._qualification_evidence.clear()
             log.warning("Failed to restore state: %s", e)
 
     def _promote_orphaned_noise_types(self):
@@ -2004,6 +2186,10 @@ class CascadeBridge:
         stats["llm_priority_buffer_max_bytes"] = self._llm_priority_max_bytes
         stats["llm_priority_dropped"] = self._llm_priority_dropped
         stats["llm_payloads_truncated"] = self._llm_payloads_truncated
+        stats['state_snapshot_healthy'] = self._state_healthy
+        stats['classifier_work_recovery'] = 'terminal_receipts_on_restart' if self._state_file else 'memory_only'
+        stats['classifier_restart_terminal_receipts'] = len(self._classifier_terminal_receipts)
+        stats['classifier_restart_terminal_receipts_evicted'] = self._classifier_terminal_evicted
         with self._llm_queue_lock:
             queued = len(self._llm_buffer) + len(self._llm_priority_buffer)
             in_flight = (
@@ -2271,6 +2457,10 @@ class CascadeBridge:
     def record_feedback(
         self, signal_type: str, *, was_suppressed: bool, is_important: bool
     ) -> None:
+        with self._lifecycle_lock:
+            return self._record_feedback_locked(signal_type, was_suppressed=was_suppressed, is_important=is_important)
+
+    def _record_feedback_locked(self, signal_type, *, was_suppressed, is_important):
         """Record externally verified ground truth for FN telemetry.
 
         If a suppressed signal was important (false negative) and the
@@ -2316,6 +2506,16 @@ class CascadeBridge:
                         )
                         break
 
+                # Restored/orphaned authority must be withdrawn even when no
+                # matching metrics survived. Negative feedback cannot depend
+                # on the continued existence of its original agent object.
+                self._deactivate_agent(signal_type)
+                self._llm_noise_counts[signal_type] = 0
+                self._llm_important_counts[signal_type] = 0
+                for name, metrics in self._agent_metrics.items():
+                    if metrics.config.get('signal_type') == signal_type:
+                        self._qualification_evidence.pop('agent:' + name, None)
+
             active_contexts = set(self._activated_contexts.get(signal_type, set()))
             if active_contexts:
                 for ctx_value in active_contexts:
@@ -2327,6 +2527,7 @@ class CascadeBridge:
                     )
                     self._llm_context_noise[f"{signal_type}:{ctx_value}"] = 0
                     self._llm_context_important[f"{signal_type}:{ctx_value}"] = 0
+                    self._qualification_evidence.pop('context:' + f'{signal_type}:{ctx_value}', None)
                 self._activated_contexts[signal_type].clear()
                 for metrics in self._agent_metrics.values():
                     if (
@@ -2349,6 +2550,7 @@ class CascadeBridge:
                     related_type=signal_type,
                     reason="fn_confirmed",
                 )
+            self._save_state()
 
     def get_llm_results(self, limit: int = 20) -> list:
         return self._llm_results[-limit:]

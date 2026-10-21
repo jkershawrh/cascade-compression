@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,11 +24,39 @@ FIELDS = frozenset({
 })
 
 
-def _digest(value: Any) -> str:
+def _canonical_json(value: Any) -> bytes:
+    """Exact JSON context; Python equality/coercion cannot confer authority."""
+    def check(item: Any, depth: int = 0, ancestors=None) -> None:
+        if depth > 100:
+            raise ValueError("outcome evidence JSON exceeds the depth bound")
+        ancestors = set() if ancestors is None else ancestors
+        if item is None or isinstance(item, str) or type(item) in (bool, int):
+            return
+        if type(item) is float and math.isfinite(item):
+            return
+        if isinstance(item, (dict, list)):
+            if id(item) in ancestors:
+                raise ValueError("outcome evidence JSON contains a cycle")
+            if isinstance(item, dict) and any(not isinstance(k, str) for k in item):
+                raise ValueError("outcome evidence JSON requires string object keys")
+            ancestors.add(id(item))
+            try:
+                for child in item.values() if isinstance(item, dict) else item:
+                    check(child, depth + 1, ancestors)
+            finally:
+                ancestors.remove(id(item))
+            return
+        raise ValueError("outcome evidence requires finite JSON values")
+
+    check(value)
     encoded = json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False,
     )
-    return "sha256:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+    return encoded.encode("utf-8")
+
+
+def _digest(value: Any) -> str:
+    return "sha256:" + hashlib.sha256(_canonical_json(value)).hexdigest()
 
 
 def _timestamp(value: Any, label: str) -> datetime:
@@ -133,12 +162,21 @@ def verify_memory_from_outcome(
     signal: Dict[str, Any], expires_at: Optional[str] = None,
 ) -> Memory:
     """Apply validated local outcome evidence to one exact memory record."""
+    required = {"signal_type", "severity", "source", "namespace", "cluster", "content", "labels"}
+    if not isinstance(signal, dict) or not required <= set(signal):
+        raise ValueError("outcome evidence requires the complete original signal")
+    if set(signal) - required - {"severity_input_valid"}:
+        raise ValueError("outcome evidence contains undeclared signal fields")
+    if "severity_input_valid" in signal and signal["severity_input_valid"] is not True:
+        raise ValueError("outcome evidence cannot override invalid severity evidence")
     verdict = validate_outcome_evidence(record)
     if _digest(signal) != record["signal_sha256"]:
         raise ValueError("outcome evidence does not match the supplied signal")
     memory = archive.get(memory_id)
     if memory is None:
         raise KeyError(str(memory_id))
+    if getattr(memory.signal, "severity_input_valid", False) is not True:
+        raise ValueError("memory has invalid or unknown raw severity evidence")
     expected = {
         "signal_type": memory.signal.signal_type,
         "severity": memory.signal.severity,
@@ -149,8 +187,8 @@ def verify_memory_from_outcome(
         "labels": memory.signal.labels,
     }
     mismatches = [
-        key for key, value in signal.items()
-        if key in expected and expected[key] != value
+        key for key, value in expected.items()
+        if _canonical_json(signal[key]) != _canonical_json(value)
     ]
     if mismatches:
         raise ValueError(

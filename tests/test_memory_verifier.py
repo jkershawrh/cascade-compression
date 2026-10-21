@@ -1,4 +1,5 @@
 from cascade_compression.cascade.memory import MemoryArchive
+from cascade_compression.cascade.protocol import Signal
 from cascade_compression.classifier import ClassificationResult
 from cascade_compression.memory_verifier import (
     BlendedMemorySuppressionPolicy,
@@ -25,8 +26,12 @@ class StubVela:
 
 
 def admitted_memory():
+    """A legitimately qualified memory: complete event identity, reinforced
+    through repeated observations, then locally reviewed as benign."""
     archive = MemoryArchive()
-    memory = archive.store(make_signal(severity="critical"))
+    memory = None
+    for _ in range(20):
+        memory = archive.store(identified_signal())
     archive.verify_memory(
         memory.memory_id,
         outcome="benign",
@@ -35,6 +40,21 @@ def admitted_memory():
         evidence_ref="review:public-case-1",
     )
     return memory
+
+
+def identified_signal(severity="low"):
+    return Signal(
+        signal_type="service_health",
+        severity=severity,
+        source="synthetic-collector",
+        namespace="example",
+        cluster="example-cluster",
+        labels={"environment": "synthetic"},
+        content={
+            "message": "Repeated probe recovered without impact",
+            "event_uid": "30000000-0000-4000-8000-000000000011",
+        },
+    )
 
 
 def semantic(label="known_pattern", status="ok"):
@@ -56,8 +76,14 @@ def signal(severity="low"):
         "signal_id": "public-test-signal",
         "signal_type": "service_health",
         "severity": severity,
+        "source": "synthetic-collector",
         "namespace": "example",
-        "content": {"message": "Repeated probe recovered without impact"},
+        "cluster": "example-cluster",
+        "labels": {"environment": "synthetic"},
+        "content": {
+            "message": "Repeated probe recovered without impact",
+            "event_uid": "30000000-0000-4000-8000-000000000011",
+        },
     }
 
 

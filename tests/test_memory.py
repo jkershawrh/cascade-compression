@@ -362,15 +362,22 @@ class TestContentNormalization:
         assert n["count"] == 5
 
     def test_duplicate_pod_events_dedup(self):
-        """Two K8s events differing only by pod suffix produce same hash."""
+        """The same reported event (complete identity) produces the same hash.
+
+        Pod-suffix text normalization was withdrawn: observations differing
+        only by dynamic text carry distinct event identity and stay separate.
+        The same event reported twice deduplicates.
+        """
         archive = MemoryArchive()
+        content = {"message": "Pod web-app CrashLoopBackOff",
+                   "event_uid": "40000000-0000-4000-8000-000000000010"}
         m1 = archive.store(
-            make_signal(signal_type="pod_crashloop",
-                        content={"message": "Pod web-app-abc12 CrashLoopBackOff"}),
+            make_signal(signal_type="pod_crashloop", cluster="prod",
+                        content=dict(content)),
             classification="x")
         m2 = archive.store(
-            make_signal(signal_type="pod_crashloop",
-                        content={"message": "Pod web-app-xyz99 CrashLoopBackOff"}),
+            make_signal(signal_type="pod_crashloop", cluster="prod",
+                        content=dict(content)),
             classification="x")
         assert m1.memory_id == m2.memory_id
         assert archive.size == 1
@@ -385,16 +392,20 @@ class TestContentNormalization:
 
 class TestDedup:
     def test_same_content_reinforces_existing(self):
-        """Storing a signal with same content_hash reinforces the existing memory."""
+        """Storing the same identified event again reinforces the existing memory."""
         archive = MemoryArchive()
-        sig = make_signal(signal_type="pod_crashloop",
-                          content={"message": "CrashLoopBackOff"})
-        m1 = archive.store(sig, classification="x")
+        content = {"message": "CrashLoopBackOff",
+                   "event_uid": "40000000-0000-4000-8000-000000000011"}
+        m1 = archive.store(
+            make_signal(signal_type="pod_crashloop", cluster="prod",
+                        content=dict(content)),
+            classification="x")
         original_strength = m1.strength
 
-        sig2 = make_signal(signal_type="pod_crashloop",
-                           content={"message": "CrashLoopBackOff"})
-        m2 = archive.store(sig2, classification="x")
+        m2 = archive.store(
+            make_signal(signal_type="pod_crashloop", cluster="prod",
+                        content=dict(content)),
+            classification="x")
         assert m2.memory_id == m1.memory_id
         assert m2.strength > original_strength
         assert archive.size == 1
@@ -489,16 +500,19 @@ class TestMemoryFormationBehavior:
         assert m_crit.strength > m_info.strength
 
     def test_duplicate_signal_reinforces(self):
-        """GIVEN a memory already exists for signal_type+content
-        WHEN same signal survives again
+        """GIVEN a memory already exists for an identified event
+        WHEN the same event is observed again
         THEN memory strength increases, recall_count unchanged"""
         archive = MemoryArchive()
-        content = {"message": "OOMKilled"}
-        m1 = archive.store(make_signal(content=content), classification="x")
+        content = {"message": "OOMKilled",
+                   "event_uid": "40000000-0000-4000-8000-000000000012"}
+        m1 = archive.store(make_signal(cluster="prod", content=dict(content)),
+                           classification="x")
         original_strength = m1.strength
         original_recall = m1.recall_count
 
-        m2 = archive.store(make_signal(content=content), classification="x")
+        m2 = archive.store(make_signal(cluster="prod", content=dict(content)),
+                           classification="x")
         assert m2.strength > original_strength
         assert m2.recall_count == original_recall
 

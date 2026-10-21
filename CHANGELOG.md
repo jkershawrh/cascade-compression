@@ -2,8 +2,17 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
-## Unreleased
+## 0.2.0rc7 - 2026-10-21
 
+- Harden deterministic suppression behind complete event identity: exact-repeat suppression
+  requires full identity fields, and the safety escalator keeps uncertain signals retained.
+- Add validated lifecycle authority: restored activations must carry qualification evidence,
+  current configuration bindings, and unexpired timestamps; rejected or expired qualification
+  is withdrawn instead of reused, and confirmed-negative feedback demotes active suppressors.
+- Preserve observation identity across serialization boundaries: exported records restore the
+  identity their content hash was bound to, so state restore, federation import, deduplication,
+  reinforcement, and rejection sets stay consistent across restarts. Distinct observations
+  without complete event identity never merge.
 - Add fail-closed memory verification provenance so classification, similarity, strength, recall,
   and federated approval remain advisory until an exact match has a current locally governed
   benign outcome.
@@ -14,6 +23,18 @@ All notable changes are documented here. This project follows Semantic Versionin
   provides a thresholded second check without receiving final policy authority.
 - Add a private-receipt outcome-evidence contract and validator that derives benign memory status
   only from no intervention, no service impact, and observed self-resolution.
+- Return service admission failures as retained work (HTTP 503 with full retention) instead of
+  acknowledging compressed delivery.
+- Revise native test contracts to the validated-authority semantics: activation, TTL expiry, and
+  contextual suppression are exercised through real qualification paths, verifier fixtures carry
+  complete signal contexts, and merge semantics require identified events.
+- Make the source distribution self-contained for the packaged test suite: conftest, fixtures,
+  the validation matrix, the OpenAPI specification, public scripts, and the tests package marker
+  are included.
+- Align documentation on the production-proof handoff, exact-artifact qualification, current
+  evidence limits, and the ordered product-sharpening roadmap; no new effectiveness claim.
+
+## Unreleased
 
 ## 0.2.0rc5 - 2026-10-06
 

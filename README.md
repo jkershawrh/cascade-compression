@@ -1,9 +1,14 @@
 # Cascade Compression
 
+Current roadmap and evidence transfer: [roadmap](docs/roadmap.md),
+[production-proof handoff](docs/proof-handoff.md), and
+[documentation status](docs/documentation-status.md). Production observations qualify only the
+exact artifact tested; a related private implementation does not qualify this source tree.
+
 Cascade Compression is a domain-agnostic, three-tier signal compression engine for CPU inference.
 It learns deterministic rules for routine traffic, continuously validates those rules against a
-model oracle, and escalates uncertain or important signals. One false negative demotes an active
-rule immediately.
+model oracle, and escalates uncertain or important signals. A detected, attributable important miss can demote an active
+rule; this does not establish zero unknown population risk.
 
 The project is not another classifier. It is the governed lifecycle around classification: fast
 nano agents remove duplicates, transient conditions, known patterns, and validated repetitive
@@ -18,9 +23,11 @@ generic collectors, synthetic examples, and reproducible tests. It does not cont
 deployment configuration, customer data, raw operational evidence, or environment-specific
 collectors.
 
+Read the [current white paper](docs/cascade-compression-whitepaper.md) for the Cascade thesis, product scope, evidence limits, and next validation steps.
+
 ## Install and test
 
-The latest stable OSS release is `0.1.0`. The governed semantic-classification and custom-anchor
+The repository changelog records `0.1.0` as the stable release line. The governed semantic-classification and custom-anchor
 work is on the `0.2.0rc5` candidate line; it is not the final 0.2.0 release. This source tree is
 configured as an **incubating OSS** prerelease. It verifies the public mechanics, build,
 packaging, tests, and supply-chain evidence without claiming classification effectiveness,

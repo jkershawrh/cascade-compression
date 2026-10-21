@@ -1,5 +1,9 @@
 # Public evidence register
 
+Reviewed 2026-10-13. No new production, classification-effectiveness, or customer-savings result
+is established by this documentation pass. Private observations transfer only through the
+candidate-bound [proof handoff](proof-handoff.md); current priorities are in [roadmap.md](roadmap.md).
+
 Cascade separates executable behavior, historical context, synthetic fixtures, and release proof.
 The presence of a number in the repository does not make it a current performance or production
 claim. This register identifies the authoritative evidence for each public claim class.
@@ -31,3 +35,14 @@ The fixed staging-qualification requirements are defined in [staging evidence](s
 classification methodology in [classification evaluation](classification-evaluation.md), and the
 runtime methodology in [runtime benchmark](runtime-benchmark.md). `RELEASING.md` defines the order
 in which candidate and release artifacts are created.
+
+## White-paper review edition
+
+The [current white paper](cascade-compression-whitepaper.md) cites a local integration check
+in the separate proof workspace: **22 focused tests passed**, and a **two-case synthetic static
+arm** ran against a locally built **0.2.0rc5** wheel with **zero model calls** and **zero execution
+failures**. The wheel SHA-256 was
+`a2c5a5e957b96462920272e8bb2fc20b3c1e6287bdf68020072c879a425ebf0f`.
+The verification note is retained in the author's local workspace, not as attested public release
+evidence. Treat these as bounded import-isolation observations, not qualification of a published
+release or proof of classification effectiveness, compression, production safety, or savings.

@@ -1,0 +1,8 @@
+include tests/helpers.py
+include contracts/openapi/tco-calculator.yaml
+include scripts/verify_staging_handoff.py
+include tests/conftest.py
+include tests/fixtures/value_evidence/economics.json
+include tests/fixtures/value_evidence/replay.json
+include tests/validation_matrix.yaml
+include tests/__init__.py

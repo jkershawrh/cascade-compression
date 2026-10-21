@@ -13,11 +13,11 @@ from uuid import UUID, uuid4
 
 import httpx
 from fastapi import FastAPI
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictBool, field_validator, model_validator
 
 from .agents import default_agents
 from .pipeline import CascadePipeline, CascadeResult
-from .protocol import chat_completions_url, Signal
+from .protocol import chat_completions_url, Signal, severity_input_is_valid
 from .router import CascadeRouter
 
 log = logging.getLogger(__name__)
@@ -46,16 +46,30 @@ class SignalInput(BaseModel):
     signal_id: Optional[UUID] = None
     signal_type: str = ""
     severity: str = "info"
+    severity_input_valid: StrictBool = True
     source: str = ""
     content: Dict[str, Any] = Field(default_factory=dict)
     labels: Dict[str, str] = Field(default_factory=dict)
     namespace: str = ""
     cluster: str = ""
 
+    @model_validator(mode="after")
+    def preserve_severity_validity(self):
+        self.severity_input_valid = severity_input_is_valid(self.severity, self.severity_input_valid)
+        return self
+
 
 class BatchRequest(BaseModel):
     signals: List[SignalInput]
     forward_to_inference: bool = True
+
+    @field_validator("signals")
+    @classmethod
+    def unique_signal_ids(cls, signals):
+        ids = [signal.signal_id for signal in signals if signal.signal_id is not None]
+        if len(set(ids)) != len(ids):
+            raise ValueError("signal IDs must be unique within a batch")
+        return signals
 
 
 class CascadeStats(BaseModel):
@@ -76,6 +90,7 @@ def _to_signal(signal: SignalInput) -> Signal:
         signal_id=signal.signal_id or uuid4(),
         signal_type=signal.signal_type,
         severity=signal.severity,
+        severity_input_valid=signal.severity_input_valid,
         source=signal.source,
         content=signal.content,
         labels=signal.labels,

@@ -1,5 +1,9 @@
 # Staging-success evidence
 
+The [proof handoff](proof-handoff.md) defines how findings and reviewed evidence enter
+OSS. The [roadmap](roadmap.md) prioritizes qualification of the exact public artifact.
+Related private-engine runs do not substitute for the checks described here.
+
 A green process is not, by itself, proof that Cascade is safe or effective. The public
 `cascade-stage-evidence` command binds independently generated artifacts to one immutable run and
 fails closed unless every required gate passes.

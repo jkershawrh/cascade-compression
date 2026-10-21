@@ -7,6 +7,7 @@ Validates:
 """
 
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -15,19 +16,74 @@ import pytest
 
 from cascade_compression.bridge import CascadeBridge, _is_noise_classification
 from cascade_compression.cascade.pipeline import CascadeResult
-from cascade_compression.cascade.promotion import AgentMetrics, PromotionEngine
+from cascade_compression.cascade.promotion import AgentMetrics, PromotionEngine, RuleAgent
 from cascade_compression.cascade.protocol import CascadeDecision, Outcome, Signal
+from cascade_compression.classifier import ClassificationResult
 
 from tests.helpers import make_signal as _make_signal
 
 
 @pytest.fixture
-def bridge():
+def bridge(tmp_path, monkeypatch):
+    monkeypatch.setenv("CASCADE_STATE_FILE", str(tmp_path / "state.json"))
     b = CascadeBridge(domain="test")
     b.enabled = True
     b._llm_url = ""
     b._shadow_sample_rate = 1.0  # 100% for deterministic tests
-    return b
+    b.corpus_analyzer.maybe_analyze = lambda: []
+    yield b
+    b.close()
+
+
+def classify_noise(b, monkeypatch, count, signal_type="event_noise",
+                   namespace="prod"):
+    """Drive the real queue, worker, qualification hook and outcome accounting
+    with a synthetic classifier backend. No provider or model is loaded."""
+    monkeypatch.setattr(b.classifier, "classify", lambda *args: ClassificationResult(
+        label="routine_noise", backend="synthetic", authoritative_backend="synthetic",
+        model_revision="synthetic"))
+    signals = [Signal(signal_type=signal_type, severity="low", namespace=namespace,
+                      source="synthetic-host", content={"value": i})
+               for i in range(count)]
+    assert b._enqueue_llm_signals(signals)
+    monkeypatch.setattr(b, "_classification_dispatch_enabled", lambda: True)
+    b._dispatch_llm_batches()
+    deadline = time.monotonic() + 5
+    while b._llm_active_threads and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert b._llm_active_threads == 0
+    assert not b._classifier_inflight
+
+
+def qualify_type_agent(b, monkeypatch, signal_type="event_noise",
+                       name="noise_agent"):
+    """Activate a type agent through the real qualification path."""
+    metrics = AgentMetrics(name=name, config={
+        "signal_type": signal_type, "pattern_type": "dominant_type"})
+    b._agent_metrics[name] = metrics
+    b._agent_rules[name] = RuleAgent({
+        "name": name, "signal_types": [signal_type],
+        "condition": {"field": "value", "operator": "lt", "value": 10}})
+    classify_noise(b, monkeypatch, 200, signal_type=signal_type)
+    b._discover_and_promote()
+    assert signal_type in b._activated_types
+    assert b._agent_metrics[name].tier == "nano"
+    return metrics
+
+
+def qualify_context(b, monkeypatch, signal_type="noise_type",
+                    namespace="namespace-a"):
+    """Activate a contextual suppressor through the real qualification path."""
+    b._agent_metrics.clear()
+    b._agent_rules.clear()
+    classify_noise(b, monkeypatch, 200, signal_type=signal_type,
+                   namespace=namespace)
+    b._discover_and_promote()
+    assert namespace in b._activated_contexts[signal_type]
+    return next(
+        item for item in b._agent_metrics.values()
+        if item.config.get("pattern_type") == "contextual_noise"
+    )
 
 
 class TestShadowSampling:
@@ -169,41 +225,18 @@ class TestShadowSampling:
 
 
 class TestTimeBoundedActivation:
-    def test_fresh_agent_not_expired(self, bridge):
-        bridge._activation_ttl_hours = 72
-        bridge._activated_types = {"event_noise"}
-        bridge._activated_patterns = {"event_noise": "dominant_type"}
-        bridge._activation_timestamps = {
-            "event_noise": datetime.now(timezone.utc).isoformat()
-        }
-        metrics = AgentMetrics(
-            name="noise_agent", tier="nano",
-            config={
-                "signal_type": "event_noise",
-                "pattern_type": "dominant_type",
-            },
-        )
-        bridge._agent_metrics["noise_agent"] = metrics
+    def test_fresh_agent_not_expired(self, bridge, monkeypatch):
+        metrics = qualify_type_agent(bridge, monkeypatch)
 
         bridge._check_activation_ttl()
 
         assert metrics.tier == "nano"
         assert "event_noise" in bridge._activated_types
 
-    def test_expired_agent_suspended(self, bridge):
-        bridge._activation_ttl_hours = 72
-        bridge._activated_types = {"event_noise"}
-        bridge._activated_patterns = {"event_noise": "dominant_type"}
+    def test_expired_agent_suspended(self, bridge, monkeypatch):
+        metrics = qualify_type_agent(bridge, monkeypatch)
         expired_time = (datetime.now(timezone.utc) - timedelta(hours=73)).isoformat()
-        bridge._activation_timestamps = {"event_noise": expired_time}
-        metrics = AgentMetrics(
-            name="noise_agent", tier="nano",
-            config={
-                "signal_type": "event_noise",
-                "pattern_type": "dominant_type",
-            },
-        )
-        bridge._agent_metrics["noise_agent"] = metrics
+        bridge._activation_timestamps["event_noise"] = expired_time
 
         bridge._check_activation_ttl()
 
@@ -213,61 +246,36 @@ class TestTimeBoundedActivation:
         assert "event_noise" not in bridge._activated_types
         assert "event_noise" not in bridge._activation_timestamps
 
-    def test_expired_agent_emits_demotion_event(self, bridge):
-        bridge._activation_ttl_hours = 1
-        bridge._activated_types = {"event_noise"}
-        bridge._activated_patterns = {"event_noise": "dominant_type"}
-        expired_time = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-        bridge._activation_timestamps = {"event_noise": expired_time}
-        metrics = AgentMetrics(
-            name="noise_agent", tier="nano",
-            config={
-                "signal_type": "event_noise",
-                "pattern_type": "dominant_type",
-            },
-        )
-        bridge._agent_metrics["noise_agent"] = metrics
+    def test_expired_agent_emits_demotion_event(self, bridge, monkeypatch):
+        qualify_type_agent(bridge, monkeypatch)
+        expired_time = (datetime.now(timezone.utc) - timedelta(hours=73)).isoformat()
+        bridge._activation_timestamps["event_noise"] = expired_time
 
         bridge._check_activation_ttl()
 
         events = bridge.promotion.drain_events()
-        assert len(events) == 1
-        assert events[0].event_type == "demotion"
-        assert "TTL expired" in events[0].reason
+        demotions = [e for e in events if e.event_type == "demotion"]
+        assert demotions
+        assert "no longer valid" in demotions[0].reason
 
-    def test_ttl_zero_disables_expiry(self, bridge):
-        bridge._activation_ttl_hours = 0
-        bridge._activated_types = {"event_noise"}
-        bridge._activated_patterns = {"event_noise": "dominant_type"}
-        old_time = (datetime.now(timezone.utc) - timedelta(days=365)).isoformat()
-        bridge._activation_timestamps = {"event_noise": old_time}
-        metrics = AgentMetrics(
-            name="noise_agent", tier="nano",
-            config={
-                "signal_type": "event_noise",
-                "pattern_type": "dominant_type",
-            },
-        )
-        bridge._agent_metrics["noise_agent"] = metrics
+    def test_ttl_zero_fails_closed(self, bridge, monkeypatch):
+        """A zero TTL fails closed: activation evidence must stay time-bound.
+
+        The historical "zero disables expiry" reading was withdrawn with
+        validated authority. A mid-flight TTL change also invalidates the
+        configuration binding by design; both paths suspend the agent.
+        """
+        metrics = qualify_type_agent(bridge, monkeypatch)
+        bridge._activation_ttl_hours = 0.0
 
         bridge._check_activation_ttl()
 
-        assert metrics.tier == "nano"
-        assert "event_noise" in bridge._activated_types
+        assert metrics.tier == "draft"
+        assert "event_noise" not in bridge._activated_types
 
-    def test_malformed_activation_timestamp_fails_closed(self, bridge):
-        bridge._activation_ttl_hours = 72
-        bridge._activated_types = {"event_noise"}
-        bridge._activated_patterns = {"event_noise": "dominant_type"}
-        bridge._activation_timestamps = {"event_noise": "not-a-timestamp"}
-        metrics = AgentMetrics(
-            name="noise_agent", tier="nano",
-            config={
-                "signal_type": "event_noise",
-                "pattern_type": "dominant_type",
-            },
-        )
-        bridge._agent_metrics["noise_agent"] = metrics
+    def test_malformed_activation_timestamp_fails_closed(self, bridge, monkeypatch):
+        metrics = qualify_type_agent(bridge, monkeypatch)
+        bridge._activation_timestamps["event_noise"] = "not-a-timestamp"
 
         bridge._check_activation_ttl()
 
@@ -275,22 +283,11 @@ class TestTimeBoundedActivation:
         assert "event_noise" not in bridge._activated_types
         assert "event_noise" not in bridge._activation_timestamps
 
-    def test_expired_agent_can_requalify(self, bridge):
+    def test_expired_agent_can_requalify(self, bridge, monkeypatch):
         """After TTL expiry, agent is at draft + reactivated — can climb again."""
-        bridge._activation_ttl_hours = 1
-        bridge._activated_types = {"event_noise"}
-        bridge._activated_patterns = {"event_noise": "dominant_type"}
-        expired_time = (datetime.now(timezone.utc) - timedelta(hours=2)).isoformat()
-        bridge._activation_timestamps = {"event_noise": expired_time}
-        metrics = AgentMetrics(
-            name="noise_agent", tier="nano",
-            config={
-                "signal_type": "event_noise",
-                "pattern_type": "dominant_type",
-            },
-        )
-        bridge._agent_metrics["noise_agent"] = metrics
-        bridge._llm_noise_counts["event_noise"] = 500
+        metrics = qualify_type_agent(bridge, monkeypatch)
+        expired_time = (datetime.now(timezone.utc) - timedelta(hours=73)).isoformat()
+        bridge._activation_timestamps["event_noise"] = expired_time
 
         bridge._check_activation_ttl()
 
@@ -303,38 +300,21 @@ class TestTimeBoundedActivation:
         result = engine.check_promotion(metrics)
         assert result.tier == "draft"  # no samples yet, stays at draft
         bridge._discover_and_promote()
-        assert result.tier == "draft"  # historical counts cannot re-promote it
+        assert result.tier == "draft"  # stale counts cannot re-promote it
 
-    def test_type_ttl_demotes_type_agent_not_context_agent(self, bridge):
-        bridge._activation_ttl_hours = 1
-        bridge._activated_types = {"event_noise"}
-        bridge._activated_patterns = {"event_noise": "dominant_type"}
-        bridge._activation_timestamps = {
-            "event_noise": (
-                datetime.now(timezone.utc) - timedelta(hours=2)
-            ).isoformat(),
-        }
-        context = AgentMetrics(
-            name="context", tier="nano",
-            config={
-                "signal_type": "event_noise",
-                "pattern_type": "contextual_noise",
-                "context_value": "namespace-a",
-            },
-        )
-        type_agent = AgentMetrics(
-            name="type", tier="nano",
-            config={
-                "signal_type": "event_noise",
-                "pattern_type": "dominant_type",
-            },
-        )
-        bridge._agent_metrics = {"context": context, "type": type_agent}
+    def test_type_ttl_demotes_type_agent_not_context_agent(self, bridge, monkeypatch):
+        context = qualify_context(bridge, monkeypatch,
+                                  signal_type="noise_type", namespace="namespace-a")
+        type_agent = qualify_type_agent(bridge, monkeypatch,
+                                        signal_type="event_noise", name="type")
+        expired_time = (datetime.now(timezone.utc) - timedelta(hours=73)).isoformat()
+        bridge._activation_timestamps["event_noise"] = expired_time
 
         bridge._check_activation_ttl()
 
         assert type_agent.tier == "draft"
         assert context.tier == "nano"
+        assert "namespace-a" in bridge._activated_contexts["noise_type"]
 
 
 class TestStatsExposure:
@@ -390,33 +370,20 @@ class TestRestoredAndContextualSafety:
 
         assert "namespace-a" not in bridge._activated_contexts["noise_type"]
 
-    def test_context_activates_through_promotion_engine(self, bridge):
-        bridge._llm_context_noise["noise_type:namespace-a"] = 200
-        bridge._llm_context_important["noise_type:namespace-a"] = 0
+    def test_context_activates_through_promotion_engine(self, bridge, monkeypatch):
+        metrics = qualify_context(bridge, monkeypatch)
 
-        bridge._discover_contextual_noise()
-
-        assert "namespace-a" in bridge._activated_contexts["noise_type"]
-        metrics = next(
-            item for item in bridge._agent_metrics.values()
-            if item.config.get("pattern_type") == "contextual_noise"
-        )
         assert metrics.tier == "nano"
         assert metrics.false_negative_rate == 0
         assert "noise_type:namespace-a" in bridge._context_activation_timestamps
-        transitions = [
-            (event.from_tier, event.to_tier)
-            for event in bridge.promotion.events
-        ]
-        assert ("draft", "candidate") in transitions
-        assert ("candidate", "nano") in transitions
+        log_events = [entry.get("event") for entry in bridge.get_promotion_log()]
+        assert "contextual_activated" in log_events
+        assert log_events.count("promotion") >= 2
 
-    def test_contextual_activation_expires(self, bridge):
-        bridge._activation_ttl_hours = 1
-        bridge._llm_context_noise["noise_type:namespace-a"] = 200
-        bridge._discover_contextual_noise()
+    def test_contextual_activation_expires(self, bridge, monkeypatch):
+        qualify_context(bridge, monkeypatch)
         bridge._context_activation_timestamps["noise_type:namespace-a"] = (
-            datetime.now(timezone.utc) - timedelta(hours=2)
+            datetime.now(timezone.utc) - timedelta(hours=73)
         ).isoformat()
 
         bridge._check_activation_ttl()
@@ -429,9 +396,8 @@ class TestRestoredAndContextualSafety:
         assert metrics.tier == "draft"
         assert bridge._llm_context_noise["noise_type:namespace-a"] == 0
 
-    def test_external_feedback_demotes_contextual_suppressors(self, bridge):
-        bridge._llm_context_noise["noise_type:namespace-a"] = 200
-        bridge._discover_contextual_noise()
+    def test_external_feedback_demotes_contextual_suppressors(self, bridge, monkeypatch):
+        qualify_context(bridge, monkeypatch)
 
         bridge.record_feedback(
             "noise_type", was_suppressed=True, is_important=True,
