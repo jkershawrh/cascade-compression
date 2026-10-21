@@ -370,6 +370,20 @@ class TestRestoredAndContextualSafety:
 
         assert "namespace-a" not in bridge._activated_contexts["noise_type"]
 
+    def test_context_count_injection_without_qualification_does_not_activate(self, bridge):
+        """Direct count injection alone cannot activate a contextual suppressor.
+
+        Qualification requires a bound evidence record from real classification
+        outcomes; injected or historical counts confer no authority.
+        """
+        bridge._llm_context_noise["noise_type:namespace-a"] = 200
+        bridge._llm_context_important["noise_type:namespace-a"] = 0
+
+        bridge._discover_contextual_noise()
+
+        assert "namespace-a" not in bridge._activated_contexts.get("noise_type", set())
+        assert "noise_type:namespace-a" not in bridge._context_activation_timestamps
+
     def test_context_activates_through_promotion_engine(self, bridge, monkeypatch):
         metrics = qualify_context(bridge, monkeypatch)
 
