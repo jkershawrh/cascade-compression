@@ -1,0 +1,178 @@
+{
+  "memory_archive": {
+    "memories": [
+      {
+        "memory_id": "aafb59e5-5d93-49c0-b5c7-6b3235846b3d",
+        "signal_id": "cbce5f01-8265-4ba5-b53a-a7d0f17f89e0",
+        "signal_type": "event_failedmount",
+        "severity": "medium",
+        "severity_input_valid": true,
+        "formed_at": "2026-10-21T21:06:36.585901+00:00",
+        "strength": 0.514,
+        "recall_count": 0,
+        "last_recalled_at": null,
+        "consolidation_count": 0,
+        "source_instance": "synthetic-demo",
+        "classification": "",
+        "content_hash": "a948776ba2c7011a85b8ab83afd530111c080da26771b93e0bfa1ac987a62ebc",
+        "content": {
+          "message": "payment gateway connection pool exhausted",
+          "event_uid": "10000000-0000-4000-8000-0000000000a1"
+        },
+        "labels": {
+          "domain": "kubernetes",
+          "demo": "true"
+        },
+        "feature_vector": {},
+        "source": "synthetic-demo-collector",
+        "namespace": "payments",
+        "cluster": "demo",
+        "last_modified_at": "2026-10-21T21:06:36.586339+00:00",
+        "last_consolidated_at": null,
+        "analysis": null,
+        "verification": {
+          "status": "approved",
+          "outcome": "benign",
+          "source": "synthetic-review",
+          "policy_revision": "demo-policy-v1",
+          "evidence_ref": "demo:case-1",
+          "verified_at": "2026-10-21T21:06:36.586339+00:00",
+          "expires_at": null,
+          "contradictory": false
+        },
+        "verification_context_hash": "a948776ba2c7011a85b8ab83afd530111c080da26771b93e0bfa1ac987a62ebc"
+      },
+      {
+        "memory_id": "ead2e718-deb3-4793-be02-d4eca114bf15",
+        "signal_id": "1a40ccc2-84d5-49d2-9c64-29178e4e759d",
+        "signal_type": "event_backoff",
+        "severity": "medium",
+        "severity_input_valid": true,
+        "formed_at": "2026-10-21T21:06:36.586415+00:00",
+        "strength": 0.514,
+        "recall_count": 0,
+        "last_recalled_at": null,
+        "consolidation_count": 0,
+        "source_instance": "synthetic-demo",
+        "classification": "",
+        "content_hash": "f566fd5f69844e877ca14a129babb02c6e84f5d620fb0f91c0baf954d69bb16a",
+        "content": {
+          "message": "crash loop backoff restarting container",
+          "event_uid": "10000000-0000-4000-8000-0000000000a2"
+        },
+        "labels": {
+          "domain": "kubernetes",
+          "demo": "true"
+        },
+        "feature_vector": {},
+        "source": "synthetic-demo-collector",
+        "namespace": "payments",
+        "cluster": "demo",
+        "last_modified_at": "2026-10-21T21:06:36.586539+00:00",
+        "last_consolidated_at": null,
+        "analysis": null,
+        "verification": {
+          "status": "unverified",
+          "outcome": "unknown",
+          "source": "",
+          "policy_revision": "",
+          "evidence_ref": "",
+          "verified_at": null,
+          "expires_at": null,
+          "contradictory": false
+        },
+        "verification_context_hash": ""
+      },
+      {
+        "memory_id": "ae4edb69-d86d-4422-8003-fd0c6f7259b2",
+        "signal_id": "ea840f06-b51a-43ee-92e6-496155ee50ca",
+        "signal_type": "event_failedsched",
+        "severity": "medium",
+        "severity_input_valid": true,
+        "formed_at": "2026-10-21T21:06:36.586593+00:00",
+        "strength": 0.514,
+        "recall_count": 0,
+        "last_recalled_at": null,
+        "consolidation_count": 0,
+        "source_instance": "synthetic-demo",
+        "classification": "",
+        "content_hash": "be810530863b0efabb416fe0b671e19e68518bfa62e9230f8ad5868b8eb920f0",
+        "content": {
+          "message": "scheduler node pressure pods pending",
+          "event_uid": "10000000-0000-4000-8000-0000000000a3"
+        },
+        "labels": {
+          "domain": "kubernetes",
+          "demo": "true"
+        },
+        "feature_vector": {},
+        "source": "synthetic-demo-collector",
+        "namespace": "edge",
+        "cluster": "demo",
+        "last_modified_at": "2026-10-21T21:06:36.586712+00:00",
+        "last_consolidated_at": null,
+        "analysis": null,
+        "verification": {
+          "status": "unverified",
+          "outcome": "unknown",
+          "source": "",
+          "policy_revision": "",
+          "evidence_ref": "",
+          "verified_at": null,
+          "expires_at": null,
+          "contradictory": false
+        },
+        "verification_context_hash": ""
+      },
+      {
+        "memory_id": "f92ffe5d-97d7-426e-87ce-92a7fef10928",
+        "signal_id": "f7f9926d-904f-46e4-a50b-a97237d17b8c",
+        "signal_type": "event_unhealthy",
+        "severity": "medium",
+        "severity_input_valid": true,
+        "formed_at": "2026-10-21T21:06:36.586762+00:00",
+        "strength": 0.514,
+        "recall_count": 0,
+        "last_recalled_at": null,
+        "consolidation_count": 0,
+        "source_instance": "synthetic-demo",
+        "classification": "",
+        "content_hash": "04bd68c975db39e137c56ffe921ea4408ebb35c2600b379a3aa1d94088aa6f19",
+        "content": {
+          "message": "readiness probe failed status 403",
+          "event_uid": "10000000-0000-4000-8000-0000000000a4"
+        },
+        "labels": {
+          "domain": "kubernetes",
+          "demo": "true"
+        },
+        "feature_vector": {},
+        "source": "synthetic-demo-collector",
+        "namespace": "edge",
+        "cluster": "demo",
+        "last_modified_at": "2026-10-21T21:06:36.586877+00:00",
+        "last_consolidated_at": null,
+        "analysis": null,
+        "verification": {
+          "status": "unverified",
+          "outcome": "unknown",
+          "source": "",
+          "policy_revision": "",
+          "evidence_ref": "",
+          "verified_at": null,
+          "expires_at": null,
+          "contradictory": false
+        },
+        "verification_context_hash": ""
+      }
+    ],
+    "stats": {
+      "formed_total": 4,
+      "evictions_total": 0,
+      "instance_id": "synthetic-demo",
+      "max_capacity": 10000
+    },
+    "rejection_set": []
+  },
+  "note": "synthetic_demo_not_field_data"
+}

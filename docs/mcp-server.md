@@ -62,6 +62,33 @@ Or against a running service:
 }
 ```
 
+## Quickstart for consumers
+
+Try it in 30 seconds against the labeled synthetic demo state:
+
+```sh
+uv tool install --from "git+https://github.com/jkershawrh/cascade-compression" "cascade-compression[mcp]"
+cascade-mcp --state tests/fixtures/mcp-demo-state.json   # from a repo clone
+# interactive exploration:
+npx @modelcontextprotocol/inspector cascade-mcp --state tests/fixtures/mcp-demo-state.json
+```
+
+Codex (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.cascade-memory]
+command = "cascade-mcp"
+args = ["--state", "/path/to/cascade-state.json"]
+```
+
+Claude Code (`.mcp.json` in the project):
+
+```json
+{"mcpServers": {"cascade-memory": {
+  "command": "cascade-mcp",
+  "args": ["--state", "/path/to/cascade-state.json"]}}}
+```
+
 ## Claim boundary
 
 The server surfaces memory content and verification state; it makes no
