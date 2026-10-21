@@ -39,9 +39,11 @@ def main() -> None:
     assert collector.connect({})
     assert collector.collect_all()
 
-    client = TestClient(app)
-    assert client.get("/health").status_code == 200
-    assert client.get("/").status_code == 200
+    # Enter the app lifespan so the service bridge is created; /health is
+    # readiness-honest (503 while the bridge is absent or state is unhealthy).
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200
+        assert client.get("/").status_code == 200
     print("release smoke: PASS")
 
 
