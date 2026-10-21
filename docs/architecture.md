@@ -48,8 +48,9 @@ documents, or any other structured event source.
 
 ### Nano pipeline
 
-Nano agents are deterministic and cheap. The built-in stages perform deduplication, transient
-suppression, severity protection, pattern recognition, and threshold checks. Dynamically learned
+Nano agents are deterministic and cheap. Protected labels, critical content, trends, and numeric
+critical thresholds are checked before deduplication or transient suppression. Later stages
+perform explicit info filtering and pattern recognition. Dynamically learned
 agents can suppress repeated floods, dominant noise types, or context-specific noise, but only
 after promotion. Every handled input receives a decision record.
 
@@ -58,8 +59,8 @@ after promotion. Every handled input receives a decision record.
 Signals that remain are preserved before asynchronous classification. `CascadeClassifier` exposes
 four policies:
 
-- `generative`: use the configured model endpoint; this is the default and preserves the original
-  OSS behavior.
+- `generative`: use the configured model endpoint; this is the default. Every backend receives
+  the same v3 canonical JSON evidence, preserving measurements and structured fields.
 - `compare`: run llm-d-sc and the generative classifier, record both, and keep the generative answer
   authoritative.
 - `semantic`: use llm-d-sc without a generative endpoint when desired, while retaining margin and

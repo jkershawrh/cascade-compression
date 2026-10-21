@@ -13,6 +13,23 @@ All notable changes are documented here. This project follows Semantic Versionin
   identity their content hash was bound to, so state restore, federation import, deduplication,
   reinforcement, and rejection sets stay consistent across restarts. Distinct observations
   without complete event identity never merge.
+- Succeed the 0.2.0rc6 evaluation line: this candidate carries the rc6 suppression-safety and
+  classifier-evidence fixes forward together with the lifecycle, memory-serialization, and
+  test-contract repairs listed above.
+
+## 0.2.0rc6 - 2026-10-20
+
+- Prepare a new incubating OSS candidate with suppression-safety and classifier-evidence fixes.
+  This candidate does not establish classification accuracy, reduced LLM fallback, natural
+  compression rates, staging readiness, or production readiness.
+- Generate missing collector IDs and reject ambiguous batch IDs before agents run, preventing
+  unrelated critical events from being removed together.
+- Run protected-label, critical-content, and numeric safety checks before suppression; remove the
+  pipeline's implicit info drop and retain explicit decisions for every handled signal.
+- Check learned-rule expiry before every batch, independently of promotion maintenance.
+- Preserve measurements and structured evidence in classifier input revision v3, including shadow
+  checks. Older learned rules require fresh qualification; old calibration and runtime evidence
+  must be regenerated. The legacy cache-hit benchmark now repeats identical evidence.
 - Add fail-closed memory verification provenance so classification, similarity, strength, recall,
   and federated approval remain advisory until an exact match has a current locally governed
   benign outcome.
