@@ -162,16 +162,29 @@ class ServiceMemorySource:
         # own recall semantics reinforce matched memories (strength and
         # recall_count); this proxy never writes anything itself.
         matches = result.get("matches", [])
-        wanted = {m.get("memory_id") for m in matches if m.get("memory_id")}
-        if wanted:
-            full = self._client.post("/memories/query", json={"limit": 500})
+        # Hydrate slim matches with full records so agents can read content
+        # and verification state. The query pool is strongest-first, so the
+        # join is scoped per matched signal_type — a global pool would miss
+        # every low-strength match below the high-strength bulk.
+        by_type: Dict[str, set] = {}
+        for match in matches:
+            if match.get("memory_id"):
+                by_type.setdefault(match.get("signal_type") or "", set()).add(
+                    match["memory_id"])
+        by_id: Dict[str, Dict[str, Any]] = {}
+        for stype, wanted in by_type.items():
+            body_query = {"limit": 500}
+            if stype:
+                body_query["signal_type"] = stype
+            full = self._client.post("/memories/query", json=body_query)
             full.raise_for_status()
-            by_id = {m.get("memory_id"): _memory_view(m)
-                     for m in full.json().get("memories", [])}
-            for match in matches:
-                hydrated = by_id.get(match.get("memory_id"))
-                if hydrated is not None:
-                    match["memory"] = hydrated
+            for record in full.json().get("memories", []):
+                if record.get("memory_id") in wanted:
+                    by_id[record["memory_id"]] = _memory_view(record)
+        for match in matches:
+            hydrated = by_id.get(match.get("memory_id"))
+            if hydrated is not None:
+                match["memory"] = hydrated
         result["note"] = ADVISORY_NOTE
         return result
 

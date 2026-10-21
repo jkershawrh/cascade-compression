@@ -36,6 +36,11 @@ uv sync --extra mcp        # or: pip install 'cascade-compression[mcp]'
 
 Results are bounded (at most 100 per call).
 
+**Recall tip:** pass a `signal_type` hint when you know the domain
+(`recall("hotfix revert", signal_type="hotfix_pattern")`). A running service
+applies a similarity floor; type-less natural-language queries can score just
+under it while type-anchored queries clear it easily and hydrate full records.
+
 ## Claude Desktop / Claude Code configuration
 
 ```json

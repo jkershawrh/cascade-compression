@@ -158,6 +158,42 @@ class TestServiceSource:
         assert top["memory"]["verification_status"] in ("approved", "unverified")
         assert top["memory"]["content"]["message"]
 
+    def test_service_proxy_recall_hydrates_weak_matches_via_type_pool(self, tmp_path):
+        """Low-strength matches must hydrate even when a strongest-first global
+        query pool would exclude them: the join is scoped per signal type."""
+        import httpx
+        archive_source = StateFileMemorySource(str(make_archive(tmp_path)))
+        # Give one memory much lower strength so it never enters a global
+        # strongest-first pool ahead of the others.
+        weak = archive_source.archive.query(signal_type="event_failedsched")[0]
+        weak.strength = 0.05
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/recall":
+                body = json.loads(request.content)
+                slim = archive_source.recall(
+                    query=body["content"]["message"],
+                    signal_type=body.get("signal_type") or None)
+                return httpx.Response(200, json={"matches": [
+                    {"memory_id": m["memory"].get("memory_id"), "score": m["score"],
+                     "signal_type": m["memory"].get("signal_type"),
+                     "strength": m["memory"].get("strength")}
+                    for m in slim["matches"]], "query_ms": 1.0})
+            if request.url.path == "/memories/query":
+                body = json.loads(request.content)
+                return httpx.Response(200, json=archive_source.query(
+                    signal_type=body.get("signal_type"), limit=body.get("limit", 20)))
+            return httpx.Response(404)
+
+        source = ServiceMemorySource(
+            "http://svc", transport=httpx.MockTransport(handler))
+        result = source.recall("scheduler node pressure pending",
+                               signal_type="event_failedsched")
+        assert result["matches"]
+        for match in result["matches"]:
+            assert "memory" in match, "weak match must hydrate via the type pool"
+            assert match["memory"]["signal_type"] == "event_failedsched"
+
     def test_service_proxy_recall_and_stats(self, tmp_path):
         transport, requests = self._transport(tmp_path)
         source = ServiceMemorySource("http://cascade-memory:8090",
