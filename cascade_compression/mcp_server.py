@@ -156,6 +156,22 @@ class ServiceMemorySource:
         response = self._client.post("/recall", json=body)
         response.raise_for_status()
         result = response.json()
+        # The service returns slim ranked matches (ids and scores). Hydrate
+        # them with full records so agents can read content and verification
+        # state; unhydrated matches keep the slim fields. Note: the service's
+        # own recall semantics reinforce matched memories (strength and
+        # recall_count); this proxy never writes anything itself.
+        matches = result.get("matches", [])
+        wanted = {m.get("memory_id") for m in matches if m.get("memory_id")}
+        if wanted:
+            full = self._client.post("/memories/query", json={"limit": 500})
+            full.raise_for_status()
+            by_id = {m.get("memory_id"): _memory_view(m)
+                     for m in full.json().get("memories", [])}
+            for match in matches:
+                hydrated = by_id.get(match.get("memory_id"))
+                if hydrated is not None:
+                    match["memory"] = hydrated
         result["note"] = ADVISORY_NOTE
         return result
 
@@ -179,6 +195,7 @@ class ServiceMemorySource:
         response = self._client.post("/memories/query", json=body)
         response.raise_for_status()
         result = response.json()
+        result["returned"] = len(result.get("memories", []))
         result["note"] = ADVISORY_NOTE
         return result
 

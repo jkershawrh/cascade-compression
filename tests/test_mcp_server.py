@@ -123,9 +123,18 @@ class TestServiceSource:
             requests.append(request)
             if request.url.path == "/recall":
                 body = json.loads(request.content)
-                return httpx.Response(200, json=archive_source.recall(
+                slim = archive_source.recall(
                     query=body["content"]["message"],
-                    namespace=body.get("namespace") or None))
+                    namespace=body.get("namespace") or None)
+                matches = [{
+                    "memory_id": m["memory"].get("memory_id"),
+                    "score": m["score"], "breakdown": m["breakdown"],
+                    "signal_type": m["memory"].get("signal_type"),
+                    "classification": m["memory"].get("classification"),
+                    "strength": m["memory"].get("strength"),
+                } for m in slim["matches"]]
+                return httpx.Response(200, json={"matches": matches,
+                                                 "query_ms": 1.0})
             if request.url.path == "/memories/stats":
                 return httpx.Response(200, json=archive_source.stats())
             if request.url.path == "/memories/query":
@@ -137,6 +146,17 @@ class TestServiceSource:
             return httpx.Response(404)
 
         return httpx.MockTransport(handler), requests
+
+    def test_service_proxy_recall_hydrates_full_records(self, tmp_path):
+        transport, _ = self._transport(tmp_path)
+        source = ServiceMemorySource("http://svc", transport=transport)
+        result = source.recall("payment gateway connection pool")
+        assert result["note"] == ADVISORY_NOTE
+        assert result["matches"]
+        top = result["matches"][0]
+        assert "memory" in top, "slim service match must be hydrated"
+        assert top["memory"]["verification_status"] in ("approved", "unverified")
+        assert top["memory"]["content"]["message"]
 
     def test_service_proxy_recall_and_stats(self, tmp_path):
         transport, requests = self._transport(tmp_path)
