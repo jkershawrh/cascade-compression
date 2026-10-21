@@ -47,6 +47,9 @@ semantic-classifier = [
     "grpcio>=1.80",
     "protobuf>=6.31.1",
 ]
+mcp = [
+    "mcp>=2.0",
+]
 finance = ["psycopg2-binary>=2.9"]
 
 [dependency-groups]
@@ -71,6 +74,7 @@ cascade-evaluate = "cascade_compression.evaluation_cli:main"
 cascade-classification-run = "cascade_compression.classification_run_cli:main"
 cascade-freeze-holdout = "cascade_compression.holdout_cli:main"
 cascade-stage-evidence = "cascade_compression.staging_evidence_cli:main"
+cascade-mcp = "cascade_compression.mcp_server:main"
 cascade-adjudicate = "cascade_compression.adjudication_cli:main"
 
 [project.entry-points."cascade_compression.collectors"]

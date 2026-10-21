@@ -2,6 +2,16 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## Unreleased
+
+- Add a read-only MCP server (`cascade-mcp`, optional `mcp` extra) exposing the
+  federated shared memory to users and agents: recall with score breakdowns and
+  an exact-match flag, stats with verification counts, filtered queries, and
+  bounded export. Every response carries verification status and an explicit
+  advisory note; agents can never write memories or obtain suppression
+  authority through the interface. Supports offline bridge-state snapshots and
+  live service proxying.
+
 ## 0.2.0rc7 - 2026-10-21
 
 - Harden deterministic suppression behind complete event identity: exact-repeat suppression
