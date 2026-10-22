@@ -1822,6 +1822,14 @@ class CascadeBridge(LifecycleControls):
             params = {"entry_type": "audit.verdict", "page_size": "100"}
             if self._verdict_watermark:
                 params["from_ts"] = self._verdict_watermark
+            else:
+                # First poll: window to now. An unfiltered query pulls the
+                # gateway's full-content cap (~10k entries, >15s), exceeds
+                # the HTTP timeout, and the watermark never advances — the
+                # poll would retry the same doomed query forever.
+                import time as _time
+
+                params["from_ts"] = int(_time.time() * 1000)
 
             with httpx.Client(timeout=15) as client:
                 r = client.get(

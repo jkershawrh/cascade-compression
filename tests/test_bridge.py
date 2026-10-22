@@ -300,6 +300,36 @@ class TestGCLBuiltinFiltering:
         assert stats["gcl_builtin_fails"] == 100
         assert stats["fn_count"] is None  # no FN evaluated
 
+    def test_first_poll_sends_from_ts_window(self):
+        """First poll must window the query, not fetch full history.
+
+        Found on a live deployment while wiring the governance loop:
+        with watermark=0 the first poll sends no ``from_ts``, the ledger
+        gateway pulls its full-content cap (~10k entries, >15s against
+        a large verdict history), the 15s httpx timeout fires, the
+        watermark never advances, and every retry repeats the same
+        doomed query — the verdict poll is silently stuck forever.
+        The first poll must initialize the window to now.
+        """
+        import time as _time
+
+        bridge = CascadeBridge(domain="kubernetes")
+        bridge._ledger_url = "https://ledger.example"
+        response = MagicMock()
+        response.json.return_value = {"entries": []}
+        client = MagicMock()
+        client.get.return_value = response
+        client.__enter__.return_value = client
+
+        before = int(_time.time() * 1000)
+        with patch("httpx.Client", return_value=client):
+            bridge._poll_gcl_verdicts()
+        after = int(_time.time() * 1000)
+
+        params = client.get.call_args.kwargs.get("params", {})
+        assert "from_ts" in params, "first poll must not query full history"
+        assert before <= params["from_ts"] <= after
+
     def test_written_ts_advances_watermark_and_entry_id_deduplicates(self):
         bridge = CascadeBridge()
         bridge._ledger_url = "https://ledger.example"
