@@ -277,6 +277,17 @@ def build_server(source: Any):
                     description="Filter memories by type, namespace or label.")
     server.add_tool(export_memories, name="export_memories",
                     description="Bounded strongest-first federated memory pack.")
+
+    # RAG extension: multi-perspective system understanding (service mode only)
+    if hasattr(source, "_base"):
+        try:
+            from .mcp_rag import register_rag_tools
+            import httpx as _httpx
+            _client = _httpx.Client(base_url=source._base, timeout=15.0)
+            register_rag_tools(server, _client, source._base)
+        except (ImportError, AttributeError):
+            pass  # RAG tools are optional; state-file sources skip them
+
     return server
 
 
