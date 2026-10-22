@@ -47,11 +47,13 @@ class CascadePipeline:
     """Run registered agents, with optional fail-open evaluation profiles."""
 
     def __init__(self, agents: Optional[List[CascadeAgent]] = None,
-                 *, verified_repeat_only: bool = False, triage_only: bool = False):
-        if verified_repeat_only and triage_only:
+                 *, verified_repeat_only: bool = False, triage_only: bool = False,
+                 verified_repeat_update: bool = False):
+        if sum(map(bool, (verified_repeat_only, triage_only, verified_repeat_update))) > 1:
             raise ValueError("nano profiles are mutually exclusive")
         self._agents: List[CascadeAgent] = []
         self._verified_repeat_only = verified_repeat_only
+        self._verified_repeat_update = verified_repeat_update
         self._triage_only = triage_only
         self._verified_deduplicator = None
         if agents:
@@ -59,10 +61,13 @@ class CascadePipeline:
                 self.register(agent)
 
     def register(self, agent: CascadeAgent) -> None:
-        if self._verified_repeat_only and type(agent) is DeduplicateAgent:
+        if type(agent) is DeduplicateAgent and (self._verified_repeat_only
+                                                 or self._verified_repeat_update):
             if self._verified_deduplicator is not None:
                 raise ValueError('Only one verified deduplicator may be registered')
-            agent = DeduplicateAgent(window_seconds=agent._window, require_verified_message=True)
+            agent = DeduplicateAgent(window_seconds=agent._window,
+                                     require_verified_message=True,
+                                     update_on_growth=self._verified_repeat_update)
             self._verified_deduplicator = agent
         self._agents.append(agent)
         self._agents.sort(key=lambda a: a.stage)
@@ -103,12 +108,19 @@ class CascadePipeline:
                     # Ignored removal attempts must not appear as suppression
                     # evidence or inflate the archive and compression counters.
                     continue
-                if self._verified_repeat_only and d.outcome in {Outcome.SUPPRESS, Outcome.DROP}:
+                if (self._verified_repeat_only or self._verified_repeat_update) \
+                        and d.outcome in {Outcome.SUPPRESS, Outcome.DROP}:
                     continue
                 if self._verified_repeat_only and d.outcome == Outcome.DEDUPE:
                     verified_repeat = bool(signal and agent is self._verified_deduplicator
                                            and verified_repeat_key(signal) is not None)
                     if not verified_repeat:
+                        continue
+                if self._verified_repeat_update and d.outcome == Outcome.DEDUPE:
+                    from .repeat_integrity import verified_repeat_update_key
+                    verified_update = bool(signal and agent is self._verified_deduplicator
+                                           and verified_repeat_update_key(signal) is not None)
+                    if not verified_update:
                         continue
                 if d.outcome == Outcome.SUPPRESS:
                     if d.signal_id not in escalated_ids:

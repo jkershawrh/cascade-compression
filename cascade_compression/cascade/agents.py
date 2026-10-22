@@ -14,7 +14,7 @@ from collections import defaultdict
 from typing import Dict, List, Set
 
 from .protocol import CascadeAgent, CascadeDecision, Outcome, Signal
-from .repeat_integrity import verified_repeat_key
+from .repeat_integrity import verified_repeat_key, verified_repeat_update_key
 
 
 class DeduplicateAgent:
@@ -34,17 +34,29 @@ class DeduplicateAgent:
         "timestamp", "firstTimestamp", "lastTimestamp", "observed_at",
     })
 
-    def __init__(self, window_seconds: float = 60.0, *, require_verified_message: bool = False):
+    def __init__(self, window_seconds: float = 60.0, *, require_verified_message: bool = False,
+                 update_on_growth: bool = False):
         self._window = window_seconds
         self._require_verified_message = require_verified_message
+        self._update_on_growth = update_on_growth
         self._seen: Dict[str, float] = {}
+        self._retained: Dict[str, Signal] = {}
 
     def process(self, signals: List[Signal]) -> List[CascadeDecision]:
         now = time.monotonic()
         self._seen = {k: v for k, v in self._seen.items() if now - v < self._window}
+        if self._update_on_growth:
+            # Retained records live only inside the dedup window; a later
+            # re-observation re-establishes them and delivers in between.
+            self._retained = {k: s for k, s in self._retained.items() if k in self._seen}
 
         decisions = []
         for s in signals:
+            if self._update_on_growth:
+                decision = self._process_update(s)
+                if decision is not None:
+                    decisions.append(decision)
+                continue
             if self._require_verified_message:
                 key = verified_repeat_key(s)
                 if key is None:
@@ -56,6 +68,66 @@ class DeduplicateAgent:
                     ))
                 else:
                     self._seen[key] = now
+                continue
+    def _process_update(self, s: Signal) -> Optional[CascadeDecision]:
+        """Latest-wins verified repeat: fold count growth into the retained
+        record instead of re-delivering it. Decreases and other changes
+        deliver (fail-open); every fold-in is auditable in the evidence."""
+        key = verified_repeat_update_key(s)
+        if key is None:
+            return None
+        retained = self._retained.get(key)
+        if retained is None:
+            self._retained[key] = s
+            self._seen[key] = time.monotonic()
+            return None
+        old_count = retained.content.get('count')
+        new_count = s.content.get('count')
+        if (isinstance(old_count, int) and isinstance(new_count, int)
+                and new_count > old_count):
+            retained.content['count'] = new_count
+            if isinstance(s.content.get('timestamp'), str):
+                retained.content['timestamp'] = s.content['timestamp']
+            return CascadeDecision(
+                signal_id=s.signal_id, agent_name=self.name,
+                outcome=Outcome.DEDUPE,
+                evidence=f'verified repeat, count {old_count} -> {new_count}')
+        if new_count == old_count:
+            return CascadeDecision(
+                signal_id=s.signal_id, agent_name=self.name,
+                outcome=Outcome.DEDUPE,
+                evidence=f'verified exact duplicate of {key[:8]}')
+        # Non-monotonic count: suspect, deliver.
+        return None
+
+    def _process_verified(self, s: Signal, now: float) -> Optional[CascadeDecision]:
+        key = verified_repeat_key(s)
+        if key is None:
+            return None
+        if key in self._seen:
+            return CascadeDecision(
+                signal_id=s.signal_id, agent_name=self.name,
+                outcome=Outcome.DEDUPE, evidence=f'verified exact duplicate of {key[:8]}')
+        self._seen[key] = now
+        return None
+
+    def process(self, signals: List[Signal]) -> List[CascadeDecision]:
+        now = time.monotonic()
+        self._seen = {k: v for k, v in self._seen.items() if now - v < self._window}
+        if self._update_on_growth:
+            self._retained = {k: s for k, s in self._retained.items() if k in self._seen}
+
+        decisions = []
+        for s in signals:
+            if self._update_on_growth:
+                decision = self._process_update(s)
+                if decision is not None:
+                    decisions.append(decision)
+                continue
+            if self._require_verified_message:
+                decision = self._process_verified(s, now)
+                if decision is not None:
+                    decisions.append(decision)
                 continue
             if self._is_compliance(s):
                 continue
