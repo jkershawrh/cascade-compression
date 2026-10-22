@@ -30,17 +30,26 @@ def _verified_repeat_admission(signal, require_pod_kind: bool = True):
     content, labels = signal.content, signal.labels
     if not isinstance(content, dict) or not isinstance(labels, dict):
         return None
-    if (labels.get('domain') != 'kubernetes' or labels.get('label') in PROTECTED
+    if (labels.get('label') in PROTECTED
             or signal.severity != 'medium'
-            or not isinstance(signal.signal_type, str) or not signal.signal_type.startswith('event_')
+            or not isinstance(signal.signal_type, str) or not signal.signal_type.strip()
             or (require_pod_kind and content.get('kind') != 'Pod')
             or (not require_pod_kind and not (isinstance(content.get('kind'), str)
                                               and content.get('kind').strip()))):
         return None
-    identity = [signal.source, signal.cluster, signal.namespace,
-                content.get('uid'), content.get('event_uid'), content.get('reason')]
-    if not all(isinstance(value, str) and value.strip() for value in identity):
+    # Domain-agnostic: the domain label and signal_type participate in the
+    # identity key so cross-domain observations never merge, but no specific
+    # domain or signal_type prefix is required for admission. The domain is
+    # optional metadata — it differentiates keys but doesn't gate admission.
+    required_identity = [signal.source, signal.cluster, signal.namespace,
+                         content.get('uid'), content.get('event_uid'), content.get('reason')]
+    if not all(isinstance(value, str) and value.strip() for value in required_identity):
         return None
+    # Full identity for the key: includes domain and signal_type as
+    # differentiators (empty values are valid — they mean "unspecified").
+    identity = [signal.source, signal.cluster, signal.namespace,
+                signal.labels.get('domain', ''), signal.signal_type,
+                content.get('uid'), content.get('event_uid'), content.get('reason')]
     if type(content.get('count')) is not int or content['count'] < 1:
         return None
     message, claimed = content.get('message'), content.get('message_sha256')

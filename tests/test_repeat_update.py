@@ -133,3 +133,49 @@ class TestPipelineProfile:
         suppressed = [d for d in result.decisions
                       if d.signal_id in {s.signal_id for s in criticals}]
         assert not suppressed
+
+
+class TestDomainAgnosticAdmission:
+    """The verified repeat profiles must be domain-agnostic: any domain label
+    and any signal_type prefix can be admitted as long as identity, digest,
+    and count requirements are met. The domain and signal_type participate
+    in the key material so cross-domain observations never merge."""
+
+    def test_aap_domain_admitted(self):
+        s = signal(5)
+        s.labels = {"domain": "aap"}
+        assert verified_repeat_update_key(s) is not None
+
+    def test_kubernetes_domain_admitted(self):
+        s = signal(5)
+        s.labels = {"domain": "kubernetes"}
+        assert verified_repeat_update_key(s) is not None
+
+    def test_no_domain_admitted(self):
+        s = signal(5)
+        s.labels = {}
+        assert verified_repeat_update_key(s) is not None
+
+    def test_task_signal_type_admitted(self):
+        s = signal(5)
+        s.signal_type = "task_runner_on_failed"
+        assert verified_repeat_update_key(s) is not None
+
+    def test_cross_domain_keys_differ(self):
+        k8s = signal(5)
+        k8s.labels = {"domain": "kubernetes"}
+        aap = signal(5)
+        aap.labels = {"domain": "aap"}
+        assert verified_repeat_update_key(k8s) != verified_repeat_update_key(aap)
+
+    def test_cross_type_keys_differ(self):
+        event = signal(5)
+        event.signal_type = "event_unhealthy"
+        task = signal(5)
+        task.signal_type = "task_runner_on_failed"
+        assert verified_repeat_update_key(event) != verified_repeat_update_key(task)
+
+    def test_compliance_label_still_bypasses(self):
+        s = signal(5)
+        s.labels = {"domain": "kubernetes", "label": "compliance"}
+        assert verified_repeat_update_key(s) is None
