@@ -309,7 +309,7 @@ class TestGCLBuiltinFiltering:
         a large verdict history), the 15s httpx timeout fires, the
         watermark never advances, and every retry repeats the same
         doomed query — the verdict poll is silently stuck forever.
-        The first poll must initialize the window to now.
+        The first poll must open a bounded lookback window (covering the audit cadence), not exactly ``now``: verdict batches are written before the poll opens its window, so a now-windowed first poll finds nothing, never advances the watermark, and misses every batch.
         """
         import time as _time
 
@@ -328,7 +328,10 @@ class TestGCLBuiltinFiltering:
 
         params = client.get.call_args.kwargs.get("params", {})
         assert "from_ts" in params, "first poll must not query full history"
-        assert before <= params["from_ts"] <= after
+        # First poll looks back ~20 minutes (covers a 15-minute audit
+        # cadence with margin), bounded either side.
+        lookback_ms = 20 * 60 * 1000
+        assert before - lookback_ms - 2000 <= params["from_ts"] <= after - lookback_ms + 2000
 
     def test_written_ts_advances_watermark_and_entry_id_deduplicates(self):
         bridge = CascadeBridge()

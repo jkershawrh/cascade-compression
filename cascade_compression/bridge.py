@@ -1823,13 +1823,17 @@ class CascadeBridge(LifecycleControls):
             if self._verdict_watermark:
                 params["from_ts"] = self._verdict_watermark
             else:
-                # First poll: window to now. An unfiltered query pulls the
-                # gateway's full-content cap (~10k entries, >15s), exceeds
-                # the HTTP timeout, and the watermark never advances — the
-                # poll would retry the same doomed query forever.
+                # First poll: open a bounded lookback window. Exactly
+                # ``now`` never catches anything — verdict batches are
+                # written before the poll opens its window, so the
+                # watermark would never advance and every batch would be
+                # missed. The lookback covers the audit cadence with
+                # margin; an unfiltered query would pull the gateway's
+                # full-content cap and time out.
                 import time as _time
 
-                params["from_ts"] = int(_time.time() * 1000)
+                lookback_ms = 20 * 60 * 1000
+                params["from_ts"] = int(_time.time() * 1000) - lookback_ms
 
             with httpx.Client(timeout=15) as client:
                 r = client.get(
