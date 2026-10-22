@@ -884,6 +884,16 @@ def load_semantic_contract(path: str) -> SemanticContract:
     with open(path, encoding="utf-8") as handle:
         data = json.load(handle)
     scoring_mode = str(data.get("scoring_mode", "")).strip()
+    if not scoring_mode:
+        # Production taxonomy files (v8+) use 'method' where the public
+        # contract uses 'scoring_mode'; accept the alias with a mapping.
+        method = str(data.get("method", "")).strip()
+        method_aliases = {
+            "anchor-topk-mean": "anchor_cosine",
+            "anchor-cosine": "anchor_cosine",
+            "classification-head": "classification_head_probability",
+        }
+        scoring_mode = method_aliases.get(method, "")
     if scoring_mode not in VALID_SCORING_MODES:
         raise ValueError(
             "taxonomy scoring_mode must be one of "

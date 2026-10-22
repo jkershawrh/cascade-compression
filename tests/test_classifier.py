@@ -7,6 +7,8 @@ require the optional gRPC runtime or a running llm-d-sc service.
 from dataclasses import replace
 import json
 
+import pytest
+
 from cascade_compression.classifier import (
     CascadeClassifier,
     ClassificationResult,
@@ -297,3 +299,47 @@ def test_evidence_redaction_covers_inline_and_url_credentials():
     assert "abc123" not in value
     assert "letmein" not in value
     assert value.count("[REDACTED]") == 3
+
+
+class TestTaxonomyMethodAlias:
+    """Production taxonomy files (v8+) use 'method' where the public contract
+    uses 'scoring_mode'; the loader must accept the alias."""
+
+    def _taxonomy(self, tmp_path, **overrides):
+        data = {
+            "signal": "cascade_classification",
+            "classifier_id": "cascade-classification",
+            "taxonomy_revision": "test-rev",
+            "model_revision": "test-model",
+            "tokenizer_revision": "test-tokenizer",
+            "method": "anchor-topk-mean",
+            "labels": ["routine_noise", "known_pattern", "needs_attention", "real_incident"],
+            "anchors": {},
+        }
+        data.update(overrides)
+        path = tmp_path / "taxonomy.json"
+        path.write_text(json.dumps(data))
+        return str(path)
+
+    def test_method_alias_anchor_topk_mean(self, tmp_path):
+        from cascade_compression.classifier import load_semantic_contract
+        contract = load_semantic_contract(self._taxonomy(tmp_path))
+        assert contract.scoring_mode == "anchor_cosine"
+
+    def test_method_alias_classification_head(self, tmp_path):
+        from cascade_compression.classifier import load_semantic_contract
+        contract = load_semantic_contract(
+            self._taxonomy(tmp_path, method="classification-head"))
+        assert contract.scoring_mode == "classification_head_probability"
+
+    def test_scoring_mode_takes_precedence(self, tmp_path):
+        from cascade_compression.classifier import load_semantic_contract
+        contract = load_semantic_contract(
+            self._taxonomy(tmp_path, scoring_mode="anchor_cosine"))
+        assert contract.scoring_mode == "anchor_cosine"
+
+    def test_unknown_method_rejected(self, tmp_path):
+        from cascade_compression.classifier import load_semantic_contract
+        with pytest.raises(ValueError, match="scoring_mode"):
+            load_semantic_contract(
+                self._taxonomy(tmp_path, method="bogus-method"))
