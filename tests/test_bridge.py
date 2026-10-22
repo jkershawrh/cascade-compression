@@ -333,6 +333,43 @@ class TestGCLBuiltinFiltering:
         lookback_ms = 20 * 60 * 1000
         assert before - lookback_ms - 2000 <= params["from_ts"] <= after - lookback_ms + 2000
 
+    def test_stale_watermark_is_capped_to_bounded_window(self):
+        """A stale watermark must not query the full verdict backlog.
+
+        Found on a live deployment: pre-fix pods crawled the oldest
+        historical verdicts and persisted a days-old watermark; the
+        successor pod inherited it via the state snapshot. Every poll
+        then queried the entire backlog since that watermark — the
+        gateway's full-content cap makes that query far outlast the
+        HTTP timeout, so the poll consumes nothing and the frozen
+        watermark dooms every retry. The effective window must be
+        capped: stale watermarks skip to the recent window.
+        """
+        import time as _time
+
+        bridge = CascadeBridge(domain="kubernetes")
+        bridge._ledger_url = "https://ledger.example"
+        bridge._verdict_watermark = (
+            int(_time.time() * 1000) - 24 * 24 * 3600 * 1000  # 24 days stale
+        )
+        response = MagicMock()
+        response.json.return_value = {"entries": []}
+        client = MagicMock()
+        client.get.return_value = response
+        client.__enter__.return_value = client
+
+        before = int(_time.time() * 1000)
+        with patch("httpx.Client", return_value=client):
+            bridge._poll_gcl_verdicts()
+
+        params = client.get.call_args.kwargs.get("params", {})
+        # The query must NOT use the stale watermark; it must be capped
+        # to the bounded recent window (~20 min).
+        assert params["from_ts"] >= before - 22 * 60 * 1000, (
+            "stale watermark passed through — full-backlog query would "
+            "time out and freeze the poll forever"
+        )
+
     def test_written_ts_advances_watermark_and_entry_id_deduplicates(self):
         bridge = CascadeBridge()
         bridge._ledger_url = "https://ledger.example"

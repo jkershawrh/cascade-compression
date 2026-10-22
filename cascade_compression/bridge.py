@@ -1819,21 +1819,26 @@ class CascadeBridge(LifecycleControls):
             if self._ledger_token:
                 headers["Authorization"] = f"Bearer {self._ledger_token}"
 
-            params = {"entry_type": "audit.verdict", "page_size": "100"}
-            if self._verdict_watermark:
-                params["from_ts"] = self._verdict_watermark
-            else:
-                # First poll: open a bounded lookback window. Exactly
-                # ``now`` never catches anything — verdict batches are
-                # written before the poll opens its window, so the
-                # watermark would never advance and every batch would be
-                # missed. The lookback covers the audit cadence with
-                # margin; an unfiltered query would pull the gateway's
-                # full-content cap and time out.
-                import time as _time
+            import time as _time
 
-                lookback_ms = 20 * 60 * 1000
-                params["from_ts"] = int(_time.time() * 1000) - lookback_ms
+            # Cap the effective window. A stale watermark (inherited
+            # from a pre-fix crawl via persisted state, or after
+            # downtime) would query the entire verdict backlog; the
+            # gateway's full-content cap makes that query far outlast
+            # the HTTP timeout, freezing the watermark and dooming
+            # every retry. Stale watermarks skip to the recent window —
+            # unconsumed older verdicts are dropped: the audit judges
+            # continuously and demotion signals target current
+            # behavior.
+            max_window_ms = 20 * 60 * 1000
+            now_ms = int(_time.time() * 1000)
+            effective_from = max(
+                int(self._verdict_watermark or 0), now_ms - max_window_ms,
+            )
+            params = {
+                "entry_type": "audit.verdict", "page_size": "100",
+                "from_ts": effective_from,
+            }
 
             with httpx.Client(timeout=15) as client:
                 r = client.get(
