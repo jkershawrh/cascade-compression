@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict
 from uuid import uuid4
 
-from .cascade.agents import default_agents
+from .cascade.agents import default_agents, DeduplicateAgent
 from .cascade.corpus_analyzer import CorpusAnalyzer
 from .cascade.dynamic_agents import ContextualNoiseSuppressor, DominantNoiseSuppressor, RepeatFloodSuppressor
 from .cascade.inverse import SuppressionArchive
@@ -214,13 +214,23 @@ class CascadeBridge(LifecycleControls):
 
         self.enabled = True
         nano_profile = os.getenv("CASCADE_NANO_PROFILE", "legacy").strip().lower()
-        if nano_profile not in {"legacy", "verified_repeat_only", "triage_only"}:
+        if nano_profile not in {"legacy", "verified_repeat_only", "triage_only",
+                                 "verified_repeat_update"}:
             raise ValueError(f"unknown CASCADE_NANO_PROFILE: {nano_profile}")
         self.nano_profile = nano_profile
+        # The dedup window is the retention horizon for repeat suppression.
+        # The default (60s) matches the collection cadence; deployments with
+        # recurring events should set this to their event-recurrence horizon.
+        dedup_window = float(os.getenv("CASCADE_DEDUP_WINDOW_SECONDS", "60"))
+        agents = default_agents()
+        for i, agent in enumerate(agents):
+            if type(agent) is DeduplicateAgent:
+                agents[i] = DeduplicateAgent(window_seconds=dedup_window)
         self.pipeline = CascadePipeline(
-            default_agents(),
+            agents,
             verified_repeat_only=nano_profile == "verified_repeat_only",
             triage_only=nano_profile == "triage_only",
+            verified_repeat_update=nano_profile == "verified_repeat_update",
         )
         self._triage_advisor = ExactRepeatTriage() if nano_profile == "triage_only" else None
         self._human_gate = bool(os.getenv("CASCADE_HUMAN_GATE", ""))
