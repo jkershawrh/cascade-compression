@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import threading
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -371,6 +372,12 @@ class MemoryArchive:
                  instance_id: str = ""):
         self._memories: Dict[UUID, Memory] = {}
         self._hash_index: Dict[str, UUID] = {}
+        # Classifier workers store survivors while CascadeBridge._save_state
+        # serializes the archive via to_dict. Structural mutation and
+        # iteration must be mutually exclusive or the snapshot raises
+        # "dictionary changed size during iteration" and durable
+        # activation state is lost.
+        self._lock = threading.RLock()
         self._max_capacity = max_capacity
         self._instance_id = instance_id or str(uuid4())[:8]
         self._events: List[MemoryEvent] = []
@@ -386,6 +393,11 @@ class MemoryArchive:
 
     def store(self, signal: Signal, classification: str = "",
               metadata: Optional[Dict[str, Any]] = None) -> Memory:
+        with self._lock:
+            return self._store_locked(signal, classification, metadata)
+
+    def _store_locked(self, signal: Signal, classification: str = "",
+                      metadata: Optional[Dict[str, Any]] = None) -> Memory:
         # Hash and retain the same snapshot, independent of caller mutation.
         signal = deepcopy(signal)
         content_hash = _compute_content_hash(signal)
@@ -489,7 +501,8 @@ class MemoryArchive:
 
     def query(self, signal_type: str = None, labels: Dict[str, str] = None,
               min_strength: float = 0.0, limit: int = 100) -> List[Memory]:
-        results = list(self._memories.values())
+        with self._lock:
+            results = list(self._memories.values())
 
         if signal_type is not None:
             results = [m for m in results if m.signal.signal_type == signal_type]
@@ -517,17 +530,19 @@ class MemoryArchive:
 
     def decay_all(self, lambda_rate: float, hours_elapsed: float) -> None:
         factor = math.exp(-lambda_rate * hours_elapsed)
-        for memory in self._memories.values():
-            memory.strength *= factor
-            memory.strength = max(memory.strength, 0.0)
+        with self._lock:
+            for memory in self._memories.values():
+                memory.strength *= factor
+                memory.strength = max(memory.strength, 0.0)
 
     def decay_all_typed(self, hours_elapsed: float) -> None:
         if not self._decay_config:
             return
-        for memory in self._memories.values():
-            rate = self._decay_config.rate_for(memory.signal.signal_type)
-            memory.strength *= math.exp(-rate * hours_elapsed)
-            memory.strength = max(memory.strength, 0.0)
+        with self._lock:
+            for memory in self._memories.values():
+                rate = self._decay_config.rate_for(memory.signal.signal_type)
+                memory.strength *= math.exp(-rate * hours_elapsed)
+                memory.strength = max(memory.strength, 0.0)
 
     def _evict_weakest(self) -> None:
         count = max(1, int(self._max_capacity * _EVICTION_FRACTION))
@@ -765,7 +780,8 @@ class MemoryArchive:
         return events
 
     def stats(self) -> Dict[str, Any]:
-        strengths = [m.strength for m in self._memories.values()]
+        with self._lock:
+            strengths = [m.strength for m in self._memories.values()]
         sources = {m.source_instance for m in self._memories.values() if m.source_instance}
         return {
             "size": self.size,
@@ -781,8 +797,9 @@ class MemoryArchive:
         }
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "memories": [m.to_dict() for m in self._memories.values()],
+        with self._lock:
+            return {
+                "memories": [m.to_dict() for m in self._memories.values()],
             "stats": {
                 "formed_total": self._formed_total,
                 "evictions_total": self._evictions_total,

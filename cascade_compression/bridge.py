@@ -355,6 +355,7 @@ class CascadeBridge(LifecycleControls):
         self._meta_target = os.getenv("CASCADE_META_TARGET", "")
         self._meta_last_emitted: Dict[str, float] = {}
         self._context_lock = threading.Lock()
+        self._verdict_lock = threading.Lock()
         self._pending_memory_ids: Dict[str, Any] = {}
         self._pending_memory_lock = threading.Lock()
 
@@ -1863,22 +1864,23 @@ class CascadeBridge(LifecycleControls):
 
             for entry in entries:
                 entry_id = str(entry.get("entry_id", ""))
-                if entry_id and entry_id in self._verdict_seen_ids:
-                    continue
+                with self._verdict_lock:
+                    if entry_id and entry_id in self._verdict_seen_ids:
+                        continue
 
-                # Immutable Ledger exposes millisecond epoch time as
-                # ``written_ts``.  Older adapters used timestamp/created_at,
-                # so retain those as compatibility fallbacks.
-                ts = entry.get("written_ts")
-                if ts is None:
-                    ts = entry.get("timestamp", entry.get("created_at", 0))
-                if ts and self._verdict_ts_is_newer(ts, self._verdict_watermark):
-                    self._verdict_watermark = ts
+                    # Immutable Ledger exposes millisecond epoch time as
+                    # ``written_ts``.  Older adapters used timestamp/created_at,
+                    # so retain those as compatibility fallbacks.
+                    ts = entry.get("written_ts")
+                    if ts is None:
+                        ts = entry.get("timestamp", entry.get("created_at", 0))
+                    if ts and self._verdict_ts_is_newer(ts, self._verdict_watermark):
+                        self._verdict_watermark = ts
 
-                if entry_id:
-                    self._verdict_seen_ids[entry_id] = None
-                    while len(self._verdict_seen_ids) > 2000:
-                        self._verdict_seen_ids.pop(next(iter(self._verdict_seen_ids)))
+                    if entry_id:
+                        self._verdict_seen_ids[entry_id] = None
+                        while len(self._verdict_seen_ids) > 2000:
+                            self._verdict_seen_ids.pop(next(iter(self._verdict_seen_ids)))
 
                 content = entry.get("content", "")
                 if isinstance(content, str):
@@ -1945,6 +1947,11 @@ class CascadeBridge(LifecycleControls):
 
     def _save_state_locked(self):
         try:
+            with self._verdict_lock:
+                _verdict_snapshot = (
+                    self._verdict_watermark,
+                    list(self._verdict_seen_ids),
+                )
             state = {
                 "version": 5,
                 "qualification_revision": REVISION,
@@ -1976,8 +1983,8 @@ class CascadeBridge(LifecycleControls):
                     },
                 } for name, metrics in self._agent_metrics.items()
                   if (rule := self._agent_rules.get(name)) is not None],
-                "verdict_watermark": self._verdict_watermark,
-                "verdict_seen_ids": list(self._verdict_seen_ids),
+                "verdict_watermark": _verdict_snapshot[0],
+                "verdict_seen_ids": _verdict_snapshot[1],
                 "gcl_builtin_fails": self._gcl_builtin_fails,
                 "llm_dropped": self._llm_dropped,
                 "llm_dropped_by_severity": dict(self._llm_dropped_by_severity),
