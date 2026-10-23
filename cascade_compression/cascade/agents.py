@@ -41,13 +41,35 @@ class DeduplicateAgent:
         self._update_on_growth = update_on_growth
         self._seen: Dict[str, float] = {}
         self._retained: Dict[str, Signal] = {}
+        # Per-domain dedup windows: signals from sources that re-observe the
+        # same event (K8s polled snapshots) need long windows; signals from
+        # streaming sources (AAP database rows) don't repeat and gain nothing.
+        # Configured via CASCADE_DEDUP_WINDOW_<DOMAIN> env vars.
+        import os
+        self._domain_windows: Dict[str, float] = {}
+        for env_key in os.environ:
+            if env_key.startswith("CASCADE_DEDUP_WINDOW_"):
+                domain = env_key[len("CASCADE_DEDUP_WINDOW_"):].lower()
+                try:
+                    self._domain_windows[domain] = float(os.environ[env_key])
+                except ValueError:
+                    pass
+
+    def _window_for(self, signal: Signal) -> float:
+        """Select the dedup window for this signal's domain (or the default)."""
+        domain = (signal.labels or {}).get("domain", "")
+        if domain and domain in self._domain_windows:
+            return self._domain_windows[domain]
+        return self._window
 
     def process(self, signals: List[Signal]) -> List[CascadeDecision]:
         now = time.monotonic()
-        self._seen = {k: v for k, v in self._seen.items() if now - v < self._window}
+        # Prune entries per-domain: a K8s entry with a 24h window survives
+        # while an AAP entry with a 0s window is evicted immediately.
+        max_window = max(self._domain_windows.values()) if self._domain_windows else self._window
+        max_window = max(max_window, self._window)
+        self._seen = {k: v for k, v in self._seen.items() if now - v < max_window}
         if self._update_on_growth:
-            # Retained records live only inside the dedup window; a later
-            # re-observation re-establishes them and delivers in between.
             self._retained = {k: s for k, s in self._retained.items() if k in self._seen}
 
         decisions = []
@@ -78,6 +100,14 @@ class DeduplicateAgent:
             return None
         retained = self._retained.get(key)
         if retained is None:
+            self._retained[key] = s
+            self._seen[key] = time.monotonic()
+            return None
+        # Check expiry against this signal's domain-specific window
+        window = self._window_for(s)
+        last_seen = self._seen.get(key, 0)
+        if time.monotonic() - last_seen > window:
+            # Window expired for this domain — treat as new
             self._retained[key] = s
             self._seen[key] = time.monotonic()
             return None

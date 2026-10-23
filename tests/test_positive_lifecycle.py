@@ -260,11 +260,20 @@ def test_failed_replace_preserves_snapshot_and_is_observable(bridge):
     assert bridge._save_state()
     before = open(bridge._state_file,'rb').read()
     with patch('cascade_compression.lifecycle.os.replace', side_effect=OSError('synthetic storage failure')):
+        # Single transient failure: retry-then-fence — state stays healthy,
+        # the snapshot is preserved, and the failure counter increments.
         assert bridge._save_state() is False
-    assert not bridge._state_healthy
+        assert bridge._save_failures == 1
+        assert bridge._state_healthy  # transient, not fenced yet
+        assert open(bridge._state_file,'rb').read() == before
+        # Repeated failures (5+) eventually fence learning.
+        for _ in range(4):
+            assert bridge._save_state() is False
+        assert not bridge._state_healthy
     assert open(bridge._state_file,'rb').read() == before
     assert bridge._save_state()
     assert bridge._state_healthy
+    assert bridge._save_failures == 0
 
 
 def test_restart_receipt_retention_is_bounded_and_evictions_visible(bridge, monkeypatch):

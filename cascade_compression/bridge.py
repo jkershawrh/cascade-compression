@@ -1971,7 +1971,10 @@ class CascadeBridge(LifecycleControls):
                 "version": 5,
                 "qualification_revision": REVISION,
                 "classifier_identity": self._classifier_identity(),
-                "qualification_evidence": self._qualification_evidence,
+                "qualification_evidence": {
+                    key: dict(value) if isinstance(value, dict) else value
+                    for key, value in list(self._qualification_evidence.items())
+                },
                 "classifier_work": self._classifier_work_snapshot(),
                 "serializer_revision": SERIALIZER_REVISION,
                 "activated_agents": _contexts_snapshot[0],
@@ -2022,10 +2025,20 @@ class CascadeBridge(LifecycleControls):
             }
             atomic_snapshot(self._state_file, state)
             self._state_healthy = True
+            self._save_failures = 0
             return True
         except Exception as e:
-            self._fence_learning('snapshot write failed')
-            log.warning("Failed to save state: %s", e)
+            # A transient serialization race (e.g. a dict mutated during
+            # iteration) must not wipe the entire learning state. Retry on
+            # the next save; only fence after repeated failures.
+            self._save_failures = getattr(self, '_save_failures', 0) + 1
+            if self._save_failures >= 5:
+                self._fence_learning('repeated snapshot write failures')
+                log.warning("Failed to save state %d times, fencing: %s",
+                            self._save_failures, e)
+            else:
+                log.warning("Transient state save failure (%d/5): %s",
+                            self._save_failures, e)
             return False
 
     def _restore_state(self):
