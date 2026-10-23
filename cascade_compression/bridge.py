@@ -356,6 +356,11 @@ class CascadeBridge(LifecycleControls):
         self._meta_last_emitted: Dict[str, float] = {}
         self._context_lock = threading.Lock()
         self._verdict_lock = threading.Lock()
+        # Context activation/demotion state is mutated from the verdict
+        # poll thread, the promotion cycle, and classifier completion,
+        # while _save_state iterates it — structural mutation and
+        # iteration must be mutually exclusive.
+        self._contexts_lock = threading.RLock()
         self._pending_memory_ids: Dict[str, Any] = {}
         self._pending_memory_lock = threading.Lock()
 
@@ -990,8 +995,9 @@ class CascadeBridge(LifecycleControls):
             if metrics.tier != "nano":
                 continue
 
-            self._contextual_suppressor.add_noise_context(sig_type, ctx_value)
-            self._activated_contexts[sig_type].add(ctx_value)
+            with self._contexts_lock:
+                self._contextual_suppressor.add_noise_context(sig_type, ctx_value)
+                self._activated_contexts[sig_type].add(ctx_value)
             self._context_activation_timestamps[identity] = datetime.now(
                 timezone.utc
             ).isoformat()
@@ -1120,36 +1126,37 @@ class CascadeBridge(LifecycleControls):
             except (AttributeError, ValueError, TypeError):
                 expired_contexts[identity] = "invalid_activation_timestamp"
 
-        for identity, expiry_reason in expired_contexts.items():
-            sig_type, ctx_value = identity.split(":", 1)
-            self._contextual_suppressor.remove_noise_context(sig_type, ctx_value)
-            self._activated_contexts[sig_type].discard(ctx_value)
-            self._context_activation_timestamps.pop(identity, None)
-            self._llm_context_noise[identity] = 0
-            self._llm_context_important[identity] = 0
-            self._qualification_evidence.pop('context:' + identity, None)
-            for metrics in self._agent_metrics.values():
-                if (
-                    metrics.config.get("pattern_type") == "contextual_noise"
-                    and metrics.config.get("signal_type") == sig_type
-                    and metrics.config.get("context_value") == ctx_value
-                    and metrics.tier in {"nano", "micro", "macro"}
-                ):
-                    self.promotion.demote(
-                        metrics,
-                        reason=(
-                            f"context activation TTL expired ({self._activation_ttl_hours}h)"
-                            if expiry_reason == "ttl_expired"
-                            else "context activation timestamp was invalid"
-                        ),
-                    )
-                    self.promotion.reactivate(metrics)
-                    break
-            self._emit_meta(
-                "meta_agent_demoted", "high",
-                f"Contextual agent expired for {sig_type}",
-                related_type=sig_type, reason=expiry_reason,
-            )
+        with self._contexts_lock:
+            for identity, expiry_reason in expired_contexts.items():
+                sig_type, ctx_value = identity.split(":", 1)
+                self._contextual_suppressor.remove_noise_context(sig_type, ctx_value)
+                self._activated_contexts[sig_type].discard(ctx_value)
+                self._context_activation_timestamps.pop(identity, None)
+                self._llm_context_noise[identity] = 0
+                self._llm_context_important[identity] = 0
+                self._qualification_evidence.pop('context:' + identity, None)
+                for metrics in self._agent_metrics.values():
+                    if (
+                        metrics.config.get("pattern_type") == "contextual_noise"
+                        and metrics.config.get("signal_type") == sig_type
+                        and metrics.config.get("context_value") == ctx_value
+                        and metrics.tier in {"nano", "micro", "macro"}
+                    ):
+                        self.promotion.demote(
+                            metrics,
+                            reason=(
+                                f"context activation TTL expired ({self._activation_ttl_hours}h)"
+                                if expiry_reason == "ttl_expired"
+                                else "context activation timestamp was invalid"
+                            ),
+                        )
+                        self.promotion.reactivate(metrics)
+                        break
+                self._emit_meta(
+                    "meta_agent_demoted", "high",
+                    f"Contextual agent expired for {sig_type}",
+                    related_type=sig_type, reason=expiry_reason,
+                )
 
     def _classify_one(self, sig, client):
         with self._lifecycle_lock:
@@ -1457,8 +1464,9 @@ class CascadeBridge(LifecycleControls):
 
                             if (sig["signal_type"] in self._activated_contexts
                                     and ns in self._activated_contexts.get(sig["signal_type"], set())):
-                                self._contextual_suppressor.remove_noise_context(sig["signal_type"], ns)
-                                self._activated_contexts[sig["signal_type"]].discard(ns)
+                                with self._contexts_lock:
+                                    self._contextual_suppressor.remove_noise_context(sig["signal_type"], ns)
+                                    self._activated_contexts[sig["signal_type"]].discard(ns)
                                 identity = f"{sig['signal_type']}:{ns}"
                                 self._context_activation_timestamps.pop(identity, None)
                                 self._llm_context_noise[identity] = 0
@@ -1952,6 +1960,13 @@ class CascadeBridge(LifecycleControls):
                     self._verdict_watermark,
                     list(self._verdict_seen_ids),
                 )
+            with self._contexts_lock:
+                _contexts_snapshot = (
+                    dict(self._activated_patterns),
+                    {key: sorted(values)
+                     for key, values in list(self._activated_contexts.items())},
+                    dict(self._context_activation_timestamps),
+                )
             state = {
                 "version": 5,
                 "qualification_revision": REVISION,
@@ -1959,9 +1974,9 @@ class CascadeBridge(LifecycleControls):
                 "qualification_evidence": self._qualification_evidence,
                 "classifier_work": self._classifier_work_snapshot(),
                 "serializer_revision": SERIALIZER_REVISION,
-                "activated_agents": dict(self._activated_patterns),
-                "activated_contexts": {k: sorted(v) for k, v in self._activated_contexts.items()},
-                "context_activation_timestamps": dict(self._context_activation_timestamps),
+                "activated_agents": _contexts_snapshot[0],
+                "activated_contexts": _contexts_snapshot[1],
+                "context_activation_timestamps": _contexts_snapshot[2],
                 "llm_noise_counts": dict(self._llm_noise_counts),
                 "llm_important_counts": dict(self._llm_important_counts),
                 "llm_context_noise": dict(self._prune_context_map(self._llm_context_noise)),
