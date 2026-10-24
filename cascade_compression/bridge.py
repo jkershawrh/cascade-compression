@@ -254,7 +254,9 @@ class CascadeBridge(LifecycleControls):
 
         self.corpus_analyzer = CorpusAnalyzer(
             min_frequency=0.05, min_repeat_count=10,
-            repeat_window_seconds=300, analysis_interval=300,
+            repeat_window_seconds=300,
+            analysis_interval=float(
+                os.getenv("CASCADE_ANALYSIS_INTERVAL_SECONDS", "300")),
         )
 
         self._llm_buffer: list = []
@@ -300,7 +302,8 @@ class CascadeBridge(LifecycleControls):
         self._agent_rules: Dict[str, RuleAgent] = {}
         self._promotion_log: list = []
         self._last_promotion_time: float = 0
-        self._promotion_interval: float = 300
+        self._promotion_interval: float = float(
+            os.getenv("CASCADE_PROMOTION_INTERVAL_SECONDS", "300"))
 
         self._fn_count = 0
         self._fn_evaluated = 0
@@ -1855,20 +1858,42 @@ class CascadeBridge(LifecycleControls):
                 int(self._verdict_watermark or 0), now_ms - max_window_ms,
             )
             params = {
-                "entry_type": "audit.verdict", "page_size": "100",
+                "entry_type": "audit.verdict",
+                "page_size": str(max(1, int(
+                    os.getenv("CASCADE_VERDICT_PAGE_SIZE", "1000")))),
                 "from_ts": effective_from,
             }
+            max_pages = max(1, int(
+                os.getenv("CASCADE_VERDICT_MAX_PAGES", "20")))
 
+            # Drain the verdict backlog with server-side pagination.
+            # Found live in the fast-forward harness: a fixed 100-entry
+            # read against a sustained verdict stream starves the poll —
+            # it falls behind, the 20-minute stale-watermark skip then
+            # silently drops the backlog, including any FAILS verdicts
+            # it never reached. Demotion signals must not be droppable
+            # by throughput.
+            entries = []
             with httpx.Client(timeout=15) as client:
-                r = client.get(
-                    f"{self._ledger_url.rstrip('/')}/api/entries",
-                    params=params,
-                    headers=headers,
-                )
-                r.raise_for_status()
-                data = r.json()
-
-            entries = data if isinstance(data, list) else data.get("entries", [])
+                page_token = ""
+                for _ in range(max_pages):
+                    if page_token:
+                        params["page_token"] = page_token
+                    r = client.get(
+                        f"{self._ledger_url.rstrip('/')}/api/entries",
+                        params=params,
+                        headers=headers,
+                    )
+                    r.raise_for_status()
+                    data = r.json()
+                    page = data if isinstance(data, list) else data.get("entries", [])
+                    entries.extend(page)
+                    page_token = (
+                        data.get("next_page_token", "")
+                        if isinstance(data, dict) else ""
+                    )
+                    if not page_token:
+                        break
 
             for entry in entries:
                 entry_id = str(entry.get("entry_id", ""))
