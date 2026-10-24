@@ -16,6 +16,7 @@ import time
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict
 from uuid import uuid4
@@ -215,7 +216,7 @@ class CascadeBridge(LifecycleControls):
         self.enabled = True
         nano_profile = os.getenv("CASCADE_NANO_PROFILE", "legacy").strip().lower()
         if nano_profile not in {"legacy", "verified_repeat_only", "triage_only",
-                                 "verified_repeat_update"}:
+                                 "verified_repeat_update", "qualified_repeat_update"}:
             raise ValueError(f"unknown CASCADE_NANO_PROFILE: {nano_profile}")
         self.nano_profile = nano_profile
         # The dedup window is the retention horizon for repeat suppression.
@@ -230,7 +231,9 @@ class CascadeBridge(LifecycleControls):
             agents,
             verified_repeat_only=nano_profile == "verified_repeat_only",
             triage_only=nano_profile == "triage_only",
-            verified_repeat_update=nano_profile == "verified_repeat_update",
+            verified_repeat_update=nano_profile in {"verified_repeat_update", "qualified_repeat_update"},
+            qualified_suppression=(self._qualified_suppression_allowed
+                                   if nano_profile == "qualified_repeat_update" else None),
         )
         self._triage_advisor = ExactRepeatTriage() if nano_profile == "triage_only" else None
         self._human_gate = bool(os.getenv("CASCADE_HUMAN_GATE", ""))
@@ -373,6 +376,42 @@ class CascadeBridge(LifecycleControls):
         if self._ledger_url and self._ledger_memory_pending_count():
             self._start_memory_ledger_drain()
 
+    def _qualified_suppression_allowed(self, agent, signal, decision):
+        """Lifecycle authority, never a payload-provided approval flag.
+
+        Called while process holds the lifecycle lock. Only the explicit
+        qualified profile uses this; the bounded repeat profile is unchanged.
+        """
+        if (decision.outcome != Outcome.SUPPRESS or decision.agent_name != agent.name
+                or signal.severity_input_valid is not True
+                or signal.severity not in {"info", "low", "medium"}
+                or signal.labels.get("label") in {"compliance", "fraud", "sanctions"}
+                or not all(isinstance(v, str) and v.strip() for v in
+                           (signal.source, signal.namespace, signal.cluster))
+                or (self._state_file and (not self._state_healthy
+                                         or getattr(self, "_save_failures", 0) > 0))):
+            return False
+        kind = signal.signal_type
+        if agent is self._noise_suppressor or agent is self._repeat_suppressor:
+            pattern = "dominant_type" if agent is self._noise_suppressor else "repeat_flood"
+            return (kind in self._activated_types
+                    and self._activated_patterns.get(kind) == pattern
+                    and self._restored_authority_valid(kind, pattern))
+        if agent is not self._contextual_suppressor or self._human_gate:
+            return False
+        context = getattr(signal, agent._context_key, "")
+        identity = f"{kind}:{context}"
+        record = self._qualified_record("context:" + identity, self._context_binding(identity))
+        return bool(context in self._activated_contexts.get(kind, set())
+                    and record and record["noise"] >= _PROMOTION_MIN_SAMPLES
+                    and record["important"] == 0
+                    and valid_time(self._context_activation_timestamps.get(identity), self._activation_ttl_hours)
+                    and any(m.tier == "nano" and not m.deactivated
+                            and m.config.get("pattern_type") == "contextual_noise"
+                            and m.config.get("signal_type") == kind
+                            and m.config.get("context_value") == context
+                            for m in self._agent_metrics.values()))
+
     def process(self, signals: list) -> Dict:
         if not self.enabled or not signals:
             return {"enabled": False}
@@ -498,6 +537,9 @@ class CascadeBridge(LifecycleControls):
             "_remaining_signal_ids": [
                 str(sig.signal_id) for sig in cascade_result.remaining
             ],
+            "_remaining_signal_content": {
+                str(sig.signal_id): deepcopy(sig.content) for sig in cascade_result.remaining
+            },
             "_triage": triage_tags,
         }
 

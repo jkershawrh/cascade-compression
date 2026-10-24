@@ -226,6 +226,8 @@ class ServiceMemorySource:
 
 def build_server(source: Any):
     """Wire the read-only memory tools onto an MCP server (SDK required)."""
+    if sys.version_info < (3, 10):
+        raise SystemExit("The optional MCP server requires Python 3.10 or newer; the core supports Python 3.9.")
     try:
         from mcp.server.mcpserver import MCPServer
     except ModuleNotFoundError as exc:  # pragma: no cover - environment guard

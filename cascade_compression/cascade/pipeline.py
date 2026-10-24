@@ -48,13 +48,14 @@ class CascadePipeline:
 
     def __init__(self, agents: Optional[List[CascadeAgent]] = None,
                  *, verified_repeat_only: bool = False, triage_only: bool = False,
-                 verified_repeat_update: bool = False):
+                 verified_repeat_update: bool = False, qualified_suppression=None):
         if sum(map(bool, (verified_repeat_only, triage_only, verified_repeat_update))) > 1:
             raise ValueError("nano profiles are mutually exclusive")
         self._agents: List[CascadeAgent] = []
         self._verified_repeat_only = verified_repeat_only
         self._verified_repeat_update = verified_repeat_update
         self._triage_only = triage_only
+        self._qualified_suppression = qualified_suppression
         self._verified_deduplicator = None
         if agents:
             for agent in sorted(agents, key=lambda a: a.stage):
@@ -110,7 +111,15 @@ class CascadePipeline:
                     continue
                 if (self._verified_repeat_only or self._verified_repeat_update) \
                         and d.outcome in {Outcome.SUPPRESS, Outcome.DROP}:
-                    continue
+                    allowed = False
+                    if (self._verified_repeat_update and d.outcome == Outcome.SUPPRESS
+                            and self._qualified_suppression is not None):
+                        try:
+                            allowed = self._qualified_suppression(agent, signal, d) is True
+                        except Exception:
+                            log.exception("Qualified suppression check failed; retaining signal")
+                    if not allowed:
+                        continue
                 if self._verified_repeat_only and d.outcome == Outcome.DEDUPE:
                     verified_repeat = bool(signal and agent is self._verified_deduplicator
                                            and verified_repeat_key(signal) is not None)
@@ -143,7 +152,7 @@ class CascadePipeline:
                     # Only skip inference for info-severity classified signals.
                     # Everything medium+ still goes to inference for deeper analysis.
                     # Fail-open: when in doubt, send to inference.
-                    if (not self._verified_repeat_only and signal
+                    if (not (self._verified_repeat_only or self._verified_repeat_update) and signal
                             and signal.severity == "info"
                             and d.signal_id not in escalated_ids):
                         removed_ids.add(d.signal_id)

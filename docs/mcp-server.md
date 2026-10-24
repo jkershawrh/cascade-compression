@@ -13,6 +13,9 @@ not be treated as facts, and federation never transfers review authority.
 
 The server needs the optional `mcp` extra:
 
+The MCP server requires Python 3.10 or newer. The core engine continues to
+support Python 3.9; the MCP dependency is intentionally not installed there.
+
 ```sh
 uv sync --extra mcp        # or: pip install 'cascade-compression[mcp]'
 ```

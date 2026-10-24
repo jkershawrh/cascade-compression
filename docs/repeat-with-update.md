@@ -17,11 +17,17 @@ admission of `verified_repeat_key`:
 - Identity for matching excludes `count` (everything else is identical:
   severity, domain, kind, involved object, event_uid, reason, message digest,
   scope). Admission gates are unchanged: no payload trust flags, complete
-  message digest proof, medium severity, kubernetes domain, Pod kind.
+  message digest proof and valid medium severity. The update profile accepts
+  any non-empty kind and is domain-neutral; domain and type remain part of
+  identity.
 - On an unchanged repeat: suppress (identical to today).
-- On a count increase for the same identity: suppress the re-delivery AND
-  refresh the retained observation's count and timestamp, with the transition
-  recorded in the decision evidence (`verified repeat, count 5 -> 12`).
+- Within a single batch, count growth may fold into the first retained
+  observation. HTTP survivors, archived memory and queued classifier evidence
+  receive that updated content; the decision records the transition.
+- Across batches, a count increase is delivered as a new observation. An
+  acknowledged response cannot be updated by mutating a private agent object.
+  Old and new memory snapshots remain distinct and prior verification is not
+  transferred. Subsequent unchanged repeats may be suppressed.
 - On a count decrease: deliver (non-monotonic counts are treated as suspect,
   fail-open).
 - On any other change (message digest, identity fields): deliver.
@@ -30,12 +36,34 @@ admission of `verified_repeat_key`:
 
 ## Safety properties (tested adversarially)
 
-1. The retained observation always reflects the event's final observed count
-   — the pre-registered dangerous-miss definition holds by construction.
+1. Count growth reaches downstream consumers and memory: within-batch updates
+   appear in the survivor; later growth is delivered explicitly. This is a
+   tested behavior contract, not independent incident-safety proof.
 2. Every suppression decision records the count transition it folded in;
    updates are auditable, not silent.
 3. Decreasing counts, changed messages, and new event identities deliver.
 4. The profile is mutually exclusive with the other nano profiles.
+
+## Qualified learned suppression (opt-in)
+
+`CASCADE_NANO_PROFILE=qualified_repeat_update` combines the same repeat
+handling with current local qualification checks for the bridge's own learned
+type and context suppressors. It is not the default and does not change the
+bounded `verified_repeat_update` profile into an adaptive suppressor.
+
+Admission requires a recognized agent instance, complete source/scope, valid
+raw severity, non-protected labels, current rule/configuration/model bindings,
+200 successful noise samples with zero important classifications, and valid
+activation TTL and any applicable human approval. Missing or changed evidence,
+negative feedback, invalid severity and high/critical inputs retain work.
+Classifier-derived qualification is not independent ground truth. Contextual
+suppression remains disabled when the human gate is configured.
+
+Only `SUPPRESS` decisions can use that authority hook. Arbitrary `DROP`,
+`CLASSIFY` or payload trust flags do not authorize removal in either profile.
+Dedup windows are finite, non-negative durations; per-domain overrides are
+configured with `CASCADE_DEDUP_WINDOW_<DOMAIN>`. Zero disables the window.
+Dedup state is process-local, so restart may redeliver observations.
 
 ## Claim boundary
 

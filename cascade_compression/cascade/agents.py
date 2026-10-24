@@ -10,6 +10,8 @@ import hashlib
 import json
 import re
 import time
+import math
+from copy import deepcopy
 from collections import defaultdict
 from typing import Dict, List, Set
 
@@ -37,6 +39,8 @@ class DeduplicateAgent:
     def __init__(self, window_seconds: float = 60.0, *, require_verified_message: bool = False,
                  update_on_growth: bool = False):
         self._window = window_seconds
+        if not math.isfinite(window_seconds) or window_seconds < 0:
+            raise ValueError("dedup window must be finite and non-negative")
         self._require_verified_message = require_verified_message
         self._update_on_growth = update_on_growth
         self._seen: Dict[str, float] = {}
@@ -48,12 +52,16 @@ class DeduplicateAgent:
         import os
         self._domain_windows: Dict[str, float] = {}
         for env_key in os.environ:
-            if env_key.startswith("CASCADE_DEDUP_WINDOW_"):
+            if (env_key.startswith("CASCADE_DEDUP_WINDOW_")
+                    and env_key != "CASCADE_DEDUP_WINDOW_SECONDS"):
                 domain = env_key[len("CASCADE_DEDUP_WINDOW_"):].lower()
                 try:
-                    self._domain_windows[domain] = float(os.environ[env_key])
-                except ValueError:
-                    pass
+                    window = float(os.environ[env_key])
+                    if not math.isfinite(window) or window < 0:
+                        raise ValueError("out of range")
+                    self._domain_windows[domain] = window
+                except ValueError as exc:
+                    raise ValueError("domain dedup window must be finite and non-negative") from exc
 
     def _window_for(self, signal: Signal) -> float:
         """Select the dedup window for this signal's domain (or the default)."""
@@ -62,36 +70,7 @@ class DeduplicateAgent:
             return self._domain_windows[domain]
         return self._window
 
-    def process(self, signals: List[Signal]) -> List[CascadeDecision]:
-        now = time.monotonic()
-        # Prune entries per-domain: a K8s entry with a 24h window survives
-        # while an AAP entry with a 0s window is evicted immediately.
-        max_window = max(self._domain_windows.values()) if self._domain_windows else self._window
-        max_window = max(max_window, self._window)
-        self._seen = {k: v for k, v in self._seen.items() if now - v < max_window}
-        if self._update_on_growth:
-            self._retained = {k: s for k, s in self._retained.items() if k in self._seen}
-
-        decisions = []
-        for s in signals:
-            if self._update_on_growth:
-                decision = self._process_update(s)
-                if decision is not None:
-                    decisions.append(decision)
-                continue
-            if self._require_verified_message:
-                key = verified_repeat_key(s)
-                if key is None:
-                    continue
-                if key in self._seen:
-                    decisions.append(CascadeDecision(
-                        signal_id=s.signal_id, agent_name=self.name,
-                        outcome=Outcome.DEDUPE, evidence=f'verified exact duplicate of {key[:8]}',
-                    ))
-                else:
-                    self._seen[key] = now
-                continue
-    def _process_update(self, s: Signal) -> Optional[CascadeDecision]:
+    def _process_update(self, s: Signal, batch_objects) -> Optional[CascadeDecision]:
         """Latest-wins verified repeat: fold count growth into the retained
         record instead of re-delivering it. Decreases and other changes
         deliver (fail-open); every fold-in is auditable in the evidence."""
@@ -106,7 +85,7 @@ class DeduplicateAgent:
         # Check expiry against this signal's domain-specific window
         window = self._window_for(s)
         last_seen = self._seen.get(key, 0)
-        if time.monotonic() - last_seen > window:
+        if time.monotonic() - last_seen >= window:
             # Window expired for this domain — treat as new
             self._retained[key] = s
             self._seen[key] = time.monotonic()
@@ -115,9 +94,16 @@ class DeduplicateAgent:
         new_count = s.content.get('count')
         if (isinstance(old_count, int) and isinstance(new_count, int)
                 and new_count > old_count):
+            if id(retained) not in batch_objects:
+                # Previously acknowledged deliveries are immutable. A new
+                # count must reach the consumer and archive as new evidence.
+                self._retained[key] = s
+                self._seen[key] = time.monotonic()
+                return None
             retained.content['count'] = new_count
-            if isinstance(s.content.get('timestamp'), str):
-                retained.content['timestamp'] = s.content['timestamp']
+            for field in ("timestamp", "lastTimestamp", "observed_at"):
+                if isinstance(s.content.get(field), str):
+                    retained.content[field] = s.content[field]
             return CascadeDecision(
                 signal_id=s.signal_id, agent_name=self.name,
                 outcome=Outcome.DEDUPE,
@@ -128,6 +114,8 @@ class DeduplicateAgent:
                 outcome=Outcome.DEDUPE,
                 evidence=f'verified exact duplicate of {key[:8]}')
         # Non-monotonic count: suspect, deliver.
+        self._retained[key] = s
+        self._seen[key] = time.monotonic()
         return None
 
     def _process_verified(self, s: Signal, now: float) -> Optional[CascadeDecision]:
@@ -143,14 +131,16 @@ class DeduplicateAgent:
 
     def process(self, signals: List[Signal]) -> List[CascadeDecision]:
         now = time.monotonic()
-        self._seen = {k: v for k, v in self._seen.items() if now - v < self._window}
+        max_window = max([self._window, *self._domain_windows.values()])
+        self._seen = {k: v for k, v in self._seen.items() if now - v < max_window}
         if self._update_on_growth:
             self._retained = {k: s for k, s in self._retained.items() if k in self._seen}
 
         decisions = []
+        batch_objects = {id(s) for s in signals}
         for s in signals:
             if self._update_on_growth:
-                decision = self._process_update(s)
+                decision = self._process_update(s, batch_objects)
                 if decision is not None:
                     decisions.append(decision)
                 continue
@@ -179,6 +169,12 @@ class DeduplicateAgent:
                 ))
             else:
                 self._seen[key] = now
+        if self._update_on_growth:
+            # Freeze only records touched by this batch. A caller may reuse or
+            # mutate its Signal after delivery, including its observation UUID.
+            for key, retained in list(self._retained.items()):
+                if id(retained) in batch_objects:
+                    self._retained[key] = deepcopy(retained)
         return decisions
 
     def _is_compliance(self, s: Signal) -> bool:

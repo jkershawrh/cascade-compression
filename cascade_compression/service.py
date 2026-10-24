@@ -296,6 +296,11 @@ def _accepted_bridge_result(result, adapted):
     if "status" in result and (type(result["status"]) is not str
                               or result["status"] not in {"ok", "accepted"}):
         return False
+    if "_remaining_signal_content" in result:
+        content = result["_remaining_signal_content"]
+        if (type(content) is not dict or set(content) != set(remaining)
+                or any(type(value) is not dict for value in content.values())):
+            return False
     return True
 
 
@@ -343,7 +348,8 @@ def cascade(request: BatchRequest):
                     "source": original.source,
                     "cluster": original.cluster,
                     "namespace": original.namespace,
-                    "content": original.content,
+                    "content": bridge_result.get("_remaining_signal_content", {}).get(
+                        str(adapter.signal_id), original.content),
                     "labels": original.labels,
                 }
                 tag = triage_tags.get(str(adapter.signal_id))
