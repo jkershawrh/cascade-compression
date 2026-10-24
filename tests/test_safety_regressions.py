@@ -93,7 +93,7 @@ def test_api_rejects_duplicate_ids_as_invalid_input():
 
 
 @pytest.mark.parametrize("label", ["compliance", "fraud", "sanctions"])
-@pytest.mark.parametrize("severity", ["info", "low"])
+@pytest.mark.parametrize("severity", ["info", "low", "medium"])
 def test_protected_events_survive_builtin_and_learned_suppression(label, severity):
     from cascade_compression.cascade.dynamic_agents import DominantNoiseSuppressor
 
@@ -109,6 +109,86 @@ def test_protected_events_survive_builtin_and_learned_suppression(label, severit
     assert result.compression_ratio == 0
     assert not any(decision.outcome in {Outcome.DROP, Outcome.SUPPRESS, Outcome.DEDUPE}
                    for decision in result.decisions)
+
+
+def test_medium_repeat_flood_is_suppressed_after_threshold():
+    """The last-mile fix: promoted suppressors must act on medium signals.
+
+    Found live in production: the K8s collector maps Warning events to
+    medium (the identity-admission convention), so every promoted
+    suppressor skipped exactly the signals it was promoted to suppress.
+    AAP compression sat at 3.2% with three activated suppressors.
+    """
+    from cascade_compression.cascade.dynamic_agents import RepeatFloodSuppressor
+
+    suppressor = RepeatFloodSuppressor(max_repeats=3, window_seconds=300)
+    suppressor.add_signal_type("task_runner_item_on_ok")
+    signals = [Signal(signal_type="task_runner_item_on_ok", severity="medium",
+                      source="job-1", namespace="ns") for _ in range(6)]
+    decisions = suppressor.process(signals)
+    assert len(decisions) == 3
+    assert all(d.outcome == Outcome.SUPPRESS for d in decisions)
+
+
+def test_medium_dominant_noise_is_suppressed():
+    from cascade_compression.cascade.dynamic_agents import DominantNoiseSuppressor
+
+    suppressor = DominantNoiseSuppressor()
+    suppressor.add_noise_type("event_failedscheduling")
+    signals = [Signal(signal_type="event_failedscheduling", severity="medium",
+                      source="pod-1", namespace="ns") for _ in range(3)]
+    decisions = suppressor.process(signals)
+    assert len(decisions) == 2
+    assert all(d.outcome == Outcome.SUPPRESS for d in decisions)
+
+
+def test_medium_contextual_noise_is_suppressed():
+    from cascade_compression.cascade.dynamic_agents import ContextualNoiseSuppressor
+
+    suppressor = ContextualNoiseSuppressor()
+    suppressor.add_noise_context("task_runner_retry", "aap-general")
+    signals = [Signal(signal_type="task_runner_retry", severity="medium",
+                      source="job-1", namespace="aap-general") for _ in range(3)]
+    decisions = suppressor.process(signals)
+    assert len(decisions) == 2
+    assert all(d.outcome == Outcome.SUPPRESS for d in decisions)
+
+
+@pytest.mark.parametrize("severity", ["high", "critical"])
+def test_dynamic_suppressors_never_touch_high_or_critical(severity):
+    """Fail-open is preserved: no dynamic suppressor may act above medium."""
+    from cascade_compression.cascade.dynamic_agents import (
+        ContextualNoiseSuppressor, DominantNoiseSuppressor, RepeatFloodSuppressor,
+    )
+
+    repeat = RepeatFloodSuppressor()
+    repeat.add_signal_type("t")
+    dominant = DominantNoiseSuppressor()
+    dominant.add_noise_type("t")
+    contextual = ContextualNoiseSuppressor()
+    contextual.add_noise_context("t", "ns")
+    signals = [Signal(signal_type="t", severity=severity, source="s",
+                      namespace="ns") for _ in range(10)]
+    assert repeat.process(signals) == []
+    assert dominant.process(signals) == []
+    assert contextual.process(signals) == []
+
+
+def test_anchor_pipeline_routes_exist():
+    """The anchor pipeline's gate read 404s as zero signals and stayed
+    permanently closed while exiting status=0. The routes must exist and
+    return the consumed contract shapes."""
+    from fastapi.testclient import TestClient
+
+    from cascade_compression.service import app
+
+    client = TestClient(app)
+    stats = client.get("/classifier/stats")
+    assert stats.status_code == 200
+    assert "coverage" in stats.json()
+    comparisons = client.get("/classifier/comparisons?limit=5")
+    assert comparisons.status_code == 200
+    assert "comparisons" in comparisons.json()
 
 
 @pytest.mark.parametrize("content", [

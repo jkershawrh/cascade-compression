@@ -194,6 +194,39 @@ def stats():
     }
 
 
+@app.get("/classifier/stats")
+def classifier_stats():
+    """Classifier coverage stats for the anchor pipeline.
+
+    Contract consumed by ``cascade_compression.anchor_pipeline.check_gate``:
+    the ``coverage`` dict (total, margin_gated, gcl_fails_sc,
+    gcl_fail_types). Found live in production: the anchor pipeline queried
+    these routes, got 404s, and its gate silently read zero signals —
+    permanently closed while exiting status=0.
+    """
+    if not _bridge or not _bridge.enabled:
+        return {"coverage": {}}
+    return {
+        "mode": _bridge.classifier.mode,
+        "coverage": _bridge.classifier.coverage_stats(),
+        **_bridge.classifier.recorder.stats(),
+    }
+
+
+@app.get("/classifier/comparisons")
+def classifier_comparisons(limit: int = 200):
+    """Recent SC/generative comparison events for the anchor pipeline.
+
+    Contract consumed by ``collect_gaps``: per-comparison signal_type,
+    fallback_used, and the semantic/generative label/margin pairs —
+    exactly the shape ``recorder.public_events`` produces.
+    """
+    if not _bridge or not _bridge.enabled:
+        return {"comparisons": []}
+    bounded = min(max(1, limit), 1000)
+    return {"comparisons": _bridge.classifier.recorder.public_events(bounded)}
+
+
 def _retained_response(request, *, status, code, processing_started=False,
                        backpressure=False, adapted=None, cascade_ms=0.0):
     """Retain the validated original batch; never imply rollback or safe replay."""

@@ -18,7 +18,17 @@ from typing import Dict, List
 
 from .protocol import CascadeDecision, Outcome, Signal
 
-_SUPPRESSIBLE_SEVERITIES = {"info", "low"}
+# Suppression band for promotion-qualified types. The promotion engine is
+# the safety case that earns suppression authority: 200+ noise with 0
+# important, accuracy 1.0 on tested batches, candidate->nano tier
+# progression, instant withdrawal on any important classification, 72h
+# TTL re-qualification, and GCL verdict demotion. The band therefore
+# includes medium — the severity that dominates classified traffic (the
+# identity-admission convention; K8s collectors map Warning events to
+# medium). High and critical remain unsuppressible (fail-open), and
+# protected labels (compliance/fraud/sanctions) never reach these
+# suppressors: the severity gate escalates them at stage 1.
+_SUPPRESSIBLE_SEVERITIES = {"info", "low", "medium"}
 
 
 class RepeatFloodSuppressor:
