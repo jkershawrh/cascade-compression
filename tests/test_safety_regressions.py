@@ -191,6 +191,33 @@ def test_anchor_pipeline_routes_exist():
     assert "comparisons" in comparisons.json()
 
 
+def test_service_adapter_exposes_source_for_dynamic_suppressors():
+    """Dynamic suppressors key on `s.source`; the service adapter must
+    carry it. Found live: the adapter mapped source to resource_name
+    only, every suppressor raised AttributeError on every batch, and
+    the pipeline's exception handler skipped them silently — zero
+    suppress decisions ever reached the ledger despite activated
+    agents on both services."""
+    from cascade_compression.service import SignalInput, _SignalAdapter
+
+    adapter = _SignalAdapter(SignalInput(
+        signal_type="event_failedscheduling", severity="medium",
+        source="kube-scheduler", namespace="ns", content={}, labels={},
+    ))
+    assert adapter.source == "kube-scheduler"
+    from cascade_compression.cascade.dynamic_agents import RepeatFloodSuppressor
+
+    suppressor = RepeatFloodSuppressor(max_repeats=1, window_seconds=300)
+    suppressor.add_signal_type("event_failedscheduling")
+    adapted = [_SignalAdapter(SignalInput(
+        signal_type="event_failedscheduling", severity="medium",
+        source="kube-scheduler", namespace="ns", content={}, labels={},
+    )) for _ in range(3)]
+    decisions = suppressor.process(adapted)
+    assert len(decisions) == 2
+    assert all(d.outcome == Outcome.SUPPRESS for d in decisions)
+
+
 @pytest.mark.parametrize("content", [
     {"cpu_percent": 99},
     {"memory_percent": 99},

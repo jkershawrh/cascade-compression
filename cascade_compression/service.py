@@ -152,6 +152,11 @@ class _SignalAdapter:
         self.severity = s.severity
         self.severity_input_valid = s.severity_input_valid
         self.resource_name = s.source
+        # Dynamic suppressors key on `source` (protocol.Signal shape).
+        # Without this attribute they raise AttributeError on every
+        # batch and the pipeline silently skips them — found live as
+        # the reason zero suppress decisions ever reached the ledger.
+        self.source = s.source
         self.namespace = s.namespace
         self.cluster_id = s.cluster
         self.resource_kind = ""
