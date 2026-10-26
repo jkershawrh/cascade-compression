@@ -47,6 +47,24 @@ _BUILTIN_AGENT_NAMES = frozenset({
 })
 
 
+def suppression_tier_for(samples: int) -> tuple:
+    """Deeper qualification evidence earns deeper suppression authority.
+
+    Standard (promotion bar .. tier-2 bar): first-3 per source per 5 min
+    (~36 deliveries/hour/source). Tier 2: first-1 per 5 min (~12/hr).
+    Tier 3: first-3 per hour (~3/hr). Tiers only deepen suppression
+    inside an already-qualified type; withdrawal, shadow validation,
+    and the per-decision qualification gate are unchanged.
+    """
+    tier2 = int(os.getenv("CASCADE_SUPPRESSION_TIER2_SAMPLES", "5000"))
+    tier3 = int(os.getenv("CASCADE_SUPPRESSION_TIER3_SAMPLES", "50000"))
+    if samples >= tier3:
+        return (3, 3600.0)
+    if samples >= tier2:
+        return (1, 300.0)
+    return (3, 300.0)
+
+
 def _is_noise_classification(classification: str) -> bool:
     return "routine_noise" in classification or "known_pattern" in classification
 
@@ -940,8 +958,12 @@ class CascadeBridge(LifecycleControls):
             pattern_type = agent_metrics.config["pattern_type"]
             if pattern_type == "repeat_flood":
                 self._repeat_suppressor.add_signal_type(sig_type)
+                self._repeat_suppressor.set_tier(
+                    sig_type, *suppression_tier_for(noise))
             else:
                 self._noise_suppressor.add_noise_type(sig_type)
+                self._noise_suppressor.set_tier(
+                    sig_type, suppression_tier_for(noise)[1])
             self._activated_types.add(sig_type)
             self._activated_patterns[sig_type] = pattern_type
             self._activation_timestamps[sig_type] = datetime.now(timezone.utc).isoformat()
@@ -966,7 +988,28 @@ class CascadeBridge(LifecycleControls):
 
         self._discover_contextual_noise()
         self._check_activation_ttl()
+        self._refresh_suppression_tiers()
         self._flush_promotion_events()
+
+    def _refresh_suppression_tiers(self):
+        """Deepen graduated suppression as qualification evidence grows.
+
+        Runs each promotion cycle: a type whose classified-noise record
+        has crossed a tier boundary since activation suppresses more
+        deeply. Withdrawal paths are unchanged — a tier never outlives
+        the authority it deepens.
+        """
+        for kind in list(self._activated_types):
+            noise = self._llm_noise_counts.get(kind)
+            if type(noise) is not int:
+                continue
+            pattern = self._activated_patterns.get(kind, "repeat_flood")
+            if pattern == "repeat_flood":
+                self._repeat_suppressor.set_tier(
+                    kind, *suppression_tier_for(noise))
+            else:
+                self._noise_suppressor.set_tier(
+                    kind, suppression_tier_for(noise)[1])
 
     def _discover_contextual_noise(self):
         """Promote (signal_type, context) pairs as contextual noise.

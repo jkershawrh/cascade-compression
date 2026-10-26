@@ -37,6 +37,10 @@ class RepeatFloodSuppressor:
     Tracks signal_type+source+namespace combinations. After N occurrences
     within a time window, subsequent signals are suppressed. The first
     occurrence always passes through (fail-open).
+
+    Suppression depth is per-type and graduated: deeper qualification
+    evidence earns a deeper tier (fewer deliveries per window / longer
+    windows), set via ``set_tier`` by the promotion machinery.
     """
 
     name = "repeat_flood_suppressor"
@@ -47,13 +51,32 @@ class RepeatFloodSuppressor:
         self._window = window_seconds
         self._counts: Dict[str, List[float]] = defaultdict(list)
         self._signal_types: set = set()
+        self._tiers: Dict[str, tuple] = {}
 
     def add_signal_type(self, signal_type: str):
         """Register a signal type for repeat suppression."""
         self._signal_types.add(signal_type)
 
     def remove_signal_type(self, signal_type: str):
+        """Withdraw a type and reset any graduated tier it held."""
         self._signal_types.discard(signal_type)
+        self._tiers.pop(signal_type, None)
+
+    def set_tier(self, signal_type: str, max_repeats: int,
+                 window_seconds: float):
+        """Graduated authority: deeper evidence earns deeper suppression.
+
+        Tier parameters replace the constructor defaults for this type
+        only. The qualification, withdrawal, and shadow-validation paths
+        are unchanged — a tier only deepens suppression inside an
+        already-qualified type.
+        """
+        self._tiers[signal_type] = (max(0, int(max_repeats)),
+                                    float(window_seconds))
+
+    def tier_for(self, signal_type: str) -> tuple:
+        return self._tiers.get(
+            signal_type, (self._max_repeats, self._window))
 
     def process(self, signals: List[Signal]) -> List[CascadeDecision]:
         if not self._signal_types:
@@ -69,19 +92,20 @@ class RepeatFloodSuppressor:
             ):
                 continue
 
+            max_repeats, window = self.tier_for(s.signal_type)
             key = f"{s.signal_type}:{s.source}:{s.namespace}"
 
             # Expire old timestamps
-            self._counts[key] = [t for t in self._counts[key] if now - t < self._window]
+            self._counts[key] = [t for t in self._counts[key] if now - t < window]
 
             self._counts[key].append(now)
 
-            if len(self._counts[key]) > self._max_repeats:
+            if len(self._counts[key]) > max_repeats:
                 decisions.append(CascadeDecision(
                     signal_id=s.signal_id,
                     agent_name=self.name,
                     outcome=Outcome.SUPPRESS,
-                    evidence=f"repeat #{len(self._counts[key])} of {s.signal_type} from {s.source} in {self._window}s",
+                    evidence=f"repeat #{len(self._counts[key])} of {s.signal_type} from {s.source} in {window}s",
                     confidence=0.90,
                 ))
 
@@ -93,7 +117,9 @@ class DominantNoiseSuppressor:
 
     When the corpus analyzer finds a signal type making up >X% of traffic
     and deepfield consistently drops it, this agent suppresses after
-    the first occurrence per source per window.
+    the first occurrence per source per window. Suppression depth is
+    per-type and graduated via ``set_tier`` (a deeper evidence record
+    earns a longer window).
     """
 
     name = "dominant_noise_suppressor"
@@ -103,13 +129,23 @@ class DominantNoiseSuppressor:
         self._window = window_seconds
         self._noise_types: set = set()
         self._seen: Dict[str, float] = {}
+        self._tiers: Dict[str, float] = {}
 
     def add_noise_type(self, signal_type: str):
         """Register a signal type as dominant noise."""
         self._noise_types.add(signal_type)
 
     def remove_noise_type(self, signal_type: str):
+        """Withdraw a type and reset any graduated tier it held."""
         self._noise_types.discard(signal_type)
+        self._tiers.pop(signal_type, None)
+
+    def set_tier(self, signal_type: str, window_seconds: float):
+        """Graduated authority: deeper evidence earns a longer window."""
+        self._tiers[signal_type] = float(window_seconds)
+
+    def window_for(self, signal_type: str) -> float:
+        return self._tiers.get(signal_type, self._window)
 
     def process(self, signals: List[Signal]) -> List[CascadeDecision]:
         if not self._noise_types:
@@ -128,7 +164,7 @@ class DominantNoiseSuppressor:
                 continue
 
             key = f"{s.signal_type}:{s.source}:{s.namespace}"
-            if key in self._seen:
+            if key in self._seen and now - self._seen[key] < self.window_for(s.signal_type):
                 decisions.append(CascadeDecision(
                     signal_id=s.signal_id,
                     agent_name=self.name,
