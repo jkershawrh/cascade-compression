@@ -21,6 +21,7 @@ class DomainPlugin:
     module: ModuleType
     system_prompt: str
     memory_config: Any = None
+    few_shot_exemplars: dict | None = None
 
 
 def _installed_entry_points() -> Iterable[EntryPoint]:
@@ -51,6 +52,7 @@ def _validate(entry_point: EntryPoint) -> DomainPlugin:
         module=module,
         system_prompt=prompt,
         memory_config=getattr(module, "MEMORY_CONFIG", None),
+        few_shot_exemplars=getattr(module, "FEW_SHOT_EXEMPLARS", None),
     )
 
 

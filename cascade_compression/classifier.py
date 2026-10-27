@@ -140,17 +140,45 @@ class ClassifierBackend(Protocol):
     def classify(self, signal: Dict[str, Any], text: str, client: Any = None) -> ClassificationResult: ...
 
 
+def augment_with_exemplars(system_prompt: str, exemplars: dict) -> str:
+    """Augment a domain system prompt with truth-informed few-shot exemplars.
+
+    Exemplars are concrete message examples per label, drawn from human
+    adjudication. They teach the model the platform's operating rhythm:
+    the difference between "expected but informative" and "needs a look"
+    that generic prompts cannot convey. The prompt revision hash changes
+    when exemplars change, so measurements stay bound to their prompt.
+    """
+    if not exemplars:
+        return system_prompt
+    lines = [system_prompt.rstrip(), "",
+             "Concrete examples from adjudicated truth on this platform:", ""]
+    for label, examples in sorted(exemplars.items()):
+        if not examples:
+            continue
+        lines.append(f"{label}:")
+        for e in examples:
+            lines.append(f"  - {e}")
+        lines.append("")
+    lines.append("When a message carries state or failure information, "
+                 "prefer known_pattern or needs_attention over routine_noise.")
+    return "\n".join(lines)
+
+
 class GenerativeClassifierBackend:
     name = "generative"
 
     def __init__(self, *, url: str, key: str, micro_model: str,
                  macro_model: str, system_prompt: str,
-                 structured_confidence: bool = False):
+                 structured_confidence: bool = False,
+                 few_shot_exemplars: dict | None = None):
         self.url = url
         self.key = key
         self.micro_model = micro_model
         self.macro_model = macro_model
         self.structured_confidence = structured_confidence
+        if few_shot_exemplars:
+            system_prompt = augment_with_exemplars(system_prompt, few_shot_exemplars)
         self.system_prompt = (
             f"{system_prompt.strip()}\n\n{STRUCTURED_CONFIDENCE_INSTRUCTION}"
             if structured_confidence else system_prompt
@@ -922,7 +950,8 @@ def load_semantic_contract(path: str) -> SemanticContract:
 
 def classifier_from_environment(*, url: str, key: str, micro_model: str,
                                 macro_model: str, system_prompt: str,
-                                mode_override: str = "") -> CascadeClassifier:
+                                mode_override: str = "",
+                                few_shot_exemplars: dict | None = None) -> CascadeClassifier:
     # Preserve the original OSS behavior unless the operator explicitly opts
     # into semantic comparison or authority.
     mode = (
@@ -936,6 +965,7 @@ def classifier_from_environment(*, url: str, key: str, micro_model: str,
     generative = GenerativeClassifierBackend(
         url=url, key=key, micro_model=micro_model, macro_model=macro_model,
         system_prompt=system_prompt,
+        few_shot_exemplars=few_shot_exemplars,
         structured_confidence=(
             os.getenv("CASCADE_GENERATIVE_STRUCTURED", "").strip().lower()
             in {"1", "true", "yes"}

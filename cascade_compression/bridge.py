@@ -142,12 +142,22 @@ class CascadeBridge(LifecycleControls):
         self._gpu_analyses: list = []
         self._gpu_analyses_file = os.getenv("CASCADE_GPU_ANALYSES_FILE", "")
         self._system_prompt = system_prompt
+        # Truth-informed few-shot exemplars from the domain plugin, if present.
+        # These teach the generative model the platform's operating rhythm
+        # (the noise/pattern/attention boundaries that generic prompts miss).
+        from .domain_plugins import load_domain_plugin
+        try:
+            plugin = load_domain_plugin(self.domain)
+            self._few_shot = plugin.few_shot_exemplars
+        except Exception:
+            self._few_shot = None
         self.classifier = classifier_from_environment(
             url=self._llm_url,
             key=self._llm_key,
             micro_model=self._micro_model,
             macro_model=self._macro_model,
             system_prompt=self._system_prompt,
+            few_shot_exemplars=self._few_shot,
         )
         self._ledger_url = ledger_url or os.getenv("CASCADE_LEDGER_URL", "")
         self._ledger_token = ledger_token or os.getenv("CASCADE_LEDGER_TOKEN", "")
