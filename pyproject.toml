@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cascade-compression"
-version = "0.2.0rc23"
+version = "0.2.0rc24"
 description = "Domain-agnostic three-tier signal compression for safe CPU inference"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -89,12 +89,15 @@ telecom = "cascade_compression.collectors.telecom:TelecomCollector"
 
 [project.entry-points."cascade_compression.domains"]
 aap = "cascade_compression.domains.aap"
+cloud = "cascade_compression.domains.cloud"
+distributed = "cascade_compression.domains.distributed"
 finance = "cascade_compression.domains.finance"
 healthcare = "cascade_compression.domains.healthcare"
 insurance = "cascade_compression.domains.insurance"
 kubernetes = "cascade_compression.domains.kubernetes"
 macos = "cascade_compression.domains.macos"
 retail = "cascade_compression.domains.retail"
+supercomputer = "cascade_compression.domains.supercomputer"
 telecom = "cascade_compression.domains.telecom"
 
 [tool.setuptools.packages.find]

@@ -12,6 +12,17 @@ All notable changes are documented here. This project follows Semantic Versionin
   authority through the interface. Supports offline bridge-state snapshots and
   live service proxying.
 
+## 0.2.0rc24 - 2026-10-27
+
+- Add `supercomputer`, `distributed`, and `cloud` domain packs with
+  few-shot exemplars grounded in public Loghub corpora (BGL/HPC RAS events,
+  Hadoop/HDFS/Zookeeper block and coordination operations, OpenStack
+  control-plane requests and instance state divergence). Registered as
+  entry-point plugins; the wheel now ships 11 domain packs.
+- Domain pack exemplars follow the corpus-adapter taxonomy
+  (`loghub_entry_to_signal`) so replayed public corpora classify with
+  domain-informed prompts without engine changes.
+
 ## 0.2.0rc21 - 2026-10-27
 
 - Add truth-informed few-shot exemplars to the generative classifier.
