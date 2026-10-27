@@ -1,0 +1,47 @@
+# Default values for cascade.
+
+image:
+  repository: ""  # set to your registry path
+  tag: "0.2.0rc21"
+  pullPolicy: IfNotPresent
+
+llm:
+  url: ""       # required: OpenAI-compatible endpoint
+  key: ""       # required: API key
+  model: ""     # required: model name
+
+nanoProfile: "qualified_repeat_update"
+dedupWindow: 86400
+activationTtlHours: 72
+shadowRate: 0.05
+
+services:
+  aap:
+    enabled: true
+    domain: "kubernetes"  # domain plugin for classification
+  k8s:
+    enabled: true
+    domain: "kubernetes"
+  knowledge:
+    enabled: false
+  memory:
+    enabled: false
+
+collectors:
+  enabled: false
+
+ledger:
+  enabled: false
+  image: ""
+
+state:
+  storageClass: ""
+  size: 5Gi
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    cpu: "1"
+    memory: 1Gi

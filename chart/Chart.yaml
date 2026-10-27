@@ -1,0 +1,9 @@
+apiVersion: v2
+name: cascade
+description: |
+  Cascade Compression: governed signal suppression for operational
+  infrastructure. Signals earn suppression authority through classified
+  evidence; authority is graduated, audited, and instantly revocable.
+type: application
+version: 0.2.0
+appVersion: "0.2.0rc21"

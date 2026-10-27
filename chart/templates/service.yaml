@@ -1,0 +1,113 @@
+{{- $name := "cascade" -}}
+{{- $domain := .Values.llm -}}
+
+{{- range $svcName, $svc := .Values.services }}
+{{- if $svc.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $name }}-{{ $svcName }}-state
+  labels:
+    app: {{ $name }}-{{ $svcName }}
+spec:
+  accessModes: ["ReadWriteOnce"]
+  {{- if $.Values.state.storageClass }}
+  storageClassName: {{ $.Values.state.storageClass }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $.Values.state.size }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}-{{ $svcName }}
+  labels:
+    app: {{ $name }}-{{ $svcName }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: {{ $name }}-{{ $svcName }}
+  template:
+    metadata:
+      labels:
+        app: {{ $name }}-{{ $svcName }}
+    spec:
+      containers:
+      - name: cascade
+        image: "{{ $.Values.image.repository }}:{{ $.Values.image.tag }}"
+        imagePullPolicy: {{ $.Values.image.pullPolicy }}
+        ports:
+        - containerPort: 8090
+          name: http
+        env:
+        - name: CASCADE_NANO_PROFILE
+          value: {{ $.Values.nanoProfile | quote }}
+        - name: CASCADE_LLM_URL
+          value: {{ $domain.url | quote }}
+        - name: CASCADE_LLM_KEY
+          valueFrom:
+            secretKeyRef:
+              name: {{ $name }}-llm
+              key: key
+        - name: CASCADE_LLM_MODEL
+          value: {{ $domain.model | quote }}
+        - name: CASCADE_DEDUP_WINDOW_SECONDS
+          value: {{ $.Values.dedupWindow | quote }}
+        - name: CASCADE_ACTIVATION_TTL_HOURS
+          value: {{ $.Values.activationTtlHours | quote }}
+        - name: CASCADE_SHADOW_RATE
+          value: {{ $.Values.shadowRate | quote }}
+        - name: CASCADE_STATE_FILE
+          value: /state/cascade-{{ $svcName }}.json
+        {{- if $.Values.ledger.enabled }}
+        - name: CASCADE_LEDGER_URL
+          value: http://{{ $name }}-ledger-gateway:28099
+        {{- end }}
+        volumeMounts:
+        - name: state
+          mountPath: /state
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8090
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        resources:
+          {{- toYaml $.Values.resources | nindent 10 }}
+      volumes:
+      - name: state
+        persistentVolumeClaim:
+          claimName: {{ $name }}-{{ $svcName }}-state
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $name }}-{{ $svcName }}
+  labels:
+    app: {{ $name }}-{{ $svcName }}
+spec:
+  selector:
+    app: {{ $name }}-{{ $svcName }}
+  ports:
+  - port: 8090
+    targetPort: 8090
+    name: http
+{{- end }}
+{{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}-llm
+type: Opaque
+stringData:
+  key: {{ $domain.key | quote }}
