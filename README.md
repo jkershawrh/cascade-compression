@@ -27,8 +27,24 @@ Read the [current white paper](docs/cascade-compression-whitepaper.md) for the C
 
 ## Install and test
 
+Deploy with Helm (see [chart/README.md](chart/README.md) for full options):
+
+```bash
+helm install cascade ./chart \
+  --set llm.url=https://your-gateway \
+  --set llm.key=your-key \
+  --set llm.model=granite-3-2-8b-instruct
+```
+
+Or install the wheel directly:
+
+```bash
+pip install cascade-compression[semantic-classifier]
+```
+
 The latest stable OSS release is `0.1.0`. The governed semantic-classification and custom-anchor
-work is on the `0.2.0rc7` candidate line; it is not the final 0.2.0 release. This source tree is
+work is on the `0.2.0rc21` candidate line; it is not the final 0.2.0 release. This source tree is
+the clean public distribution of that candidate.
 configured as an **incubating OSS** prerelease. It verifies the public mechanics, build,
 packaging, tests, and supply-chain evidence without claiming classification effectiveness,
 natural compression rates, staging readiness, production readiness, or customer outcomes. The

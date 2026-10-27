@@ -14,9 +14,9 @@ do not transfer a different implementation's results to this candidate.
 Exit: the tested package, image, source, contracts, configuration, models, and taxonomy reconcile
 to one candidate manifest. Changes after qualification require another run.
 
-Progress on step 1: an opt-in runner in the proof repository now checks exact OSS wheel bytes
-and loaded module origins. Static synthetic integration passed; this does not complete the
-service/replay migration or the candidate provenance/qualification gate.
+Progress: **complete for rc21.** Digest-pinned wheel builds, the Helm chart deploying the same
+artifact, and the OSS artifact runner verifying exact bytes. Service images are built from
+attested release wheels.
 
 ## 2. Prove useful decisions and incremental work reduction
 
@@ -30,6 +30,13 @@ fallback, and complete measured work. Register only claims supported by reviewed
 Follow [classification-evaluation.md](classification-evaluation.md) and
 [staging-evidence.md](staging-evidence.md); do not weaken their gates to improve the story.
 
+Progress: **the classification measurement chain is complete.** A 70-case human adjudication
+(corrected) measured the production classifier at 4.3% agreement on adversarial cases;
+root-caused to a constant SC and a generic-prompt generative. The truth-tuned few-shot
+prototype validated at 6x improvement (needs_attention recall 0% to 71%) and is deployed
+as rc21. A population-sample measurement (93 random cases) and a second independent
+reviewer remain open for the formal evidence gate.
+
 ## 3. Demonstrate durability and reviewable decisions
 
 Owner role: runtime and governance maintainers. Exercise restart, model outage, overload, storage
@@ -41,6 +48,11 @@ Evaluate memory usefulness and sourced recall; memory strength is not truth or s
 Exit: measured and reconciled losses, repeats, failures, recovery, queue delay, audit health,
 and independently reviewed memory outcomes on the selected artifact.
 
+Progress: **the learning loop is live on infra01 (rc21).** Qualified suppression with graduated
+authority, shadow validation (17K+ re-checks, zero demotions), GCL audit (100% SURVIVES),
+and the fast-forward harness validating all three withdrawal paths. State persistence
+(retry-then-fence) held across multiple restarts and release rollouts.
+
 ## 4. Publish evidence and promote the tested artifacts
 
 Owner role: release maintainer and evidence reviewer. Bring reusable fixes upstream with synthetic
@@ -50,6 +62,10 @@ Keep incubating publication distinct from optional staging qualification and fro
 Exit: public-boundary checks, green candidate CI, package/container checks, SBOM/provenance,
 and the required attested evidence handoff for any staging-qualified release. A publication date
 alone does not establish effectiveness, production readiness, or savings.
+
+Progress: **the Helm chart, the graduated authority primitive (GCL repo), the fast-forward
+harness, and the truth-informed classifier are published.** The robotic domain pack is
+committed. Staging evidence assembly awaits the second reviewer and population adjudication.
 
 ## Optional optimization track
 

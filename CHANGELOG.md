@@ -12,6 +12,43 @@ All notable changes are documented here. This project follows Semantic Versionin
   authority through the interface. Supports offline bridge-state snapshots and
   live service proxying.
 
+## 0.2.0rc21 - 2026-10-27
+
+- Add truth-informed few-shot exemplars to the generative classifier.
+  Domain plugins can now carry `FEW_SHOT_EXEMPLARS` (concrete adjudicated
+  message examples per label) that are augmented into the system prompt.
+  Validated at 6x agreement improvement on held-out cases with
+  needs_attention recall 0% to 71%. The prompt revision hash changes
+  when exemplars change, keeping measurements bound to their prompt.
+- Add a Helm chart for one-command deployment with safe defaults
+  (qualified_repeat_update profile, 72h TTL, 5% shadow validation).
+- Fix the GCL verdict poll: paginate the backlog (previously a fixed
+  100-entry read could silently drop FAILS verdicts under sustained
+  stream volume via the 20-minute stale-watermark skip).
+
+## 0.2.0rc19 - 2026-10-26
+
+- Add the `qualified_repeat_update` nano profile: learned suppression
+  gated by a per-decision qualification callback (activated type, pattern
+  match, 200+ noise / 0 important evidence, durable state, protected
+  labels, severity band). The bounded `verified_repeat_update` profile
+  is unchanged; suppression under it remains discarded by design.
+- Harden the repeat-update fold semantics: within-batch count growth
+  folds into the retained observation and reaches HTTP survivors;
+  across-batch growth is delivered as a new observation (acknowledged
+  responses are immutable). Retained snapshots are deep-copied so
+  caller mutation cannot rewrite delivered state.
+- Fix the service adapter to expose `source` for dynamic suppressors
+  (previously crashed silently on every batch).
+
+## 0.2.0rc17 - 2026-10-24
+
+- Add per-domain dedup windows via `CASCADE_DEDUP_WINDOW_<DOMAIN>` env vars.
+- Add the anchor pipeline's `/classifier/stats` and `/classifier/comparisons`
+  routes to the service (previously 404, silently closing the anchor gate).
+- Add the fast-forward replay harness with a deterministic model stub.
+- Fix dynamic suppressors to accept medium severity (the promotion band).
+
 ## 0.2.0rc7 - 2026-10-21
 
 - Harden deterministic suppression behind complete event identity: exact-repeat suppression
