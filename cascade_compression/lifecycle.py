@@ -46,6 +46,11 @@ def atomic_snapshot(path, state):
 
 
 class LifecycleControls:
+    # Context keys for multi-key contextual decomposition. Set by the bridge
+    # from CASCADE_CONTEXT_KEYS. Each key produces its own context identity
+    # during classification recording and its own discovery path.
+    _context_keys = ('namespace',)
+
     def _classifier_identity(self):
         if not hasattr(self, '_lifecycle_implementation_sha256'):
             root = Path(__file__).resolve().parent
@@ -131,16 +136,27 @@ class LifecycleControls:
                 self._fence_learning('unhealthy qualification checkpoint')
                 return False
             kind = signal['signal_type']
-            context = f"{kind}:{signal.get('namespace', '')}"
+            # Record context counts for every configured context key.
+            # Each key produces its own identity: e.g., namespace produces
+            # "task_verbose:aap-general" and source produces
+            # "task_verbose:source:DeployCluster". Discovery promotes pure
+            # contexts per-key; each key's suppressor handles its own.
+            context_identities = []
+            for ctx_key in self._context_keys:
+                ctx_value = signal.get(ctx_key, '')
+                if ctx_value:
+                    context_identities.append(f"{kind}:{ctx_value}")
             if is_noise:
                 self.stats.llm_noise += 1
                 self._llm_noise_counts[kind] += 1
                 self._llm_important_counts.setdefault(kind, 0)
-                self._increment_context_count(self._llm_context_noise, context)
+                for identity in context_identities:
+                    self._increment_context_count(self._llm_context_noise, identity)
             else:
                 self.stats.llm_important += 1
                 self._llm_important_counts[kind] += 1
-                self._increment_context_count(self._llm_context_important, context)
+                for identity in context_identities:
+                    self._increment_context_count(self._llm_context_important, identity)
             keys = self._qualification_bindings(signal)
             started = signal.get('_qualification_bindings', {})
             for key, binding in keys.items():

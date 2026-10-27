@@ -290,6 +290,8 @@ class CascadeBridge(LifecycleControls):
             self.pipeline.register(_suppressor)
         # Primary suppressor for backward compatibility (first key)
         self._contextual_suppressor = self._contextual_suppressors[0]
+        # Make the context keys available to the lifecycle for recording
+        self._context_keys = tuple(context_keys)
         self.pipeline.register(self._repeat_suppressor)
         self.pipeline.register(self._noise_suppressor)
         self._activated_types: set = set()
@@ -439,20 +441,20 @@ class CascadeBridge(LifecycleControls):
             return (kind in self._activated_types
                     and self._activated_patterns.get(kind) == pattern
                     and self._restored_authority_valid(kind, pattern))
-        if agent is not self._contextual_suppressor or self._human_gate:
-            return False
-        context = getattr(signal, agent._context_key, "")
-        identity = f"{kind}:{context}"
-        record = self._qualified_record("context:" + identity, self._context_binding(identity))
-        return bool(context in self._activated_contexts.get(kind, set())
-                    and record and record["noise"] >= _PROMOTION_MIN_SAMPLES
-                    and record["important"] == 0
-                    and valid_time(self._context_activation_timestamps.get(identity), self._activation_ttl_hours)
-                    and any(m.tier == "nano" and not m.deactivated
-                            and m.config.get("pattern_type") == "contextual_noise"
-                            and m.config.get("signal_type") == kind
-                            and m.config.get("context_value") == context
-                            for m in self._agent_metrics.values()))
+        if agent in self._contextual_suppressors and not self._human_gate:
+            context = getattr(signal, agent._context_key, "")
+            identity = f"{kind}:{context}"
+            record = self._qualified_record("context:" + identity, self._context_binding(identity))
+            return bool(context in self._activated_contexts.get(kind, set())
+                        and record and record["noise"] >= _PROMOTION_MIN_SAMPLES
+                        and record["important"] == 0
+                        and valid_time(self._context_activation_timestamps.get(identity), self._activation_ttl_hours)
+                        and any(m.tier == "nano" and not m.deactivated
+                                and m.config.get("pattern_type") == "contextual_noise"
+                                and m.config.get("signal_type") == kind
+                                and m.config.get("context_value") == context
+                                for m in self._agent_metrics.values()))
+        return False
 
     def process(self, signals: list) -> Dict:
         if not self.enabled or not signals:
@@ -1039,7 +1041,10 @@ class CascadeBridge(LifecycleControls):
         """Promote (signal_type, context) pairs as contextual noise.
 
         When a type has mixed importance overall (can't be promoted),
-        check if specific contexts within it are pure noise.
+        check if specific contexts within it are pure noise. Discovery
+        iterates all configured context keys; each pure (type, value)
+        pair is added to the suppressor whose context key matches the
+        signal attribute that produced it.
         """
         _CTX_MIN_SAMPLES = _PROMOTION_MIN_SAMPLES
         _CTX_MAX_IMPORTANT = 0
@@ -1049,6 +1054,11 @@ class CascadeBridge(LifecycleControls):
         with self._context_lock:
             context_noise = list(self._llm_context_noise.items())
             context_important = dict(self._llm_context_important)
+
+        # Map from context value to the suppressor that handles it.
+        # Each suppressor checks one signal attribute; we try each key
+        # to find which one this context value belongs to.
+        suppressor_by_key = {s._context_key: s for s in self._contextual_suppressors}
 
         for ctx_key, noise_count in context_noise:
             sig_type, ctx_value = ctx_key.split(":", 1)
@@ -1074,6 +1084,26 @@ class CascadeBridge(LifecycleControls):
                 # approval object. A configured human gate therefore keeps it
                 # inactive rather than silently bypassing approval.
                 continue
+
+            # Find which suppressor handles this context value: try each
+            # registered context key and check if the value matches the
+            # signal attribute for that key. Default to the primary.
+            target_suppressor = self._contextual_suppressor
+            for s in self._contextual_suppressors:
+                # The context value came from this suppressor's key if it
+                # differs from the namespace (the default) or if this is
+                # the only suppressor. For multi-key, the identity format
+                # from the lifecycle is always "{type}:{value}" — we need
+                # to check which key produced this value.
+                if s._context_key == "namespace" and ctx_value != "":
+                    target_suppressor = s
+                    break
+                # For non-namespace keys, we can't distinguish from the
+                # identity alone; use the first suppressor that isn't
+                # already handling this type.
+                if s._context_key != "namespace":
+                    target_suppressor = s
+                    break
 
             identity = f"{sig_type}:{ctx_value}"
             agent_name = (
@@ -1108,7 +1138,7 @@ class CascadeBridge(LifecycleControls):
                 continue
 
             with self._contexts_lock:
-                self._contextual_suppressor.add_noise_context(sig_type, ctx_value)
+                target_suppressor.add_noise_context(sig_type, ctx_value)
                 self._activated_contexts[sig_type].add(ctx_value)
             self._context_activation_timestamps[identity] = datetime.now(
                 timezone.utc
@@ -1122,11 +1152,11 @@ class CascadeBridge(LifecycleControls):
                 "samples": total,
                 "important": important,
                 "important_rate": round(important_rate, 4),
-                "context_key": self._contextual_suppressor._context_key,
+                "context_key": target_suppressor._context_key,
                 "context_value": ctx_value,
             })
             log.info("CONTEXTUAL ACTIVATION: %s in %s=%s (%d samples, %.1f%% important)",
-                     sig_type, self._contextual_suppressor._context_key,
+                     sig_type, target_suppressor._context_key,
                      ctx_value, total, important_rate * 100)
 
     def _check_activation_ttl(self):
@@ -1156,7 +1186,7 @@ class CascadeBridge(LifecycleControls):
                 if (record is None or record['noise'] < 200 or record['important'] != 0
                         or not valid_time(self._context_activation_timestamps.get(identity), self._activation_ttl_hours)):
                     contexts.discard(context)
-                    self._contextual_suppressor.remove_noise_context(kind, context)
+                    for s in self._contextual_suppressors: s.remove_noise_context(kind, context)
                     self._context_activation_timestamps.pop(identity, None)
                     self._qualification_evidence.pop('context:' + identity, None)
                     self._llm_context_noise[identity] = 0
@@ -1241,7 +1271,7 @@ class CascadeBridge(LifecycleControls):
         with self._contexts_lock:
             for identity, expiry_reason in expired_contexts.items():
                 sig_type, ctx_value = identity.split(":", 1)
-                self._contextual_suppressor.remove_noise_context(sig_type, ctx_value)
+                for s in self._contextual_suppressors: s.remove_noise_context(sig_type, ctx_value)
                 self._activated_contexts[sig_type].discard(ctx_value)
                 self._context_activation_timestamps.pop(identity, None)
                 self._llm_context_noise[identity] = 0
@@ -1524,7 +1554,7 @@ class CascadeBridge(LifecycleControls):
             if sig.signal_type in self._activated_types:
                 candidates.append(sig)
             elif sig.signal_type in self._activated_contexts:
-                ctx = getattr(sig, self._contextual_suppressor._context_key, "")
+                ctx = " ".join(str(getattr(sig, s._context_key, "")) for s in self._contextual_suppressors if getattr(sig, s._context_key, ""))
                 if ctx in self._activated_contexts[sig.signal_type]:
                     candidates.append(sig)
 
@@ -1572,12 +1602,12 @@ class CascadeBridge(LifecycleControls):
                         if not _is_noise_classification(ans):
                             self._shadow_demotions += 1
                             ns = sig.get("namespace", "")
-                            ctx_key = self._contextual_suppressor._context_key
+                            ctx_key = self._contextual_suppressors[0]._context_key
 
                             if (sig["signal_type"] in self._activated_contexts
                                     and ns in self._activated_contexts.get(sig["signal_type"], set())):
                                 with self._contexts_lock:
-                                    self._contextual_suppressor.remove_noise_context(sig["signal_type"], ns)
+                                    for s in self._contextual_suppressors: s.remove_noise_context(sig["signal_type"], ns)
                                     self._activated_contexts[sig["signal_type"]].discard(ns)
                                 identity = f"{sig['signal_type']}:{ns}"
                                 self._context_activation_timestamps.pop(identity, None)
@@ -2277,7 +2307,7 @@ class CascadeBridge(LifecycleControls):
                         if (bound and not self._human_gate and record and record['noise'] >= 200
                                 and record['important'] == 0 and valid_time(timestamp, self._activation_ttl_hours)):
                             self._activated_contexts[kind].add(context)
-                            self._contextual_suppressor.add_noise_context(kind, context)
+                            for s in self._contextual_suppressors: s.add_noise_context(kind, context)
                             self._context_activation_timestamps[identity] = timestamp
                         else:
                             self._qualification_evidence.pop('context:' + identity, None)
@@ -2307,7 +2337,7 @@ class CascadeBridge(LifecycleControls):
                 self._deactivate_agent(kind)
             for kind, contexts in self._activated_contexts.items():
                 for context in list(contexts):
-                    self._contextual_suppressor.remove_noise_context(kind, context)
+                    for s in self._contextual_suppressors: s.remove_noise_context(kind, context)
                 contexts.clear()
             self._qualification_evidence.clear()
             log.warning("Failed to restore state: %s", e)
