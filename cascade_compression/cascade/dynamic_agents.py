@@ -193,11 +193,13 @@ class ContextualNoiseSuppressor:
     name = "contextual_noise_suppressor"
     stage = 3
 
-    def __init__(self, context_key: str = "namespace", window_seconds: float = 300):
+    def __init__(self, context_key: str = "namespace", window_seconds: float = 300,
+                 *, agent_name: str = ""):
         self._context_key = context_key
         self._window = window_seconds
         self._noise_contexts: Dict[str, set] = defaultdict(set)
         self._seen: Dict[str, float] = {}
+        self.name = agent_name or f"contextual_noise_suppressor_{context_key}"
 
     def add_noise_context(self, signal_type: str, context_value: str):
         self._noise_contexts[signal_type].add(context_value)

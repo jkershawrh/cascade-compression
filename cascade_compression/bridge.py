@@ -271,13 +271,27 @@ class CascadeBridge(LifecycleControls):
 
         self._repeat_suppressor = RepeatFloodSuppressor(max_repeats=3, window_seconds=300)
         self._noise_suppressor = DominantNoiseSuppressor(window_seconds=300)
-        self._contextual_suppressor = ContextualNoiseSuppressor(
-            context_key=os.getenv("CASCADE_CONTEXT_KEY", "namespace"),
-            window_seconds=300,
-        )
+        # Multi-key contextual suppression: each key gets its own suppressor
+        # and discovery path. CASCADE_CONTEXT_KEYS is a comma-separated list
+        # (default: "namespace"). E.g., "namespace,source" decomposes mixed
+        # types by both namespace and source (task name / playbook name).
+        context_keys = [
+            k.strip() for k in os.getenv(
+                "CASCADE_CONTEXT_KEYS", os.getenv("CASCADE_CONTEXT_KEY", "namespace")
+            ).split(",") if k.strip()
+        ]
+        self._contextual_suppressors: list = []
+        for _ck in context_keys:
+            _suppressor = ContextualNoiseSuppressor(
+                context_key=_ck, window_seconds=300,
+                agent_name=f"contextual_noise_suppressor_{_ck}",
+            )
+            self._contextual_suppressors.append(_suppressor)
+            self.pipeline.register(_suppressor)
+        # Primary suppressor for backward compatibility (first key)
+        self._contextual_suppressor = self._contextual_suppressors[0]
         self.pipeline.register(self._repeat_suppressor)
         self.pipeline.register(self._noise_suppressor)
-        self.pipeline.register(self._contextual_suppressor)
         self._activated_types: set = set()
         self._activated_patterns: Dict[str, str] = {}
         self._activated_contexts: Dict[str, set] = defaultdict(set)

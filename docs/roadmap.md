@@ -48,7 +48,7 @@ Evaluate memory usefulness and sourced recall; memory strength is not truth or s
 Exit: measured and reconciled losses, repeats, failures, recovery, queue delay, audit health,
 and independently reviewed memory outcomes on the selected artifact.
 
-Progress: **the learning loop is live on infra01 (rc21).** Qualified suppression with graduated
+Progress: **the learning loop is live on the production deployment (rc21).** Qualified suppression with graduated
 authority, shadow validation (17K+ re-checks, zero demotions), GCL audit (100% SURVIVES),
 and the fast-forward harness validating all three withdrawal paths. State persistence
 (retry-then-fence) held across multiple restarts and release rollouts.
