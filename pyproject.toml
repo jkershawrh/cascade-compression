@@ -88,6 +88,7 @@ retail = "cascade_compression.collectors.retail:RetailCollector"
 telecom = "cascade_compression.collectors.telecom:TelecomCollector"
 
 [project.entry-points."cascade_compression.domains"]
+aap = "cascade_compression.domains.aap"
 finance = "cascade_compression.domains.finance"
 healthcare = "cascade_compression.domains.healthcare"
 insurance = "cascade_compression.domains.insurance"
