@@ -2565,6 +2565,10 @@ class CascadeBridge(LifecycleControls):
             "coverage": self.classifier.coverage_stats(),
             **self.classifier.recorder.stats(),
         }
+        from .cascade.template_cache import TemplateCachedClassifierBackend
+        if isinstance(self.classifier.generative, TemplateCachedClassifierBackend):
+            stats["classifier"]["template_cache"] = (
+                self.classifier.generative.stats())
         return stats
 
     def wait_for_llm(self, timeout_seconds: float = 60.0) -> bool:
