@@ -971,6 +971,20 @@ def classifier_from_environment(*, url: str, key: str, micro_model: str,
             in {"1", "true", "yes"}
         ),
     )
+    if os.getenv("CASCADE_TEMPLATE_CACHE", "").strip().lower() in {"1", "true", "yes"}:
+        # Deterministic template reuse: the first occurrence of a template
+        # pays the generative cost; repeats within the TTL inherit the
+        # result. High/critical severities and prompt changes bypass.
+        from .cascade.template_cache import TemplateCachedClassifierBackend
+        context_keys = tuple(
+            k.strip() for k in os.getenv(
+                "CASCADE_CONTEXT_KEYS", "namespace").split(",") if k.strip())
+        generative = TemplateCachedClassifierBackend(
+            generative,
+            context_keys=context_keys or ("namespace",),
+            ttl_seconds=float(
+                os.getenv("CASCADE_TEMPLATE_CACHE_TTL_SECONDS", "86400")),
+        )
     semantic = None
     config_error = ""
     address = os.getenv("CASCADE_SC_ADDRESS", "").strip()

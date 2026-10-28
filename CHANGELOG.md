@@ -12,6 +12,19 @@ All notable changes are documented here. This project follows Semantic Versionin
   authority through the interface. Supports offline bridge-state snapshots and
   live service proxying.
 
+## 0.2.0rc27 - 2026-10-28
+
+- Add the template cache: deterministic per-template classification reuse
+  in the engine (`CASCADE_TEMPLATE_CACHE=1`). The first occurrence of a
+  template pays the generative backend's cost; repeats within the TTL
+  inherit the result. Keys on (signal_type, normalized message template,
+  context keys, prompt revision) — parameter variation (digits, IPs,
+  hex) is treated as representation, matching the corpus-adapter
+  convention. High/critical severities bypass the cache; prompt-revision
+  changes invalidate every entry; failed results are never cached.
+  This is the no-training fast tier for repetitive signal sources
+  (K8s events, robotics cells, templated logs).
+
 ## 0.2.0rc26 - 2026-10-28
 
 - Add the sc-head fast tier: a trained 4-class semantic-classifier
