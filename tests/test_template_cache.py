@@ -52,12 +52,19 @@ def test_parameter_variation_is_representation():
     assert normalize_template("exit code 137") != normalize_template("exit code")
 
 
-def test_context_keys_separate_entries():
+def test_context_keys_opt_in_separation():
+    # context scoping is opt-in: facts are template-intrinsic by default
     inner = CountingBackend()
-    cached = TemplateCachedClassifierBackend(inner)
+    cached = TemplateCachedClassifierBackend(inner)  # default: no context keys
     cached.classify(make_signal(namespace="prod"), "t")
     cached.classify(make_signal(namespace="test"), "t")
-    assert inner.calls == 2  # different namespace: separate templates
+    assert inner.calls == 1  # same template: shared fact across contexts
+
+    inner2 = CountingBackend()
+    cached2 = TemplateCachedClassifierBackend(inner2, context_keys=("namespace",))
+    cached2.classify(make_signal(namespace="prod"), "t")
+    cached2.classify(make_signal(namespace="test"), "t")
+    assert inner2.calls == 2  # opted-in context scoping separates entries
 
 
 def test_high_severity_bypasses_cache():
@@ -133,3 +140,18 @@ def test_factory_opt_in(monkeypatch):
         url="http://localhost:1", key="k", micro_model="m", macro_model="m",
         system_prompt="s")
     assert not isinstance(clf2.generative, TemplateCachedClassifierBackend)
+
+
+def test_normalization_level_is_deployment_choice():
+    # digits: numbers are parameters (templated streams)
+    inner = CountingBackend()
+    cached = TemplateCachedClassifierBackend(inner, normalize_level="digits")
+    cached.classify(make_signal(message="exit code 137"), "t")
+    cached.classify(make_signal(message="exit code 42"), "t")
+    assert inner.calls == 1
+    # none: numbers are semantics (amounts, measurements)
+    inner2 = CountingBackend()
+    cached2 = TemplateCachedClassifierBackend(inner2, normalize_level="none")
+    cached2.classify(make_signal(message="amount=45.67"), "t")
+    cached2.classify(make_signal(message="amount=99.99"), "t")
+    assert inner2.calls == 2

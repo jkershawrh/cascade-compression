@@ -976,14 +976,20 @@ def classifier_from_environment(*, url: str, key: str, micro_model: str,
         # pays the generative cost; repeats within the TTL inherit the
         # result. High/critical severities and prompt changes bypass.
         from .cascade.template_cache import TemplateCachedClassifierBackend
-        context_keys = tuple(
+        # Context scoping is opt-in and separate from the suppression
+        # context keys: classification facts are template-intrinsic by
+        # default; context-dependent handling belongs downstream.
+        cache_context = tuple(
             k.strip() for k in os.getenv(
-                "CASCADE_CONTEXT_KEYS", "namespace").split(",") if k.strip())
+                "CASCADE_TEMPLATE_CACHE_CONTEXT_KEYS", "").split(",")
+            if k.strip())
         generative = TemplateCachedClassifierBackend(
             generative,
-            context_keys=context_keys or ("namespace",),
+            context_keys=cache_context,
             ttl_seconds=float(
                 os.getenv("CASCADE_TEMPLATE_CACHE_TTL_SECONDS", "86400")),
+            normalize_level=os.getenv(
+                "CASCADE_TEMPLATE_CACHE_NORMALIZE", "digits").strip(),
         )
     semantic = None
     config_error = ""

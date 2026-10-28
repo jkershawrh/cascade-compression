@@ -165,7 +165,12 @@ def loghub_entry_to_signal(entry: Dict[str, Any]) -> Dict[str, Any]:
 
     message = f"[{component}] {level}: {content[:200]}"
 
-    severity_map = {"INFO": "info", "WARN": "medium", "WARNING": "medium",
+    # Routine log lines land in the medium band — the qualified dedup
+    # profile's trusted band (same semantic as K8s events and fraud
+    # transactions). INFO-severity signals are severity-gate targets,
+    # which in the governed profile means neither folded nor dropped:
+    # full classification cost with no compression.
+    severity_map = {"INFO": "medium", "WARN": "medium", "WARNING": "medium",
                     "ERROR": "high", "FATAL": "critical", "CRITICAL": "critical"}
 
     return {

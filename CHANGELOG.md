@@ -12,6 +12,17 @@ All notable changes are documented here. This project follows Semantic Versionin
   authority through the interface. Supports offline bridge-state snapshots and
   live service proxying.
 
+## 0.2.0rc28 - 2026-10-28
+
+- Template cache: facts are template-intrinsic by default — context
+  scoping is now opt-in (`CASCADE_TEMPLATE_CACHE_CONTEXT_KEYS`) and
+  separate from the suppression context keys, because context-dependent
+  handling belongs to the contextual suppressors downstream. Template
+  normalization is a deployment convention
+  (`CASCADE_TEMPLATE_CACHE_NORMALIZE=digits|none`): numbers-as-parameters
+  for templated event streams, verbatim messages for streams where
+  numbers are semantics (amounts, measurements).
+
 ## 0.2.0rc27 - 2026-10-28
 
 - Add the template cache: deterministic per-template classification reuse

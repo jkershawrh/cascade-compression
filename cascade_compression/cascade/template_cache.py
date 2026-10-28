@@ -32,8 +32,17 @@ _IPV4 = re.compile(r"\b\d+\.\d+\.\d+\.\d+\b")
 _DIGITS = re.compile(r"\d+")
 
 
-def normalize_template(message: str) -> str:
-    """Collapse parameter variation to a stable template signature."""
+def normalize_template(message: str, level: str = "digits") -> str:
+    """Collapse parameter variation to a stable template signature.
+
+    ``level`` is a deployment convention, not engine knowledge:
+    - "digits": numbers/IPs/hex are parameters (templated event streams,
+      robotics cells, structured logs)
+    - "none": the message is used verbatim (streams where numbers are
+      semantics — transaction amounts, measurements)
+    """
+    if level == "none":
+        return message[:200]
     t = _HEX.sub("H", message)
     t = _IPV4.sub("IP", t)
     t = _DIGITS.sub("N", t)
@@ -44,11 +53,13 @@ class TemplateCachedClassifierBackend:
     """Wraps any classifier backend with per-template result reuse."""
 
     def __init__(self, inner: Any, *,
-                 context_keys: tuple = ("namespace", "source"),
+                 context_keys: tuple = (),
                  ttl_seconds: float = 86400.0,
-                 max_entries: int = 100_000):
+                 max_entries: int = 100_000,
+                 normalize_level: str = "digits"):
         self._inner = inner
         self._context_keys = tuple(context_keys)
+        self._normalize_level = normalize_level
         self._ttl = float(ttl_seconds)
         self._max = int(max_entries)
         self._cache: Dict[str, tuple] = {}
@@ -63,11 +74,18 @@ class TemplateCachedClassifierBackend:
     def __getattr__(self, name):
         return getattr(self._inner, name)
 
+    # NOTE: classification facts are template-intrinsic. Context-dependent
+    # handling (the same template meaning different things in different
+    # namespaces or sources) belongs to the contextual suppressors and the
+    # promotion engine downstream — not to the fact cache. Context-scoped
+    # caching remains available via context_keys for deployments that
+    # want it, but the default shares facts across contexts.
+
     def _key(self, signal: Dict[str, Any], prompt_revision: str) -> str:
         content = signal.get("content") or {}
         message = str(content.get("message", ""))
         parts = [str(signal.get("signal_type", "")),
-                 normalize_template(message),
+                 normalize_template(message, self._normalize_level),
                  prompt_revision]
         for k in self._context_keys:
             parts.append(str(signal.get(k, "")))
