@@ -12,6 +12,22 @@ All notable changes are documented here. This project follows Semantic Versionin
   authority through the interface. Supports offline bridge-state snapshots and
   live service proxying.
 
+## 0.2.0rc26 - 2026-10-28
+
+- Add the sc-head fast tier: a trained 4-class semantic-classifier
+  replacement speaking the llm-d-sc ClassifyRequest/RankedSignal contract
+  with `classification_head_probability` scoring. Server
+  (`cascade_compression.integrations.sc_head.server`) routes signal names
+  to per-domain head artifacts; trainer (`...sc_head.train`) distills a
+  teacher into temperature-calibrated linear heads over a frozen sentence
+  encoder. Measured on Flightpath: 25ms p50 per classification (after
+  torch thread pinning), 97.4% held-out teacher agreement (kubernetes
+  domain, 7,438 labels), 46.2% top-1 vs the 160 human-adjudicated cases
+  (baseline llm-d-sc v8 anchors: 0.6%).
+- Thread pinning note: torch sizes its thread pool from host core count,
+  which inside a CPU-limited cgroup turns a ~30ms encode into ~700ms of
+  context switching. The server pins OMP/MKL/torch threads by default.
+
 ## 0.2.0rc24 - 2026-10-27
 
 - Add `supercomputer`, `distributed`, and `cloud` domain packs with
