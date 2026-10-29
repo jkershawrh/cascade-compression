@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "cascade-compression"
-version = "0.2.0rc33"
+version = "0.2.0rc34"
 description = "Domain-agnostic three-tier signal compression for safe CPU inference"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -97,6 +97,7 @@ insurance = "cascade_compression.domains.insurance"
 kubernetes = "cascade_compression.domains.kubernetes"
 macos = "cascade_compression.domains.macos"
 retail = "cascade_compression.domains.retail"
+robotic = "cascade_compression.domains.robotic"
 supercomputer = "cascade_compression.domains.supercomputer"
 telecom = "cascade_compression.domains.telecom"
 

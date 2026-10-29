@@ -49,3 +49,31 @@ def _robot_entity_extractor(sig):
     if tag:
         return f"{cell}:plc:{tag}"
     return f"{cell}:general" if cell else None
+
+FEW_SHOT_EXEMPLARS = {
+    "routine_noise": [
+        "[ST-01] cycle pick part BRK-48392 cycle_time 4.52s pos_ok",
+        "[ST-02] plc air_pressure = 6.0bar",
+        "[ST-01] vision inspect part PLT-22318 RESULT: PASS",
+        "[ST-04] telemetry cycle_time 4.61s trend nominal",
+        "[ST-03] maintenance spindle_temp = 48C",
+        "[ST-02] cycle weld part WLD-77381 cycle_time 4.35s pos_ok"
+    ],
+    "known_pattern": [
+        "[ST-03] vision inspect part INS-81932 RESULT: MINOR_DEFECT dim 0.153mm",
+        "[ST-01] SAFETY light_curtain beam break during maintenance window authorized",
+        "[ST-02] plc feed_rate setpoint changed 1200 to 1180mm/min by recipe"
+    ],
+    "needs_attention": [
+        "[ST-02] telemetry cycle_time 6.84s trend DEGRADING",
+        "[ST-01] maintenance vibration ALERT: vibration 14.2mm/s threshold 8.0 exceeded",
+        "[ST-03] vision inspect part INS-40001 RESULT: FAIL new defect class: surface_crack",
+        "[ST-02] SAFETY interlock fault light_curtain channel 2 unresponsive"
+    ],
+    "real_incident": [
+        "[ST-01] spindle overload trip current 187% rated \u2014 spindle stopped",
+        "[ST-03] controller fault axis 3 position error 4.2mm exceeding tolerance \u2014 controller reset required",
+        "[ST-04] communication loss to servo drive node 12 timeout 5000ms \u2014 drive offline",
+        "[ST-01] SAFETY e-stop TRIGGERED operator zone intrusion"
+    ]
+}
