@@ -962,15 +962,31 @@ def classifier_from_environment(*, url: str, key: str, micro_model: str,
         os.getenv("CASCADE_CLASSIFIER_EVIDENCE_FILE", ""),
         int(os.getenv("CASCADE_CLASSIFIER_EVIDENCE_MAX_BYTES", str(64 * 1024 * 1024))),
     )
-    generative = GenerativeClassifierBackend(
-        url=url, key=key, micro_model=micro_model, macro_model=macro_model,
-        system_prompt=system_prompt,
-        few_shot_exemplars=few_shot_exemplars,
-        structured_confidence=(
-            os.getenv("CASCADE_GENERATIVE_STRUCTURED", "").strip().lower()
-            in {"1", "true", "yes"}
-        ),
-    )
+    fact_first = os.getenv("CASCADE_FACT_FIRST", "").strip().lower() in {"1", "true", "yes"}
+    if fact_first:
+        # Fact-first classification: the generative backend carries the
+        # fact-extraction prompt (not the domain label prompt) and the
+        # FactFirstClassifierBackend derives labels via the deterministic
+        # rubric. Validated on the 160 adjudicated cases: 48.8% agreement,
+        # zero dangerous errors, real_incident recall 100%.
+        from .cascade.fact_first import DEFAULT_FACT_PROMPT, FactFirstClassifierBackend
+        generative = GenerativeClassifierBackend(
+            url=url, key=key, micro_model=micro_model, macro_model=macro_model,
+            system_prompt=os.getenv("CASCADE_FACT_PROMPT", "") or DEFAULT_FACT_PROMPT,
+            few_shot_exemplars=None,
+            structured_confidence=False,
+        )
+        generative = FactFirstClassifierBackend(generative)
+    else:
+        generative = GenerativeClassifierBackend(
+            url=url, key=key, micro_model=micro_model, macro_model=macro_model,
+            system_prompt=system_prompt,
+            few_shot_exemplars=few_shot_exemplars,
+            structured_confidence=(
+                os.getenv("CASCADE_GENERATIVE_STRUCTURED", "").strip().lower()
+                in {"1", "true", "yes"}
+            ),
+        )
     if os.getenv("CASCADE_TEMPLATE_CACHE", "").strip().lower() in {"1", "true", "yes"}:
         # Deterministic template reuse: the first occurrence of a template
         # pays the generative cost; repeats within the TTL inherit the

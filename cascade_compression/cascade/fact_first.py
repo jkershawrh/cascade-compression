@@ -46,7 +46,7 @@ _JSON_STRIP = re.compile(r"^```(?:json)?\s*|\s*```$")
 class Rubric:
     """Deterministic fact-to-label derivation.
 
-    v0 semantics (measured on the 160 adjudicated infra01 K8s cases:
+    v0 semantics (measured on 160 adjudicated production K8s cases:
     47.5% agreement, zero dangerous errors — all error mass in the
     over-attention direction):
       confirmed impact                  -> real_incident

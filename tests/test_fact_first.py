@@ -146,3 +146,45 @@ def test_rubric_change_invalidates_cache():
     ff._rubric = NewRubric()
     cached.classify(sig, "t")
     assert inner.calls == 2  # rubric version changed: cache invalidated
+
+
+def test_factory_fact_first_opt_in(monkeypatch):
+    import os
+    monkeypatch.setenv("CASCADE_LLM_URL", "http://localhost:1")
+    monkeypatch.setenv("CASCADE_LLM_KEY", "k")
+    monkeypatch.setenv("CASCADE_LLM_MODEL", "m")
+    monkeypatch.setenv("CASCADE_FACT_FIRST", "1")
+    from cascade_compression.classifier import classifier_from_environment
+    from cascade_compression.cascade.fact_first import FactFirstClassifierBackend
+    clf = classifier_from_environment(
+        url="http://localhost:1", key="k", micro_model="m", macro_model="m",
+        system_prompt="domain pack prompt")
+    assert isinstance(clf.generative, FactFirstClassifierBackend)
+    # the wrapped backend carries the FACT prompt, not the domain prompt
+    inner = clf.generative._inner
+    assert "fact extractor" in inner.system_prompt.lower()
+    monkeypatch.setenv("CASCADE_FACT_FIRST", "")
+    clf2 = classifier_from_environment(
+        url="http://localhost:1", key="k", micro_model="m", macro_model="m",
+        system_prompt="domain pack prompt")
+    assert not isinstance(clf2.generative, FactFirstClassifierBackend)
+
+
+def test_factory_fact_first_composes_with_cache(monkeypatch):
+    import os
+    monkeypatch.setenv("CASCADE_LLM_URL", "http://localhost:1")
+    monkeypatch.setenv("CASCADE_LLM_KEY", "k")
+    monkeypatch.setenv("CASCADE_LLM_MODEL", "m")
+    monkeypatch.setenv("CASCADE_FACT_FIRST", "1")
+    monkeypatch.setenv("CASCADE_TEMPLATE_CACHE", "1")
+    from cascade_compression.classifier import classifier_from_environment
+    from cascade_compression.cascade.fact_first import FactFirstClassifierBackend
+    from cascade_compression.cascade.template_cache import (
+        TemplateCachedClassifierBackend,
+    )
+    clf = classifier_from_environment(
+        url="http://localhost:1", key="k", micro_model="m", macro_model="m",
+        system_prompt="s")
+    # cache wraps fact-first: cache -> fact-first -> generative
+    assert isinstance(clf.generative, TemplateCachedClassifierBackend)
+    assert isinstance(clf.generative._inner, FactFirstClassifierBackend)
