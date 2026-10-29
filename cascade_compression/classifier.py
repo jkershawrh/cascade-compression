@@ -171,12 +171,18 @@ class GenerativeClassifierBackend:
     def __init__(self, *, url: str, key: str, micro_model: str,
                  macro_model: str, system_prompt: str,
                  structured_confidence: bool = False,
+                 completion_max_tokens: int | None = None,
                  few_shot_exemplars: dict | None = None):
         self.url = url
         self.key = key
         self.micro_model = micro_model
         self.macro_model = macro_model
         self.structured_confidence = structured_confidence
+        # Explicit token budget for _complete; None falls back to the
+        # historical label-vs-structured defaults. Fact-first backends
+        # REQUIRE enough tokens for the fact JSON — a 5-token budget
+        # truncates it mid-object (found live: malformed_facts).
+        self.completion_max_tokens = completion_max_tokens
         if few_shot_exemplars:
             system_prompt = augment_with_exemplars(system_prompt, few_shot_exemplars)
         self.system_prompt = (
@@ -232,13 +238,19 @@ class GenerativeClassifierBackend:
         if client is not None:
             return llm_complete(
                 client, self.url, self.key, model, messages,
-                max_tokens=40 if self.structured_confidence else 5,
+                max_tokens=(
+                    self.completion_max_tokens
+                    if self.completion_max_tokens is not None
+                    else (40 if self.structured_confidence else 5)),
             )
         import httpx
         with httpx.Client(timeout=60) as owned_client:
             return llm_complete(
                 owned_client, self.url, self.key, model, messages,
-                max_tokens=40 if self.structured_confidence else 5,
+                max_tokens=(
+                    self.completion_max_tokens
+                    if self.completion_max_tokens is not None
+                    else (40 if self.structured_confidence else 5)),
             )
 
     def _parse_answer(self, answer: str) -> tuple[str, Optional[float]]:
@@ -975,6 +987,9 @@ def classifier_from_environment(*, url: str, key: str, micro_model: str,
             system_prompt=os.getenv("CASCADE_FACT_PROMPT", "") or DEFAULT_FACT_PROMPT,
             few_shot_exemplars=None,
             structured_confidence=False,
+            # The fact JSON needs ~25 tokens; the 5-token label default
+            # truncates it mid-object (found live on cascade-hadoop).
+            completion_max_tokens=48,
         )
         generative = FactFirstClassifierBackend(generative)
     else:

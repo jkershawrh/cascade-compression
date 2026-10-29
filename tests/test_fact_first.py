@@ -188,3 +188,23 @@ def test_factory_fact_first_composes_with_cache(monkeypatch):
     # cache wraps fact-first: cache -> fact-first -> generative
     assert isinstance(clf.generative, TemplateCachedClassifierBackend)
     assert isinstance(clf.generative._inner, FactFirstClassifierBackend)
+
+
+def test_factory_fact_first_gets_fact_token_budget(monkeypatch):
+    """The 5-token label default truncates fact JSON mid-object.
+
+    Found live: malformed_facts with the answer cut at '{"designed": false'.
+    """
+    import os
+    monkeypatch.setenv("CASCADE_LLM_URL", "http://localhost:1")
+    monkeypatch.setenv("CASCADE_LLM_KEY", "k")
+    monkeypatch.setenv("CASCADE_LLM_MODEL", "m")
+    monkeypatch.setenv("CASCADE_FACT_FIRST", "1")
+    from cascade_compression.classifier import classifier_from_environment
+    clf = classifier_from_environment(
+        url="http://localhost:1", key="k", micro_model="m", macro_model="m",
+        system_prompt="s")
+    # without the cache: generative IS the fact-first wrapper;
+    # its _inner is the fact-prompted GenerativeClassifierBackend
+    inner = clf.generative._inner
+    assert inner.completion_max_tokens is not None and inner.completion_max_tokens >= 30
