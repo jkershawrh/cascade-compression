@@ -94,14 +94,14 @@ def test_load_heads_valid(heads_dir):
     assert contracts["cascade-test"]["taxonomy_revision"] == "cascade-test-head-v1"
 
 
-def test_load_heads_rejects_wrong_classes(heads_dir):
+def test_load_heads_rejects_malformed_classes(heads_dir):
     path = write_artifact(heads_dir, signal="cascade-bad")
     with open(path) as f:
         artifact = json.load(f)
-    artifact["classes"] = ["noise", "pattern", "attention", "incident"]
+    artifact["classes"] = ["", "x", "y"]  # empty class string
     with open(path, "w") as f:
         json.dump(artifact, f)
-    with pytest.raises(ValueError, match="Cascade labels"):
+    with pytest.raises(ValueError, match="classes"):
         load_heads(heads_dir)
 
 
@@ -167,3 +167,40 @@ def test_scores_are_temperature_scaled(heads_dir):
     cold_margin = cold.ranked[0].score - cold.ranked[1].score
     # low temperature sharpens: hot margins exceed cold margins
     assert hot_margin > cold_margin
+
+
+def test_fact_head_artifacts_are_hostable(heads_dir):
+    # fact heads declare their own class vocabularies (designed/impact/
+    # recovery); the server hosts them, consumers enforce their own
+    # expected label sets client-side
+    fact_classes = ["false", "true"]
+    weights = [[0.1] * DIM for _ in fact_classes]
+    bias = [0.0, 1.0]
+    contract = {
+        "classifier_id": "cascade-signal-classifier",
+        "signal": "cascade-kubernetes-designed",
+        "taxonomy_revision": "cascade-kubernetes-designed-fact-v1",
+        "model_revision": "all-MiniLM-L6-v2@main+fact-head-v1",
+        "method": "classification-head",
+        "labels": fact_classes,
+    }
+    artifact = {"contract": contract, "temperature": 1.0,
+                "classes": fact_classes, "dim": DIM,
+                "weights": weights, "bias": bias}
+    import os
+    with open(os.path.join(heads_dir, "cascade-kubernetes-designed.json"), "w") as f:
+        json.dump(artifact, f)
+    heads, contracts = load_heads(heads_dir)
+    assert "cascade-kubernetes-designed" in heads
+    assert contracts["cascade-kubernetes-designed"]["labels"] == fact_classes
+
+
+def test_malformed_classes_rejected(heads_dir):
+    path = write_artifact(heads_dir, signal="cascade-dup")
+    with open(path) as f:
+        artifact = json.load(f)
+    artifact["classes"] = ["same", "same"]  # duplicates
+    with open(path, "w") as f:
+        json.dump(artifact, f)
+    with pytest.raises(ValueError, match="unique"):
+        load_heads(heads_dir)

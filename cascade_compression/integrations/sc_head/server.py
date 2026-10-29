@@ -48,8 +48,17 @@ def load_heads(heads_dir: str):
         contract = data["contract"]
         signal = contract["signal"]
         classes = data["classes"]
-        if sorted(classes) != sorted(CASCADE_LABELS):
-            raise ValueError(f"{name}: head classes must be the Cascade labels")
+        # The server hosts whatever class set the artifact's contract
+        # declares (label heads use the Cascade labels; fact heads use
+        # fact vocabularies like designed/impact/recovery). Consumers
+        # enforce their own expected label sets client-side — the
+        # cascade's SemanticClassifierBackend rejects any response whose
+        # ranked labels don't match its contract, so hosting other class
+        # sets cannot leak into label-head consumers.
+        if not classes or len(set(classes)) != len(classes):
+            raise ValueError(f"{name}: classes must be non-empty and unique")
+        if not all(isinstance(c, str) and c.strip() for c in classes):
+            raise ValueError(f"{name}: classes must be non-empty strings")
         W = np.asarray(data["weights"], dtype=np.float64)
         b = np.asarray(data["bias"], dtype=np.float64)
         if W.shape != (len(classes), data.get("dim", W.shape[1])):
