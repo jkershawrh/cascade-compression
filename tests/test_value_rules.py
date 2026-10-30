@@ -236,7 +236,7 @@ class TestRoboticPackSpec:
         plugin = load_domain_plugin("robotic")
         assert plugin.value_rules is not None
         agent = ValueRuleAgent(plugin.value_rules)  # validates the spec
-        assert agent.revision == "robotic-value-rules-v2"
+        assert agent.revision == "robotic-value-rules-v3"
         # The pack rules only escalate or classify.
         for rule in plugin.value_rules["rules"]:
             assert rule["outcome"] in ("escalate", "classify")
@@ -336,7 +336,7 @@ class TestBridgeValueRulePath:
         rule = matched[0]["_value_rule"]
         assert rule["label"] == "real_incident"
         assert rule["rule"] == "overstrain_l"
-        assert rule["revision"] == "robotic-value-rules-v2"
+        assert rule["revision"] == "robotic-value-rules-v3"
 
     def test_non_matching_signal_enqueues_without_rule(self):
         from cascade_compression.bridge import CascadeBridge
@@ -358,14 +358,14 @@ class TestBridgeValueRulePath:
         entry = {"_value_rule": {"label": "real_incident", "rule": "overstrain_l",
                                  "classification": "overstrain_risk",
                                  "confidence": 0.95,
-                                 "revision": "robotic-value-rules-v2"},
+                                 "revision": "robotic-value-rules-v3"},
                  "signal_type": "maintenance_telemetry", "severity": "medium",
                  "namespace": "cell_1", "content": {}, "labels": {}}
         result = bridge._classify_entry(entry, client=None)
         assert result.ok
         assert result.label == "real_incident"
         assert result.authoritative_backend == "value_rule"
-        assert result.model_revision == "robotic-value-rules-v2"
+        assert result.model_revision == "robotic-value-rules-v3"
         assert result.latency_ms == 0.0
 
     def test_classify_entry_without_rule_uses_classifier(self):
@@ -388,7 +388,7 @@ class TestBridgeValueRulePath:
         bridge = CascadeBridge(domain="robotic")
         bridge.process([self._telemetry_signal()])
         stats = bridge.get_stats()
-        assert stats["value_rule_revision"] == "robotic-value-rules-v2"
+        assert stats["value_rule_revision"] == "robotic-value-rules-v3"
         assert stats["value_rule_fires"].get("overstrain_l") == 1
 
 

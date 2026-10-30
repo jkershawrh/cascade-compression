@@ -60,7 +60,11 @@ DEDUP_WINDOWS = {
 # signature by construction and remains the residual for the semantic
 # classifier lane.
 VALUE_RULES = {
-    "revision": "robotic-value-rules-v2",
+    # v3: multi-sensory extension — vibration/acoustic, force/tactile,
+    # proprioception rules over sensor_fields features (the numeric-sense
+    # front-end adapters). Thresholds are the synthetic cell's equipment
+    # spec; real deployments substitute the actual spec sheet.
+    "revision": "robotic-value-rules-v3",
     "derived": {
         # Process-air temperature differential (K) — heat dissipation margin.
         "temp_diff_k": ["sub", ["field", "process_temp_k"], ["field", "air_temp_k"]],
@@ -146,6 +150,113 @@ VALUE_RULES = {
             "confidence": 0.9,
             "when": [
                 {"field": "tool_wear_min", "op": "ge", "value": 200},
+            ],
+        },
+        # ---- vibration / acoustic (sensor_fields.vibration_features) ----
+        # Order is priority: severe/specific rules precede mild/general
+        # ones so dual-signature rows take the severe label.
+        {   # Overall severity (ISO 10816-style zone boundary, in g).
+            "name": "severe_vibration",
+            "classification": "severe_vibration",
+            "label": "real_incident",
+            "outcome": "escalate",
+            "confidence": 0.95,
+            "when": [
+                {"field": "vib_rms_g", "op": "gt", "value": 2.0},
+            ],
+        },
+        {   # Very-high-band energy: spalling / advanced bearing wear.
+            "name": "bearing_spalling",
+            "classification": "bearing_spalling",
+            "label": "real_incident",
+            "outcome": "escalate",
+            "confidence": 0.95,
+            "when": [
+                {"field": "vib_band4_energy", "op": "gt", "value": 0.002},
+            ],
+        },
+        {   # Bearing defect frequencies live in the 2-8kHz band.
+            "name": "bearing_wear_early",
+            "classification": "bearing_degradation",
+            "label": "needs_attention",
+            "outcome": "escalate",
+            "confidence": 0.9,
+            "when": [
+                {"field": "vib_band3_energy", "op": "gt", "value": 0.003},
+            ],
+        },
+        {   # Rotational imbalance: 1x-RPM band energy plus elevated RMS.
+            "name": "rotational_imbalance",
+            "classification": "rotational_imbalance",
+            "label": "needs_attention",
+            "outcome": "escalate",
+            "confidence": 0.9,
+            "when": [
+                {"field": "vib_band1_energy", "op": "gt", "value": 0.005},
+                {"field": "vib_rms_g", "op": "gt", "value": 0.8},
+            ],
+        },
+        # ---- force / tactile (sensor_fields.force_features) ----
+        {   # Peak contact force beyond the cell's rated maximum.
+            "name": "force_overload",
+            "classification": "collision_or_overload",
+            "label": "real_incident",
+            "outcome": "escalate",
+            "confidence": 0.95,
+            "when": [
+                {"field": "force_peak_n", "op": "gt", "value": 250},
+            ],
+        },
+        {   # Grip force deviating from nominal (drop / damage risk).
+            "name": "grip_anomaly",
+            "classification": "grip_force_anomaly",
+            "label": "needs_attention",
+            "outcome": "escalate",
+            "confidence": 0.9,
+            "when": [
+                {"field": "force_dev_from_nominal_n", "op": "gt", "value": 15},
+            ],
+        },
+        {   # Contact torque beyond the wrist rating.
+            "name": "tactile_torque_anomaly",
+            "classification": "torque_anomaly",
+            "label": "needs_attention",
+            "outcome": "escalate",
+            "confidence": 0.9,
+            "when": [
+                {"field": "torque_peak_nm", "op": "gt", "value": 12},
+            ],
+        },
+        # ---- proprioception (sensor_fields.proprio_features) ----
+        # Severe overcurrent precedes overcurrent (priority order).
+        {   # Sustained overcurrent: imminent drive fault.
+            "name": "servo_severe_overcurrent",
+            "classification": "servo_overcurrent_severe",
+            "label": "real_incident",
+            "outcome": "escalate",
+            "confidence": 0.95,
+            "when": [
+                {"field": "servo_current_ratio", "op": "gt", "value": 1.5},
+            ],
+        },
+        {   # Servo following error beyond the axis tolerance.
+            "name": "servo_following_error",
+            "classification": "servo_following_error",
+            "label": "needs_attention",
+            "outcome": "escalate",
+            "confidence": 0.9,
+            "when": [
+                {"field": "servo_following_error", "op": "gt", "value": 0.5},
+            ],
+        },
+        {   # Motor current above rated (collision / overload precursor).
+            "name": "servo_overcurrent",
+            "classification": "servo_overcurrent",
+            "label": "needs_attention",
+            "outcome": "escalate",
+            "confidence": 0.9,
+            "when": [
+                {"field": "servo_current_ratio", "op": "gt", "value": 1.2},
             ],
         },
     ],
