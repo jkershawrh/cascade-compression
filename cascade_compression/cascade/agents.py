@@ -341,6 +341,297 @@ class ThresholdClassifier:
         return decisions
 
 
+class ValueRuleAgent:
+    """Deterministic threshold rules over structured numeric content fields.
+
+    Domain packs declare VALUE_RULES: a versioned, declarative spec of
+    derived quantities (expression trees over content fields) and threshold
+    rules (ANDed conditions, first match wins — rule order is priority).
+    The agent evaluates whatever spec it is given; it carries no domain
+    knowledge of its own.
+
+    Safety: rules may only ESCALATE or CLASSIFY, never suppress — the same
+    fail-open guarantee as TrendDetector and SafetyEscalator. Signals that
+    lack the referenced fields are untouched, so event-type signals flowing
+    through the same cascade are unaffected (the hybrid-lane pattern:
+    telemetry is classified by spec, events by semantics).
+
+    Cost: zero model calls — a nano-tier agent (stage 0).
+
+    Spec format (validated at construction; malformed specs fail fast)::
+
+        {
+          "revision": "pack-value-rules-v1",
+          "derived": {                      # optional
+            "temp_diff_k": ["sub", ["field", "process_temp_k"],
+                                     ["field", "air_temp_k"]],
+            "power_w": ["mul", ["field", "torque_nm"],
+                               ["field", "rotational_speed_rpm"],
+                               ["const", 0.10471975511965977]],
+          },
+          "rules": [
+            {"name": "heat_dissipation_risk",
+             "classification": "heat_dissipation_failure_risk",
+             "outcome": "escalate",          # or "classify"
+             "confidence": 0.95,
+             "when": [                       # ANDed; first match wins
+               {"field": "temp_diff_k", "op": "lt", "value": 8.6},
+               {"field": "rotational_speed_rpm", "op": "lt", "value": 1380},
+             ]},
+          ],
+        }
+
+    Ops: lt/le/gt/ge (numeric), between/outside (``value: [lo, hi]``),
+    in/not_in (membership), eq/ne (categorical or numeric). Numeric ops on
+    a missing or non-numeric field simply fail to match.
+
+    Rules may declare a ``label`` — the cascade taxonomy label
+    (routine_noise/known_pattern/needs_attention/real_incident) the bridge
+    applies authoritatively when the rule matches, skipping the model call
+    (the same authority discipline as the qualified sc-head: deterministic,
+    versioned, and backed by held-out evidence). Rules without a label
+    escalate only and leave the final label to the classifier lane.
+    """
+
+    name = "value_rule"
+    stage = 0
+
+    _NUMERIC_OPS = frozenset({"lt", "le", "gt", "ge"})
+    _RANGE_OPS = frozenset({"between", "outside"})
+    _MEMBERSHIP_OPS = frozenset({"in", "not_in"})
+    _EXPRESSION_OPS = frozenset({"add", "sub", "mul", "div"})
+    _ALLOWED_OUTCOMES = ("escalate", "classify")
+
+    def __init__(self, spec: dict):
+        revision = spec.get("revision")
+        if not isinstance(revision, str) or not revision:
+            raise ValueError("value-rule spec must declare a non-empty revision")
+        rules = spec.get("rules")
+        if not isinstance(rules, list) or not rules:
+            raise ValueError("value-rule spec must declare a non-empty rules list")
+        derived = spec.get("derived", {})
+        if not isinstance(derived, dict):
+            raise ValueError("value-rule spec derived must be a mapping")
+        self.revision = revision
+        self._derived = {name: self._validate_expression(name, expr)
+                         for name, expr in derived.items()}
+        self._rules = [self._validate_rule(rule) for rule in rules]
+        self.fires: Dict[str, int] = defaultdict(int)
+        self._referenced_fields: Set[str] = set()
+        for _, (_, operands) in self._derived.items():
+            for kind, value in operands:
+                if kind == "field":
+                    self._referenced_fields.add(value)
+        for rule in self._rules:
+            for cond in rule["conditions"]:
+                self._referenced_fields.add(cond["field"])
+
+    # ------------------------------------------------------------------
+    # Spec validation — fail fast at construction, not per signal.
+    # ------------------------------------------------------------------
+    @classmethod
+    def _validate_expression(cls, name: str, expr):
+        if not isinstance(expr, (list, tuple)) or len(expr) < 3:
+            raise ValueError(
+                f"derived {name!r} must be [op, operand, operand, ...]")
+        op = expr[0]
+        if op not in cls._EXPRESSION_OPS:
+            raise ValueError(f"derived {name!r} uses unknown operator {op!r}")
+        operands = []
+        for operand in expr[1:]:
+            if not isinstance(operand, (list, tuple)) or len(operand) != 2:
+                raise ValueError(
+                    f"derived {name!r} operands must be ['field', name] or ['const', value]")
+            kind, value = operand
+            if kind == "field":
+                if not isinstance(value, str) or not value:
+                    raise ValueError(
+                        f"derived {name!r} field reference must be a non-empty string")
+                operands.append(("field", value))
+            elif kind == "const":
+                if isinstance(value, bool) or not isinstance(value, (int, float)):
+                    raise ValueError(f"derived {name!r} constant must be numeric")
+                operands.append(("const", float(value)))
+            else:
+                raise ValueError(
+                    f"derived {name!r} operand kind must be 'field' or 'const', got {kind!r}")
+        if op in ("sub", "div") and len(operands) != 2:
+            raise ValueError(f"derived {name!r} {op} requires exactly two operands")
+        if len(operands) < 2:
+            raise ValueError(f"derived {name!r} requires at least two operands")
+        return op, operands
+
+    @classmethod
+    def _validate_rule(cls, rule) -> dict:
+        if not isinstance(rule, dict):
+            raise ValueError("value rules must be mappings")
+        name = rule.get("name")
+        classification = rule.get("classification")
+        outcome = rule.get("outcome", "escalate")
+        confidence = rule.get("confidence", 0.9)
+        when = rule.get("when")
+        label = rule.get("label")
+        if label is not None and (not isinstance(label, str) or not label):
+            raise ValueError(f"value rule {name!r} label must be a non-empty string")
+        if not isinstance(name, str) or not name:
+            raise ValueError("value rule must declare a non-empty name")
+        if not isinstance(classification, str) or not classification:
+            raise ValueError(f"value rule {name!r} must declare a classification")
+        if outcome not in cls._ALLOWED_OUTCOMES:
+            raise ValueError(
+                f"value rule {name!r} outcome must be one of {cls._ALLOWED_OUTCOMES}")
+        if (isinstance(confidence, bool) or not isinstance(confidence, (int, float))
+                or not 0.0 <= float(confidence) <= 1.0):
+            raise ValueError(f"value rule {name!r} confidence must be within [0, 1]")
+        if not isinstance(when, list) or not when:
+            raise ValueError(f"value rule {name!r} must declare a non-empty 'when' list")
+        return {
+            "name": name,
+            "classification": classification,
+            "outcome": outcome,
+            "confidence": float(confidence),
+            "label": label,
+            "conditions": [cls._validate_condition(name, c) for c in when],
+        }
+
+    @classmethod
+    def _validate_condition(cls, rule_name: str, cond) -> dict:
+        if not isinstance(cond, dict):
+            raise ValueError(f"value rule {rule_name!r} conditions must be mappings")
+        field = cond.get("field")
+        op = cond.get("op")
+        value = cond.get("value")
+        if not isinstance(field, str) or not field:
+            raise ValueError(f"value rule {rule_name!r} condition must reference a field")
+        if op in cls._NUMERIC_OPS:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"value rule {rule_name!r} op {op!r} needs a numeric value")
+            return {"field": field, "op": op, "value": float(value)}
+        if op in cls._RANGE_OPS:
+            if not isinstance(value, (list, tuple)) or len(value) != 2:
+                raise ValueError(
+                    f"value rule {rule_name!r} op {op!r} needs a two-element [lo, hi] value")
+            if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in value):
+                raise ValueError(f"value rule {rule_name!r} range bounds must be numeric")
+            return {"field": field, "op": op,
+                    "value": (float(value[0]), float(value[1]))}
+        if op in cls._MEMBERSHIP_OPS:
+            if not isinstance(value, (list, tuple)) or not value:
+                raise ValueError(f"value rule {rule_name!r} op {op!r} needs a non-empty list")
+            return {"field": field, "op": op, "value": tuple(value)}
+        if op in ("eq", "ne"):
+            if value is None:
+                raise ValueError(f"value rule {rule_name!r} op {op!r} needs a value")
+            return {"field": field, "op": op, "value": value}
+        raise ValueError(f"value rule {rule_name!r} uses unknown op {op!r}")
+
+    # ------------------------------------------------------------------
+    # Evaluation
+    # ------------------------------------------------------------------
+    def _resolve_numeric_fields(self, signal: Signal) -> Dict[str, float]:
+        content = signal.content or {}
+        resolved: Dict[str, float] = {}
+        for field in self._referenced_fields:
+            value = content.get(field)
+            if (isinstance(value, (int, float)) and not isinstance(value, bool)
+                    and math.isfinite(value)):
+                resolved[field] = float(value)
+        return resolved
+
+    def _evaluate_expression(self, expr, fields: Dict[str, float]):
+        op, operands = expr
+        values = []
+        for kind, value in operands:
+            if kind == "const":
+                values.append(value)
+            elif value in fields:
+                values.append(fields[value])
+            else:
+                return None  # a referenced input is missing or non-numeric
+        if op == "add":
+            return float(sum(values))
+        if op == "sub":
+            return values[0] - values[1]
+        if op == "mul":
+            result = 1.0
+            for v in values:
+                result *= v
+            return result
+        if values[1] == 0:  # div
+            return None
+        return values[0] / values[1]
+
+    @staticmethod
+    def _describe(cond: dict, context: Dict[str, float], raw: dict) -> str:
+        field, op, value = cond["field"], cond["op"], cond["value"]
+        if op in ("eq", "ne", "in", "not_in"):
+            return f"{field}={raw.get(field)!r} {op} {value!r}"
+        actual = context[field]
+        if op in ("lt", "le", "gt", "ge"):
+            return f"{field}={actual:.4g} {op} {value:g}"
+        return f"{field}={actual:.4g} {op} [{value[0]:g}, {value[1]:g}]"
+
+    def _condition_holds(self, cond: dict, context: Dict[str, float], raw: dict) -> bool:
+        field, op, value = cond["field"], cond["op"], cond["value"]
+        if op in ("eq", "ne"):
+            actual = raw.get(field)
+            if actual is None:
+                return False
+            return (actual == value) if op == "eq" else (actual != value)
+        if op in self._MEMBERSHIP_OPS:
+            actual = raw.get(field)
+            if actual is None:
+                return False
+            return (actual in value) if op == "in" else (actual not in value)
+        if field not in context:
+            return False
+        actual = context[field]
+        if op in ("lt", "le", "gt", "ge"):
+            return {"lt": actual < value, "le": actual <= value,
+                    "gt": actual > value, "ge": actual >= value}[op]
+        lo, hi = value
+        if op == "between":
+            return lo <= actual <= hi
+        return actual < lo or actual > hi
+
+    def evaluate(self, signal: Signal):
+        """Return the first matching rule (dict) for a signal, or None."""
+        raw = signal.content or {}
+        context = self._resolve_numeric_fields(signal)
+        for name, expr in self._derived.items():
+            result = self._evaluate_expression(expr, context)
+            if result is not None and math.isfinite(result):
+                context[name] = result
+        for rule in self._rules:
+            if all(self._condition_holds(c, context, raw) for c in rule["conditions"]):
+                return rule, context
+        return None
+
+    def process(self, signals: List[Signal]) -> List[CascadeDecision]:
+        decisions = []
+        for signal in signals:
+            match = self.evaluate(signal)
+            if match is None:
+                continue
+            rule, context = match
+            raw = signal.content or {}
+            evidence = "; ".join(
+                self._describe(c, context, raw) for c in rule["conditions"])
+            self.fires[rule["name"]] += 1
+            decisions.append(CascadeDecision(
+                signal_id=signal.signal_id,
+                agent_name=self.name,
+                outcome=Outcome.ESCALATE if rule["outcome"] == "escalate"
+                else Outcome.CLASSIFY,
+                classification=rule["classification"],
+                evidence=f"{rule['name']}: {evidence} [spec {self.revision}]",
+                confidence=rule["confidence"],
+                metadata={"value_rule": rule["name"], "spec_revision": self.revision,
+                          **({"label": rule["label"]} if rule["label"] else {})},
+            ))
+        return decisions
+
+
 class TrendDetector:
     """Detects monotonic trends across sequential signals from the same entity.
 

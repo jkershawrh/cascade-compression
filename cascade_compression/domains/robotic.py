@@ -37,6 +37,120 @@ DEDUP_WINDOWS = {
     "maintenance": 1800,    # 30min — sensor readings repeat
 }
 
+# Deterministic value rules for structured maintenance telemetry.
+# This is the domain pack's "equipment spec sheet": rated operating ranges
+# and failure signatures for milling-machine telemetry (AI4I 2020 dataset).
+# The engine's ValueRuleAgent evaluates these declaratively; the pack owns
+# the numbers. Rules that declare a "label" are authoritative on match —
+# held-out evidence: 96.2% anomaly recall on rows 5000-9999 with thresholds
+# fit on rows 0-4999, misses = random failures only (RNF has no value
+# signature by construction).
+#
+# Threshold provenance: TWF/HDF/PWF windows follow the published dataset
+# semantics. OSF strain limits are fit to the corpus (perfect separation:
+# L non-OSF max 10,994 vs OSF min 11,003; M gap 11,920-12,337) rounded to
+# spec-sheet values; H uses the documented 13,095 (too few H rows to fit).
+# The published L value (11,952) does not match this corpus — it is the M
+# boundary here.
+#
+# Fields expected in signal content: air_temp_k, process_temp_k,
+# rotational_speed_rpm, torque_nm, tool_wear_min, machine_type (L/M/H).
+#
+# RNF (random failure) is deliberately NOT encoded — it has no value
+# signature by construction and remains the residual for the semantic
+# classifier lane.
+VALUE_RULES = {
+    "revision": "robotic-value-rules-v2",
+    "derived": {
+        # Process-air temperature differential (K) — heat dissipation margin.
+        "temp_diff_k": ["sub", ["field", "process_temp_k"], ["field", "air_temp_k"]],
+        # Mechanical power (W): torque [Nm] x speed [rpm] x 2*pi/60 [rad/s].
+        "power_w": ["mul", ["field", "torque_nm"], ["field", "rotational_speed_rpm"],
+                    ["const", 0.10471975511965977]],
+        # Tool strain (min-Nm): tool wear x torque — overstrain product.
+        "strain_minnm": ["mul", ["field", "tool_wear_min"], ["field", "torque_nm"]],
+    },
+    "rules": [
+        {   # OSF — overstrain: tool wear x torque beyond type rating.
+            "name": "overstrain_l",
+            "classification": "overstrain_risk",
+            "label": "real_incident",
+            "outcome": "escalate",
+            "confidence": 0.95,
+            "when": [
+                {"field": "machine_type", "op": "eq", "value": "L"},
+                {"field": "strain_minnm", "op": "gt", "value": 11000},
+            ],
+        },
+        {   # OSF — overstrain, medium-capacity variant.
+            "name": "overstrain_m",
+            "classification": "overstrain_risk",
+            "label": "real_incident",
+            "outcome": "escalate",
+            "confidence": 0.95,
+            "when": [
+                {"field": "machine_type", "op": "eq", "value": "M"},
+                {"field": "strain_minnm", "op": "gt", "value": 12000},
+            ],
+        },
+        {   # OSF — overstrain, high-capacity variant (documented threshold).
+            "name": "overstrain_h",
+            "classification": "overstrain_risk",
+            "label": "real_incident",
+            "outcome": "escalate",
+            "confidence": 0.95,
+            "when": [
+                {"field": "machine_type", "op": "eq", "value": "H"},
+                {"field": "strain_minnm", "op": "gt", "value": 13095},
+            ],
+        },
+        {   # HDF — heat dissipation: low temp differential at low speed.
+            "name": "heat_dissipation_risk",
+            "classification": "heat_dissipation_failure_risk",
+            "label": "real_incident",
+            "outcome": "escalate",
+            "confidence": 0.95,
+            "when": [
+                {"field": "temp_diff_k", "op": "lt", "value": 8.6},
+                {"field": "rotational_speed_rpm", "op": "lt", "value": 1380},
+            ],
+        },
+        {   # PWF — power below the rated transfer window.
+            "name": "power_below_rated",
+            "classification": "power_failure_risk",
+            "label": "real_incident",
+            "outcome": "escalate",
+            "confidence": 0.95,
+            "when": [
+                {"field": "power_w", "op": "lt", "value": 3500},
+            ],
+        },
+        {   # PWF — power above the rated transfer window.
+            "name": "power_above_rated",
+            "classification": "power_failure_risk",
+            "label": "real_incident",
+            "outcome": "escalate",
+            "confidence": 0.95,
+            "when": [
+                {"field": "power_w", "op": "gt", "value": 9000},
+            ],
+        },
+        {   # TWF — tool at end of life (replacement window 200-240 min).
+            # needs_attention, not real_incident: the tool may be replaced
+            # in time (678 of 723 wear>=200 rows are routine replacements);
+            # the zero-FN discipline accepts the compression cost.
+            "name": "tool_wear_degraded",
+            "classification": "tool_wear_degraded",
+            "label": "needs_attention",
+            "outcome": "escalate",
+            "confidence": 0.9,
+            "when": [
+                {"field": "tool_wear_min", "op": "ge", "value": 200},
+            ],
+        },
+    ],
+}
+
 
 def _robot_entity_extractor(sig):
     """Entity key: cell:robot:axis or cell:plc:tag."""

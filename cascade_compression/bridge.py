@@ -72,6 +72,30 @@ def _is_noise_classification(classification: str) -> bool:
     return "routine_noise" in classification or "known_pattern" in classification
 
 
+def _value_rule_classification(rule: dict):
+    """Deterministic ClassificationResult for a matched value rule.
+
+    The rule's taxonomy label is authoritative: no model call, no fallback.
+    Provenance (spec revision, rule name) rides on model_revision/backend so
+    every downstream record shows which spec produced the verdict.
+    """
+    from .classifier import ClassificationResult, RankedLabel
+
+    label = rule.get("label", "needs_attention")
+    confidence = float(rule.get("confidence", 0.95))
+    return ClassificationResult(
+        label=label,
+        ranked=[RankedLabel(label=label, score=confidence)],
+        confidence=confidence,
+        margin=confidence,
+        latency_ms=0.0,
+        backend="value_rule",
+        authoritative_backend="value_rule",
+        model_revision=rule.get("revision", ""),
+        status="ok",
+    )
+
+
 @dataclass
 class BridgeStats:
     signals_processed: int = 0
@@ -80,6 +104,7 @@ class BridgeStats:
     llm_classified: int = 0
     llm_noise: int = 0
     llm_important: int = 0
+    value_rule_classified: int = 0
     compression_ratio: float = 0.0
     started_at: str = ""
     last_updated: str = ""
@@ -152,8 +177,10 @@ class CascadeBridge(LifecycleControls):
         try:
             plugin = load_domain_plugin(self.domain)
             self._few_shot = plugin.few_shot_exemplars
+            self._value_rules = plugin.value_rules
         except Exception:
             self._few_shot = None
+            self._value_rules = None
         self.classifier = classifier_from_environment(
             url=self._llm_url,
             key=self._llm_key,
@@ -266,6 +293,16 @@ class CascadeBridge(LifecycleControls):
             qualified_suppression=(self._qualified_suppression_allowed
                                    if nano_profile == "qualified_repeat_update" else None),
         )
+        # Domain-pack value rules (deterministic telemetry thresholds).
+        # Escalate/classify only — never suppress. Gated off with
+        # CASCADE_VALUE_RULES=off; packs without VALUE_RULES are unaffected.
+        self._value_rule_agent = None
+        if (self._value_rules
+                and os.getenv("CASCADE_VALUE_RULES", "on").strip().lower()
+                not in {"off", "0", "false", "no"}):
+            from .cascade.agents import ValueRuleAgent
+            self._value_rule_agent = ValueRuleAgent(self._value_rules)
+            self.pipeline.register(self._value_rule_agent)
         self._triage_advisor = ExactRepeatTriage() if nano_profile == "triage_only" else None
         self._human_gate = bool(os.getenv("CASCADE_HUMAN_GATE", ""))
         self.promotion = PromotionEngine(human_gate_enabled=self._human_gate,
@@ -577,7 +614,21 @@ class CascadeBridge(LifecycleControls):
         # Checkpoint classification memories before queue admission so a
         # durable spool entry can never reference an unpersisted memory.
         self._checkpoint_classification_memories()
-        if not self._enqueue_llm_signals(cascade_result.remaining):
+        # Value-rule matches carry their taxonomy label authoritatively
+        # (deterministic, versioned spec — the qualified-head discipline).
+        value_rule_labels = {
+            str(d.signal_id): {
+                "label": d.metadata["label"],
+                "rule": d.metadata["value_rule"],
+                "classification": d.classification,
+                "confidence": d.confidence,
+                "revision": d.metadata["spec_revision"],
+            }
+            for d in cascade_result.decisions
+            if d.agent_name == "value_rule" and d.metadata.get("label")
+        }
+        if not self._enqueue_llm_signals(cascade_result.remaining,
+                                         value_rule_labels):
             return {
                 'enabled': False, 'accepted': False, 'durable_acceptance': False,
                 'backpressure': True, 'status': 'classifier_checkpoint_failed',
@@ -664,7 +715,8 @@ class CascadeBridge(LifecycleControls):
                 tier = "excluded"
             self._route_counts[tier] += 1
 
-    def _enqueue_llm_signals(self, signals: list) -> None:
+    def _enqueue_llm_signals(self, signals: list, value_rule_labels: dict = None) -> None:
+        value_rule_labels = value_rule_labels or {}
         with self._llm_queue_lock:
             for sig in signals:
                 self._llm_accounting_enqueued += 1
@@ -687,12 +739,18 @@ class CascadeBridge(LifecycleControls):
                     "_signal_ids_bytes": len(signal_id.encode("utf-8")) + 16,
                     "_enqueued_at": now,
                 }
+                rule = value_rule_labels.get(signal_id)
+                if rule is not None:
+                    # Authoritative deterministic label: no model call, and
+                    # no coalescing (each match is accounted individually).
+                    entry["_value_rule"] = rule
                 entry["_queue_bytes"] = self._estimate_llm_entry_bytes(entry)
                 if sig.severity in {"critical", "high"}:
                     self._llm_priority_buffer.append(entry)
                     self._llm_priority_buffer_bytes += entry["_queue_bytes"]
                 else:
-                    if self._llm_coalescing_enabled:
+                    if (self._llm_coalescing_enabled
+                            and "_value_rule" not in entry):
                         key = self._llm_coalesce_key(entry)
                         existing = self._llm_coalesce_index.get(key)
                         if existing is not None:
@@ -1650,6 +1708,14 @@ class CascadeBridge(LifecycleControls):
             sig['_qualification_bindings'] = self._qualification_bindings(sig)
         return self.classifier.classify(sig, client)
 
+    def _classify_entry(self, sig, client):
+        """Classify one queue entry: value-rule labels are authoritative;
+        everything else goes through the semantic admission budget."""
+        rule = sig.get("_value_rule")
+        if rule is not None:
+            return _value_rule_classification(rule)
+        return self._classify_one_limited(sig, client)
+
     def _classify_one_limited(self, sig, client):
         """Classify within the bridge-wide semantic admission budget."""
         with self._llm_slots:
@@ -1820,7 +1886,7 @@ class CascadeBridge(LifecycleControls):
             with httpx.Client(timeout=60) as client:
                 with ThreadPoolExecutor(max_workers=llm_workers) as pool:
                     futures = {
-                        pool.submit(self._classify_one_limited, sig, client): sig
+                        pool.submit(self._classify_entry, sig, client): sig
                         for sig in signals
                     }
                     for future in as_completed(futures):
@@ -1868,10 +1934,13 @@ class CascadeBridge(LifecycleControls):
                                             ),
                                             "classified_at": memory.last_modified_at,
                                         })
-                            self.stats.llm_classified += 1
-                            tier = "macro" if sev in ("critical", "high") else "micro"
-                            self._llm_calls_by_tier[tier] += 1
-                            self._llm_seconds_by_tier[tier] += ms / 1000.0
+                            if sig.get("_value_rule"):
+                                self.stats.value_rule_classified += 1
+                            else:
+                                self.stats.llm_classified += 1
+                                tier = "macro" if sev in ("critical", "high") else "micro"
+                                self._llm_calls_by_tier[tier] += 1
+                                self._llm_seconds_by_tier[tier] += ms / 1000.0
 
                             self._llm_results.append({
                                 "signal_type": sig["signal_type"],
@@ -2853,6 +2922,10 @@ class CascadeBridge(LifecycleControls):
         stats["llm_peak_inflight"] = self._llm_peak_inflight
         stats["llm_max_inflight"] = self._llm_max_inflight
         stats['state_snapshot_healthy'] = self._state_healthy
+        if self._value_rule_agent is not None:
+            stats['value_rule_revision'] = self._value_rule_agent.revision
+            stats['value_rule_fires'] = dict(
+                sorted(self._value_rule_agent.fires.items(), key=lambda x: -x[1]))
         stats['classifier_work_recovery'] = (
             'sqlite_replay' if self._durable_queue is not None
             else 'terminal_receipts_on_restart' if self._state_file
