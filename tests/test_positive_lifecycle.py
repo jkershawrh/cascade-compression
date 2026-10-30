@@ -277,7 +277,10 @@ def test_failed_replace_preserves_snapshot_and_is_observable(bridge):
 
 
 def test_restart_receipt_retention_is_bounded_and_evictions_visible(bridge, monkeypatch):
-    signals = [Signal(signal_type='synthetic',severity='low') for _ in range(3)]
+    # Distinct content keeps three separate queue entries; identical signals
+    # would legitimately coalesce into one entry (one restart receipt).
+    signals = [Signal(signal_type='synthetic', severity='low',
+                      content={'value': i}) for i in range(3)]
     bridge._enqueue_llm_signals(signals)
     monkeypatch.setenv('CASCADE_CLASSIFIER_TERMINAL_RECEIPTS_MAX','2')
     again = CascadeBridge()

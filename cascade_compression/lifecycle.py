@@ -276,6 +276,11 @@ class LifecycleControls:
 
         Receipts name each work/observation ID and its previous phase. This is
         terminal accounting rather than automatic replay or exactly-once work.
+
+        Work recovered from the durable classification spool is exempt: it is
+        replayed at-least-once, so it must not also be terminal. Its prior
+        dispatch (if it was in flight) is un-counted so per-signal accounting
+        stays reconciled once it is dispatched again.
         """
         if not work:
             return
@@ -285,11 +290,20 @@ class LifecycleControls:
                 if type(value) is not int or value < 0:
                     raise ValueError('invalid classifier accounting snapshot')
                 setattr(self, '_llm_accounting_' + name, value)
+            self._accounting_restored_from_snapshot = True
             self._classifier_terminal_receipts = list(work.get('terminal_receipts', []))
             self._classifier_terminal_evicted = work.get('terminal_receipts_evicted', 0)
             seen = {receipt['work_id'] for receipt in self._classifier_terminal_receipts}
             for entry in work.get('outstanding', []):
                 identifier = entry['work_id']
+                if identifier in self._durable_recovered_ids:
+                    # The spool owns replay for this work item.
+                    self._durable_recovered_accounted.add(identifier)
+                    if entry.get('phase') == 'inflight':
+                        self._llm_accounting_dispatched = max(
+                            0, self._llm_accounting_dispatched - 1,
+                        )
+                    continue
                 if identifier not in seen:
                     outcome = 'dropped' if entry.get('phase') == 'queued' else 'failed'
                     self._classifier_terminal_receipts.append(dict(

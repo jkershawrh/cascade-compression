@@ -16,7 +16,7 @@ import threading
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from uuid import UUID, uuid4
 
 from .protocol import Signal
@@ -177,6 +177,10 @@ class Memory:
     last_modified_at: Optional[str] = None
     last_consolidated_at: Optional[str] = None
     analysis: Optional[Dict[str, Any]] = None
+    # Classification lifecycle provenance (classification_status,
+    # classification_backend, classified_at). Advisory evidence only —
+    # never suppression authority.
+    evidence: Dict[str, Any] = field(default_factory=dict)
     verification: MemoryVerification = field(default_factory=MemoryVerification)
     # Exact context reviewed by verify_memory; missing legacy bindings cannot
     # be upgraded implicitly by restore, similarity, or caller assertions.
@@ -228,6 +232,7 @@ class Memory:
             "last_modified_at": self.last_modified_at,
             "last_consolidated_at": self.last_consolidated_at,
             "analysis": self.analysis,
+            "evidence": deepcopy(self.evidence) or {},
             "verification": self.verification.to_dict(),
             "verification_context_hash": self.verification_context_hash,
         }
@@ -264,6 +269,7 @@ class Memory:
             last_modified_at=d.get("last_modified_at"),
             last_consolidated_at=d.get("last_consolidated_at"),
             analysis=d.get("analysis"),
+            evidence=deepcopy(d.get("evidence")) or {},
             verification=MemoryVerification.from_dict(d.get("verification")),
             verification_context_hash=d.get("verification_context_hash", ""),
         )
@@ -386,6 +392,9 @@ class MemoryArchive:
         self._rejection_set: List[str] = []
         self._rejection_max = max_capacity * 2
         self._decay_config = None
+        # Observability consumers of newly federated memories (e.g. the
+        # durable digest). Listener failures must never block the archive.
+        self._federated_listeners: List[Callable[["Memory"], None]] = []
 
     @property
     def size(self) -> int:
@@ -757,8 +766,19 @@ class MemoryArchive:
                 event_type="federated",
                 details={"source_instance": source_instance},
             ))
+            for listener in self._federated_listeners:
+                try:
+                    # Notification/observability consumers must never block
+                    # import.
+                    listener(memory)
+                except Exception:
+                    pass
 
         return imported
+
+    def add_federated_listener(self, listener: Callable[["Memory"], None]) -> None:
+        """Observe newly accepted federated memories (not dedup reinforcements)."""
+        self._federated_listeners.append(listener)
 
     def add_priming_window(self, window: PrimingWindow,
                            max_windows: int = 10) -> None:

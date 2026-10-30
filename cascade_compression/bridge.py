@@ -19,7 +19,7 @@ from dataclasses import asdict, dataclass
 from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from .cascade.agents import default_agents, DeduplicateAgent
 from .cascade.corpus_analyzer import CorpusAnalyzer
@@ -32,7 +32,10 @@ from .cascade.protocol import Signal, llm_complete
 from .cascade.protocol import Outcome
 from .cascade.triage import ExactRepeatTriage
 from .classifier import SERIALIZER_REVISION, classifier_from_environment, serialize_signal
-from .durable_queue import DURABLE_QUEUE_OVERFLOW_POLICY, DurableLedgerQueue
+from .durable_queue import (
+    DURABLE_QUEUE_OVERFLOW_POLICY, DurableLedgerQueue, DurableQueue,
+    sanitize_payload,
+)
 from .lifecycle import LifecycleControls, REVISION, atomic_snapshot, valid_time
 
 log = logging.getLogger(__name__)
@@ -315,6 +318,12 @@ class CascadeBridge(LifecycleControls):
             256, int(os.getenv("CASCADE_LLM_CONTENT_BYTES", str(16 * 1024)))
         )
         self._llm_buffer_bytes = 0
+        self._llm_coalescing_enabled = os.getenv(
+            "CASCADE_LLM_COALESCE", "1",
+        ).lower() not in {"0", "false", "no"}
+        self._llm_coalesce_index: Dict[str, dict] = {}
+        self._llm_coalesced = 0
+        self._llm_coalesced_by_type: Dict[str, int] = defaultdict(int)
         self._llm_priority_buffer: list = []
         self._llm_priority_max_buffer = max(
             1, int(os.getenv("CASCADE_LLM_PRIORITY_BUFFER", "2000"))
@@ -329,6 +338,13 @@ class CascadeBridge(LifecycleControls):
         self._llm_payloads_truncated = 0
         self._llm_batch_size = int(os.getenv("CASCADE_LLM_BATCH", "500"))
         self._llm_max_concurrent = int(os.getenv("CASCADE_LLM_THREADS", "3"))
+        self._llm_max_inflight = max(
+            1, int(os.getenv("CASCADE_LLM_MAX_INFLIGHT", "1")),
+        )
+        self._llm_slots = threading.BoundedSemaphore(self._llm_max_inflight)
+        self._llm_inflight = 0
+        self._llm_peak_inflight = 0
+        self._llm_inflight_lock = threading.Lock()
         self._llm_results: list = []
         self._llm_active_threads = 0
         self._llm_lock = threading.Lock()
@@ -413,6 +429,45 @@ class CascadeBridge(LifecycleControls):
         self._contexts_lock = threading.RLock()
         self._pending_memory_ids: Dict[str, Any] = {}
         self._pending_memory_lock = threading.Lock()
+        # Durable classification-work spool (opt-in via CASCADE_LLM_QUEUE_FILE).
+        # Attributes exist even when disabled so queue paths stay uniform.
+        self._durable_queue = None
+        self._durable_dirty: Dict[str, Any] = {}
+        self._durable_persisted_ids: set = set()
+        self._durable_staged_entries: list = []
+        self._durable_recovered_ids: set = set()
+        self._durable_recovered_accounted: set = set()
+        self._accounting_restored_from_snapshot = False
+        self._durable_memory_checkpoint_healthy = True
+        self._durable_memory_checkpoint_failures = 0
+
+        # The spool must be read before the state snapshot so recovered
+        # work IDs are known when interrupted classifier work is settled:
+        # durably spooled work is replayed, everything else stays terminal.
+        queue_file = os.getenv("CASCADE_LLM_QUEUE_FILE", "")
+        if queue_file:
+            self._durable_queue = DurableQueue(
+                queue_file,
+                max_entries=int(
+                    os.getenv("CASCADE_LLM_QUEUE_MAX_ENTRIES", "15000")
+                ),
+                max_bytes=int(
+                    os.getenv(
+                        "CASCADE_LLM_QUEUE_MAX_BYTES", str(256 * 1024 * 1024),
+                    )
+                ),
+                ttl_seconds=int(
+                    os.getenv("CASCADE_LLM_QUEUE_TTL_SECONDS", "86400")
+                ),
+            )
+            try:
+                for entry in self._durable_queue.restore():
+                    self._durable_persisted_ids.add(entry["_work_id"])
+                    self._durable_recovered_ids.add(entry["_work_id"])
+                    self._durable_staged_entries.append(entry)
+            except Exception:
+                self._durable_queue.close()
+                raise
 
         self._restore_state()
         if self._ledger_url and self._ledger_receipt_pending_count():
@@ -519,6 +574,9 @@ class CascadeBridge(LifecycleControls):
                     capacity=self.memory_archive._max_capacity,
                 )
 
+        # Checkpoint classification memories before queue admission so a
+        # durable spool entry can never reference an unpersisted memory.
+        self._checkpoint_classification_memories()
         if not self._enqueue_llm_signals(cascade_result.remaining):
             return {
                 'enabled': False, 'accepted': False, 'durable_acceptance': False,
@@ -611,9 +669,13 @@ class CascadeBridge(LifecycleControls):
             for sig in signals:
                 self._llm_accounting_enqueued += 1
                 content, truncated = self._compact_llm_content(sig.content)
+                if self._durable_queue is not None:
+                    content = sanitize_payload(content)
+                now = datetime.now(timezone.utc).isoformat()
+                signal_id = str(sig.signal_id)
                 entry = {
                     "_work_id": str(uuid4()),
-                    "signal_id": str(sig.signal_id),
+                    "signal_id": signal_id,
                     "signal_type": sig.signal_type,
                     "severity": sig.severity,
                     "namespace": sig.namespace,
@@ -621,18 +683,55 @@ class CascadeBridge(LifecycleControls):
                     "cluster": sig.cluster,
                     "labels": dict(sig.labels or {}),
                     "content": content,
+                    "_signal_ids": [signal_id],
+                    "_signal_ids_bytes": len(signal_id.encode("utf-8")) + 16,
+                    "_enqueued_at": now,
                 }
                 entry["_queue_bytes"] = self._estimate_llm_entry_bytes(entry)
                 if sig.severity in {"critical", "high"}:
                     self._llm_priority_buffer.append(entry)
                     self._llm_priority_buffer_bytes += entry["_queue_bytes"]
                 else:
+                    if self._llm_coalescing_enabled:
+                        key = self._llm_coalesce_key(entry)
+                        existing = self._llm_coalesce_index.get(key)
+                        if existing is not None:
+                            # Same semantic signal is already queued for
+                            # classification: one LLM call can answer for
+                            # every occurrence, so fold this signal into the
+                            # existing entry instead of enqueueing a new one.
+                            old_size = self._entry_queue_bytes(existing)
+                            aggregation = existing["content"].setdefault(
+                                "_aggregation", {
+                                    "occurrence_count": 1,
+                                    "first_seen": existing.get("_enqueued_at", now),
+                                },
+                            )
+                            aggregation["occurrence_count"] += 1
+                            aggregation["last_seen"] = now
+                            existing["_signal_ids"].append(signal_id)
+                            existing["_signal_ids_bytes"] = existing.get(
+                                "_signal_ids_bytes", 0,
+                            ) + len(signal_id.encode("utf-8")) + 16
+                            existing.pop("_queue_bytes", None)
+                            new_size = self._entry_queue_bytes(existing)
+                            self._llm_buffer_bytes += new_size - old_size
+                            self._llm_coalesced += 1
+                            self._llm_coalesced_by_type[sig.signal_type] += 1
+                            if truncated:
+                                self._llm_payloads_truncated += 1
+                            self._mark_durable_locked(existing)
+                            continue
+                        entry["_coalesce_key"] = key
+                        self._llm_coalesce_index[key] = entry
                     self._llm_buffer.append(entry)
                     self._llm_buffer_bytes += entry["_queue_bytes"]
                 if truncated:
                     self._llm_payloads_truncated += 1
+                self._mark_durable_locked(entry)
             self._enforce_llm_buffer_limit_locked()
             self._enforce_llm_priority_limit_locked()
+            self._flush_durable_locked()
         if self._state_file:
             accepted = self._save_state()
             if not accepted:
@@ -642,10 +741,32 @@ class CascadeBridge(LifecycleControls):
         return True
 
     def _dispatch_llm_batches(self) -> None:
-        if not self._classification_dispatch_enabled():
+        if (not self._classification_dispatch_enabled()
+                or not self._durable_memory_checkpoint_healthy):
             return
         while True:
             with self._llm_queue_lock:
+                try:
+                    # Reclaim expired rows before retrying a capacity-blocked write.
+                    self._expire_durable_locked()
+                except Exception:
+                    if self._durable_queue is not None:
+                        self._durable_queue.healthy = False
+                        self._durable_queue.failures += 1
+                    log.error("Durable classification queue expiry failed; dispatch paused")
+                    return
+                if not self._flush_durable_locked():
+                    return
+                # Newly committed RAM work may itself have aged past TTL while
+                # storage was unavailable. Do not dispatch it as fresh work.
+                try:
+                    self._expire_durable_locked()
+                except Exception:
+                    if self._durable_queue is not None:
+                        self._durable_queue.healthy = False
+                        self._durable_queue.failures += 1
+                    log.error("Durable classification queue expiry failed; dispatch paused")
+                    return
                 if not self._llm_priority_buffer and not self._llm_buffer:
                     return
                 with self._llm_lock:
@@ -666,12 +787,20 @@ class CascadeBridge(LifecycleControls):
                 if normal_count:
                     normal = list(self._llm_buffer[:normal_count])
                     self._llm_buffer = self._llm_buffer[normal_count:]
+                    for sig in normal:
+                        key = sig.get("_coalesce_key")
+                        if key and self._llm_coalesce_index.get(key) is sig:
+                            self._llm_coalesce_index.pop(key, None)
                     self._llm_buffer_bytes = max(
                         0, self._llm_buffer_bytes
                         - sum(self._entry_queue_bytes(sig) for sig in normal),
                     )
                     batch.extend(normal)
-                self._llm_accounting_dispatched += len(batch)
+                dispatched_signals = sum(
+                    len(sig.get("_signal_ids") or [sig.get("signal_id", "")])
+                    for sig in batch
+                )
+                self._llm_accounting_dispatched += dispatched_signals
                 for entry in batch:
                     self._classifier_inflight[entry['_work_id']] = entry
             if self._state_file and not self._save_state():
@@ -682,7 +811,10 @@ class CascadeBridge(LifecycleControls):
                     self._llm_buffer[:0] = [e for e in batch if e.get('severity') not in {'critical', 'high'}]
                     self._llm_priority_buffer_bytes = sum(self._entry_queue_bytes(e) for e in self._llm_priority_buffer)
                     self._llm_buffer_bytes = sum(self._entry_queue_bytes(e) for e in self._llm_buffer)
-                    self._llm_accounting_dispatched -= len(batch)
+                    self._llm_accounting_dispatched -= dispatched_signals
+                    # Re-queued entries must become coalesce targets again;
+                    # their index entries were dropped at dispatch.
+                    self._rebuild_llm_coalesce_index_locked()
                 with self._llm_lock:
                     self._llm_active_threads -= 1
                 return
@@ -691,15 +823,16 @@ class CascadeBridge(LifecycleControls):
                     target=self._run_llm, args=(batch,), daemon=True,
                 ).start()
             except Exception as exc:
+                # The batch has already left both queues. Treat failure to
+                # create its worker as a terminal classifier failure so the
+                # original-signal accounting cannot remain falsely in-flight.
+                # Terminal-failed work is deleted from the durable spool:
+                # cross-restart accounting must not replay counted outcomes.
                 with self._llm_queue_lock:
-                    self._llm_accounting_failed += len(batch)
+                    self._llm_accounting_failed += dispatched_signals
                     for entry in batch:
                         self._classifier_inflight.pop(entry['_work_id'], None)
-                with self._pending_memory_lock:
-                    for entry in batch:
-                        self._pending_memory_ids.pop(
-                            str(entry.get("signal_id", "")), None,
-                        )
+                    self._discard_pending_memory_ids(batch, status="failed")
                 with self._llm_lock:
                     self._llm_active_threads -= 1
                 log.error("Could not start classifier worker: %s", str(exc)[:80])
@@ -715,15 +848,163 @@ class CascadeBridge(LifecycleControls):
         with self._pending_memory_lock:
             self._pending_memory_ids.pop(str(sig.get("signal_id", "")), None)
 
+    def _set_entry_classification_status(self, entry, status):
+        """Mirror a queue outcome onto the linked memory evidence."""
+        if self.memory_archive is None:
+            return
+        with self._pending_memory_lock:
+            memory_ids = {
+                self._pending_memory_ids.get(str(identifier))
+                for identifier in entry.get("_signal_ids") or [entry.get("signal_id", "")]
+            }
+        for memory_id in memory_ids - {None}:
+            memory = self.memory_archive.get(memory_id)
+            if memory:
+                memory.evidence["classification_status"] = status
+                memory.last_modified_at = datetime.now(timezone.utc).isoformat()
+
+    def _discard_pending_memory_ids(self, entries: list, *, delete_work=True,
+                                    status="dropped") -> None:
+        """Retire queue entries and their memory linkage consistently.
+
+        Memory status is recorded, durable work is optionally deleted, and
+        pending signal→memory links are removed so a later classification
+        cannot write back to an already-discarded observation.
+        """
+        for entry in entries:
+            self._set_entry_classification_status(entry, status)
+            if delete_work:
+                self._mark_durable_locked(entry, delete=True)
+            with self._pending_memory_lock:
+                for signal_id in entry.get("_signal_ids") or [entry.get("signal_id", "")]:
+                    self._pending_memory_ids.pop(str(signal_id), None)
+
+    def _checkpoint_classification_memories(self):
+        """Checkpoint before queue admission/ack, outside the queue lock.
+
+        Opt-in only: batching avoids one full archive write per classified signal.
+        A failed checkpoint leaves durable work available for restart recovery.
+        """
+        if self._durable_queue is None or not self._state_file:
+            return True
+        healthy = self._save_state()
+        self._durable_memory_checkpoint_healthy = bool(healthy)
+        if not healthy:
+            self._durable_memory_checkpoint_failures += 1
+        return bool(healthy)
+
+    def _mark_durable_locked(self, entry, *, delete=False):
+        """Stage a queue-entry upsert or deletion for the durable spool."""
+        if self._durable_queue is None:
+            return
+        identifier = entry.get("_work_id")
+        if not identifier:
+            return
+        if delete and identifier not in self._durable_persisted_ids:
+            self._durable_dirty.pop(identifier, None)
+            return
+        if not delete:
+            with self._pending_memory_lock:
+                entry["_memory_ids"] = {
+                    signal_id: str(self._pending_memory_ids[signal_id])
+                    for signal_id in entry.get("_signal_ids", [])
+                    if signal_id in self._pending_memory_ids
+                }
+        self._durable_dirty[identifier] = None if delete else entry
+
+    def _flush_durable_locked(self):
+        """Commit staged spool changes; failure stops dispatch, never RAM fallback."""
+        if self._durable_queue is None or not self._durable_dirty:
+            return True
+        if self._durable_queue.apply(self._durable_dirty):
+            for identifier, entry in self._durable_dirty.items():
+                if entry is None:
+                    self._durable_persisted_ids.discard(identifier)
+                else:
+                    self._durable_persisted_ids.add(identifier)
+            self._durable_dirty.clear()
+            return True
+        return False
+
+    def _expire_durable_locked(self):
+        """Drop TTL-expired spool rows and their queued counterparts."""
+        if self._durable_queue is None:
+            return
+        # Failure must stop dispatch; it must not silently fall back to RAM.
+        expired = self._durable_queue.expire()
+        self._durable_persisted_ids.difference_update(expired)
+        self._durable_queue.healthy = True
+        for name, byte_name in (("_llm_buffer", "_llm_buffer_bytes"),
+                                ("_llm_priority_buffer", "_llm_priority_buffer_bytes")):
+            entries = getattr(self, name)
+            dropped = [e for e in entries if e.get("_work_id") in expired]
+            kept = [e for e in entries if e.get("_work_id") not in expired]
+            setattr(self, name, kept)
+            setattr(self, byte_name, sum(self._entry_queue_bytes(e) for e in kept))
+            self._discard_pending_memory_ids(dropped, status="expired")
+            self._llm_accounting_dropped += sum(
+                len(e.get("_signal_ids") or [e.get("signal_id", "")]) for e in dropped
+            )
+            self._llm_dropped += len(dropped)
+        self._rebuild_llm_coalesce_index_locked()
+
+    def _complete_durable_restore(self):
+        """Recover spooled work without increasing inference concurrency.
+
+        Restored entries re-enter the RAM queues at their original priority.
+        Entries the state snapshot already counted keep their accounting;
+        entries the snapshot never saw (spool ahead of a failed snapshot)
+        are counted as fresh admissions so per-signal accounting reconciles.
+        """
+        for entry in self._durable_staged_entries:
+            signal_ids = entry.get("_signal_ids") or [entry.get("signal_id", "")]
+            if (not self._accounting_restored_from_snapshot
+                    or entry["_work_id"] not in self._durable_recovered_accounted):
+                self._llm_accounting_enqueued += len(signal_ids)
+            with self._pending_memory_lock:
+                for signal_id, memory_id in (entry.get("_memory_ids") or {}).items():
+                    try:
+                        memory_id = UUID(memory_id)
+                    except (ValueError, TypeError, AttributeError):
+                        continue
+                    if self.memory_archive and self.memory_archive.get(memory_id):
+                        self._pending_memory_ids[str(signal_id)] = memory_id
+            entry.pop("_queue_bytes", None)
+            if entry.get("severity") in {"high", "critical"}:
+                self._llm_priority_buffer.append(entry)
+                self._llm_priority_buffer_bytes += self._entry_queue_bytes(entry)
+            else:
+                self._llm_buffer.append(entry)
+                self._llm_buffer_bytes += self._entry_queue_bytes(entry)
+        self._durable_staged_entries = []
+        with self._llm_queue_lock:
+            self._rebuild_llm_coalesce_index_locked()
+            self._enforce_llm_buffer_limit_locked()
+            self._enforce_llm_priority_limit_locked()
+            self._flush_durable_locked()
+
+
     def _estimate_llm_entry_bytes(self, entry: dict) -> int:
         """Estimate retained queue bytes, including container overhead."""
-        serializable = {k: v for k, v in entry.items() if k != "_queue_bytes"}
+        serializable = {
+            k: v for k, v in entry.items()
+            if k not in {
+                "_queue_bytes", "_coalesce_key", "_signal_ids", "_enqueued_at",
+                "_signal_ids_bytes",
+            }
+        }
         try:
             encoded = json.dumps(
                 serializable, separators=(",", ":"), ensure_ascii=False,
                 default=str,
             ).encode("utf-8")
-            return len(encoded) + 256
+            internal_bytes = entry.get("_signal_ids_bytes")
+            if not isinstance(internal_bytes, int) or internal_bytes < 0:
+                internal_bytes = sum(
+                    len(str(signal_id).encode("utf-8")) + 16
+                    for signal_id in entry.get("_signal_ids", [])
+                )
+            return len(encoded) + internal_bytes + 320
         except (TypeError, ValueError):
             return len(str(serializable).encode("utf-8")) + 256
 
@@ -733,6 +1014,65 @@ class CascadeBridge(LifecycleControls):
             size = self._estimate_llm_entry_bytes(entry)
             entry["_queue_bytes"] = size
         return size
+
+    @staticmethod
+    def _stable_coalesce_value(value: Any) -> Any:
+        volatile = {
+            "age", "createdat", "creationtimestamp", "firstseen", "generatedat",
+            "lastobserved", "lastseen", "lasttransitiontime", "managedfields",
+            "observedat", "resourceversion", "timestamp", "aggregation",
+        }
+        if isinstance(value, dict):
+            return {
+                str(key): CascadeBridge._stable_coalesce_value(item)
+                for key, item in sorted(value.items(), key=lambda pair: str(pair[0]))
+                if str(key).lower().replace("_", "") not in volatile
+            }
+        if isinstance(value, (list, tuple)):
+            return [CascadeBridge._stable_coalesce_value(item) for item in value]
+        if value is None or isinstance(value, (bool, int, float, str)):
+            return value
+        return str(value)
+
+    def _llm_coalesce_key(self, entry: dict) -> str:
+        payload = {
+            "signal_type": entry.get("signal_type", ""),
+            "severity": entry.get("severity", ""),
+            "source": entry.get("source", ""),
+            "namespace": entry.get("namespace", ""),
+            "cluster": entry.get("cluster", ""),
+            "content": self._stable_coalesce_value(entry.get("content", {})),
+            "labels": self._stable_coalesce_value(entry.get("labels", {})),
+        }
+        encoded = json.dumps(
+            payload, sort_keys=True, separators=(",", ":"), default=str,
+        ).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+    def _rebuild_llm_coalesce_index_locked(self) -> None:
+        self._llm_coalesce_index = {
+            sig["_coalesce_key"]: sig
+            for sig in self._llm_buffer
+            if sig.get("_coalesce_key")
+        }
+
+    def _llm_oldest_queue_age_seconds(self) -> float:
+        with self._llm_queue_lock:
+            timestamps = [
+                entry.get("_enqueued_at")
+                for entry in self._llm_priority_buffer + self._llm_buffer
+                if entry.get("_enqueued_at")
+            ]
+        if not timestamps:
+            return 0.0
+        try:
+            oldest = min(datetime.fromisoformat(value) for value in timestamps)
+            return max(
+                0.0,
+                (datetime.now(timezone.utc) - oldest).total_seconds(),
+            )
+        except (TypeError, ValueError):
+            return 0.0
 
     def _compact_llm_content(self, content: Any) -> tuple:
         """Retain only bounded classification evidence in the async queue."""
@@ -834,11 +1174,14 @@ class CascadeBridge(LifecycleControls):
         dropped = [s for s in self._llm_buffer if id(s) not in kept_ids]
         self._llm_buffer = kept
         self._llm_buffer_bytes = kept_bytes
+        self._rebuild_llm_coalesce_index_locked()
+        self._discard_pending_memory_ids(dropped)
         self._llm_dropped += len(dropped)
         for sig in dropped:
             self._llm_dropped_by_severity[sig.get("severity", "unknown")] += 1
-            self._llm_accounting_dropped += 1
-            self._forget_pending_memory(sig)
+            self._llm_accounting_dropped += len(
+                sig.get("_signal_ids") or [sig.get("signal_id", "")]
+            )
 
         self._emit_meta(
             "meta_llm_queue_drop", "critical",
@@ -878,12 +1221,14 @@ class CascadeBridge(LifecycleControls):
         ]
         self._llm_priority_buffer = kept
         self._llm_priority_buffer_bytes = kept_bytes
+        self._discard_pending_memory_ids(dropped)
         self._llm_priority_dropped += len(dropped)
         self._llm_dropped += len(dropped)
         for sig in dropped:
             self._llm_dropped_by_severity[sig.get("severity", "unknown")] += 1
-            self._llm_accounting_dropped += 1
-            self._forget_pending_memory(sig)
+            self._llm_accounting_dropped += len(
+                sig.get("_signal_ids") or [sig.get("signal_id", "")]
+            )
         self._emit_meta(
             "meta_llm_priority_overflow", "critical",
             f"Protected LLM queue overflowed by {len(dropped)} signals",
@@ -1305,6 +1650,20 @@ class CascadeBridge(LifecycleControls):
             sig['_qualification_bindings'] = self._qualification_bindings(sig)
         return self.classifier.classify(sig, client)
 
+    def _classify_one_limited(self, sig, client):
+        """Classify within the bridge-wide semantic admission budget."""
+        with self._llm_slots:
+            with self._llm_inflight_lock:
+                self._llm_inflight += 1
+                self._llm_peak_inflight = max(
+                    self._llm_peak_inflight, self._llm_inflight,
+                )
+            try:
+                return self._classify_one(sig, client)
+            finally:
+                with self._llm_inflight_lock:
+                    self._llm_inflight -= 1
+
     def _build_evidence_bundle(self, sig: dict) -> dict:
         bundle = {"signal": sig, "related_memories": [], "causal_chain": [], "entity_context": []}
         if not self.memory_archive:
@@ -1434,16 +1793,22 @@ class CascadeBridge(LifecycleControls):
 
     def _run_llm(self, signals):
         accounted_entries: set[int] = set()
+        completed_entries: list = []
 
         def record_outcome(entry: dict, succeeded: bool) -> None:
             entry_id = id(entry)
             if entry_id in accounted_entries:
                 return
+            signal_count = len(
+                entry.get("_signal_ids") or [entry.get("signal_id", "")]
+            )
             with self._llm_queue_lock:
                 if succeeded:
-                    self._llm_accounting_succeeded += 1
+                    self._llm_accounting_succeeded += signal_count
+                    completed_entries.append(entry)
                 else:
-                    self._llm_accounting_failed += 1
+                    self._llm_accounting_failed += signal_count
+                    self._set_entry_classification_status(entry, "failed")
                 self._classifier_inflight.pop(entry.get('_work_id'), None)
             accounted_entries.add(entry_id)
 
@@ -1454,14 +1819,25 @@ class CascadeBridge(LifecycleControls):
             llm_workers = int(os.getenv("CASCADE_LLM_WORKERS", "8"))
             with httpx.Client(timeout=60) as client:
                 with ThreadPoolExecutor(max_workers=llm_workers) as pool:
-                    futures = {pool.submit(self._classify_one, sig, client): sig for sig in signals}
+                    futures = {
+                        pool.submit(self._classify_one_limited, sig, client): sig
+                        for sig in signals
+                    }
                     for future in as_completed(futures):
                         orig_sig = futures[future]
                         succeeded = False
                         with self._pending_memory_lock:
-                            memory_id = self._pending_memory_ids.pop(
-                                str(orig_sig.get("signal_id", "")), None,
-                            )
+                            # Peek, do not pop: a failed classification keeps
+                            # its memory linkage so durable replay can re-link.
+                            memory_ids = {
+                                str(signal_id): self._pending_memory_ids.get(
+                                    str(signal_id),
+                                )
+                                for signal_id in (
+                                    orig_sig.get("_signal_ids")
+                                    or [orig_sig.get("signal_id", "")]
+                                )
+                            }
                         try:
                             classification = future.result()
                             if not classification.ok:
@@ -1473,11 +1849,25 @@ class CascadeBridge(LifecycleControls):
                             ms = classification.latency_ms
                             model = classification.model_revision
                             sev = sig.get("severity", "medium")
-                            if memory_id and self.memory_archive:
-                                memory = self.memory_archive.get(memory_id)
-                                if memory:
-                                    memory.classification = ans
-                                    memory.last_modified_at = datetime.now(timezone.utc).isoformat()
+                            with self._pending_memory_lock:
+                                for signal_id in memory_ids:
+                                    self._pending_memory_ids.pop(str(signal_id), None)
+                            for signal_id, memory_id in memory_ids.items():
+                                if memory_id and self.memory_archive:
+                                    memory = self.memory_archive.get(memory_id)
+                                    if memory:
+                                        memory.classification = ans
+                                        memory.last_modified_at = datetime.now(
+                                            timezone.utc
+                                        ).isoformat()
+                                        memory.evidence.update({
+                                            "classification_status": "classified",
+                                            "classification_backend": (
+                                                classification.authoritative_backend
+                                                or classification.backend
+                                            ),
+                                            "classified_at": memory.last_modified_at,
+                                        })
                             self.stats.llm_classified += 1
                             tier = "macro" if sev in ("critical", "high") else "micro"
                             self._llm_calls_by_tier[tier] += 1
@@ -1491,6 +1881,9 @@ class CascadeBridge(LifecycleControls):
                                 "tier": tier,
                                 "classifier_backend": classification.authoritative_backend,
                                 "classifier_mode": self.classifier.mode,
+                                "occurrence_count": len(
+                                    sig.get("_signal_ids") or [sig.get("signal_id", "")]
+                                ),
                                 "semantic_margin": (
                                     classification.alternatives.get("semantic").margin
                                     if classification.alternatives.get("semantic") else None
@@ -1533,9 +1926,24 @@ class CascadeBridge(LifecycleControls):
             for entry in signals:
                 record_outcome(entry, False)
         finally:
+            # Acknowledge durable work only after the memory checkpoint, so a
+            # crash between classification and ack replays (at-least-once)
+            # instead of losing the writeback.
+            checkpointed = (
+                not completed_entries
+                or self._checkpoint_classification_memories()
+            )
+            with self._llm_queue_lock:
+                if checkpointed:
+                    for entry in completed_entries:
+                        self._mark_durable_locked(entry, delete=True)
+                self._flush_durable_locked()
             with self._llm_lock:
                 self._llm_active_threads -= 1
             self._save_state()
+            # Keep draining queued work after a batch completes. Previously,
+            # the next batch was only dispatched by a later collector ingest,
+            # leaving healthy inference capacity idle between polling bursts.
             self._dispatch_llm_batches()
 
     def _queue_shadow_samples(self, cascade_result, cascade_signals):
@@ -2207,6 +2615,10 @@ class CascadeBridge(LifecycleControls):
 
     def _restore_state(self):
         if not self._state_file or not os.path.exists(self._state_file):
+            # No snapshot to reconcile against: spooled work counts as fresh
+            # admissions for this process (production replay semantics).
+            if self._durable_queue is not None:
+                self._complete_durable_restore()
             return
         try:
             with open(self._state_file) as f:
@@ -2324,6 +2736,11 @@ class CascadeBridge(LifecycleControls):
                 self.memory_archive = MemoryArchive.from_dict(memory_data)
 
             self._promote_orphaned_noise_types()
+            # Complete the spool restore before persisting interrupted-work
+            # receipts: the snapshot's outstanding list must reflect that the
+            # spool — not the snapshot — is the authority for recovered work.
+            if self._durable_queue is not None:
+                self._complete_durable_restore()
             if state.get('classifier_work', {}).get('outstanding'):
                 if not self._save_state():
                     raise OSError('could not persist interrupted classifier-work receipts')
@@ -2340,6 +2757,10 @@ class CascadeBridge(LifecycleControls):
                     for s in self._contextual_suppressors: s.remove_noise_context(kind, context)
                 contexts.clear()
             self._qualification_evidence.clear()
+            if self._durable_queue is not None:
+                # The spool still owns this work even when the snapshot is
+                # unusable; classification must remain possible.
+                self._complete_durable_restore()
             log.warning("Failed to restore state: %s", e)
 
     def _promote_orphaned_noise_types(self):
@@ -2387,6 +2808,12 @@ class CascadeBridge(LifecycleControls):
                     setattr(self, timer_name, None)
         self._ledger_executor.shutdown(wait=False, cancel_futures=True)
         self._ledger_memory_executor.shutdown(wait=False, cancel_futures=True)
+        if self._durable_queue is not None:
+            self._durable_queue.close()
+
+    def save_state(self):
+        """Persist current bridge state after out-of-band mutations such as federation."""
+        self._save_state()
 
     def get_stats(self) -> Dict:
         stats = asdict(self.stats)
@@ -2412,12 +2839,32 @@ class CascadeBridge(LifecycleControls):
         stats["llm_priority_buffer_max_bytes"] = self._llm_priority_max_bytes
         stats["llm_priority_dropped"] = self._llm_priority_dropped
         stats["llm_payloads_truncated"] = self._llm_payloads_truncated
+        stats["llm_coalesced"] = self._llm_coalesced
+        stats["llm_coalesced_by_type"] = dict(
+            sorted(
+                self._llm_coalesced_by_type.items(),
+                key=lambda item: -item[1],
+            )[:20]
+        )
+        stats["llm_oldest_queue_age_seconds"] = round(
+            self._llm_oldest_queue_age_seconds(), 3,
+        )
+        stats["llm_inflight"] = self._llm_inflight
+        stats["llm_peak_inflight"] = self._llm_peak_inflight
+        stats["llm_max_inflight"] = self._llm_max_inflight
         stats['state_snapshot_healthy'] = self._state_healthy
-        stats['classifier_work_recovery'] = 'terminal_receipts_on_restart' if self._state_file else 'memory_only'
+        stats['classifier_work_recovery'] = (
+            'sqlite_replay' if self._durable_queue is not None
+            else 'terminal_receipts_on_restart' if self._state_file
+            else 'memory_only'
+        )
         stats['classifier_restart_terminal_receipts'] = len(self._classifier_terminal_receipts)
         stats['classifier_restart_terminal_receipts_evicted'] = self._classifier_terminal_evicted
         with self._llm_queue_lock:
-            queued = len(self._llm_buffer) + len(self._llm_priority_buffer)
+            queued = sum(
+                len(entry.get("_signal_ids") or [entry.get("signal_id", "")])
+                for entry in self._llm_buffer + self._llm_priority_buffer
+            )
             in_flight = (
                 self._llm_accounting_dispatched
                 - self._llm_accounting_succeeded
@@ -2446,6 +2893,22 @@ class CascadeBridge(LifecycleControls):
                     and accounted == self._llm_accounting_enqueued
                 ),
             }
+            stats["llm_durable_queue"] = (
+                self._durable_queue.stats() if self._durable_queue is not None
+                else {"enabled": False}
+            )
+            stats["llm_durable_queue"]["uncommitted_changes"] = len(self._durable_dirty)
+            stats["llm_durable_queue"]["memory_checkpoint_healthy"] = (
+                self._durable_memory_checkpoint_healthy
+            )
+            stats["llm_durable_queue"]["memory_checkpoint_failures"] = (
+                self._durable_memory_checkpoint_failures
+            )
+            if self._durable_queue is not None:
+                stats["llm_signal_outcomes_since_start"]["terminal_complete"] &= (
+                    self._durable_queue.healthy and not self._durable_dirty
+                    and stats["llm_durable_queue"]["pending_entries"] == 0
+                )
         stats["ledger_writes_dropped"] = self._ledger_writes_dropped
         stats["ledger_max_pending"] = self._ledger_max_pending
         receipt_pending = self._ledger_receipt_pending_count()
@@ -2574,15 +3037,25 @@ class CascadeBridge(LifecycleControls):
     def wait_for_llm(self, timeout_seconds: float = 60.0) -> bool:
         """Wait until replay AI work drains; return False when evidence is incomplete."""
         deadline = time.monotonic() + max(0.0, timeout_seconds)
-        while time.monotonic() < deadline:
+        while True:
             with self._llm_queue_lock:
                 queued = len(self._llm_buffer) + len(self._llm_priority_buffer)
             with self._llm_lock:
                 active = self._llm_active_threads
             if queued == 0 and active == 0:
-                return True
-            time.sleep(0.05)
-        return False
+                if self._durable_queue is None:
+                    return True
+                # Fail closed: uncommitted spool changes, surviving rows, or an
+                # unhealthy spool mean replay evidence is incomplete.
+                with self._llm_queue_lock:
+                    return (
+                        not self._durable_dirty
+                        and self._durable_queue.stats()["pending_entries"] == 0
+                        and self._durable_queue.healthy
+                    )
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(min(0.05, max(0.0, deadline - time.monotonic())))
 
     def get_route_ledger(self) -> list[dict]:
         """Return privacy-safe aggregate routes for a replay evidence artifact."""
@@ -2805,6 +3278,10 @@ class CascadeBridge(LifecycleControls):
             "buffer_size": len(self._llm_buffer) + len(self._llm_priority_buffer),
             "normal_buffer_size": len(self._llm_buffer),
             "priority_buffer_size": len(self._llm_priority_buffer),
+            "coalesced": self._llm_coalesced,
+            "oldest_queue_age_seconds": round(
+                self._llm_oldest_queue_age_seconds(), 3,
+            ),
             "running": self._llm_active_threads > 0,
         }
 

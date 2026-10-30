@@ -1,0 +1,153 @@
+{
+  "$defs": {
+    "Lesson": {
+      "additionalProperties": false,
+      "properties": {
+        "lesson_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Lesson Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 200,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "summary": {
+          "maxLength": 2000,
+          "minLength": 1,
+          "title": "Summary",
+          "type": "string"
+        },
+        "status": {
+          "default": "candidate",
+          "enum": [
+            "candidate",
+            "reviewed",
+            "rejected"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "reviewed_by": {
+          "default": "",
+          "maxLength": 200,
+          "title": "Reviewed By",
+          "type": "string"
+        },
+        "reviewed_at": {
+          "anyOf": [
+            {
+              "format": "date-time",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reviewed At"
+        },
+        "citations": {
+          "items": {
+            "$ref": "#/$defs/LessonCitation"
+          },
+          "maxItems": 50,
+          "minItems": 1,
+          "title": "Citations",
+          "type": "array"
+        }
+      },
+      "required": [
+        "lesson_id",
+        "title",
+        "summary",
+        "citations"
+      ],
+      "title": "Lesson",
+      "type": "object",
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "status"
+            ],
+            "properties": {
+              "status": {
+                "enum": [
+                  "reviewed",
+                  "rejected"
+                ]
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "reviewed_by",
+              "reviewed_at"
+            ],
+            "properties": {
+              "reviewed_by": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "reviewed_at": {
+                "type": "string",
+                "format": "date-time"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "LessonCitation": {
+      "additionalProperties": false,
+      "properties": {
+        "memory_id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "title": "Memory Id",
+          "type": "string"
+        },
+        "evidence_revision": {
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Evidence Revision",
+          "type": "string"
+        }
+      },
+      "required": [
+        "memory_id",
+        "evidence_revision"
+      ],
+      "title": "LessonCitation",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "lessons": {
+      "items": {
+        "$ref": "#/$defs/Lesson"
+      },
+      "maxItems": 1000,
+      "title": "Lessons",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schema_version",
+    "lessons"
+  ],
+  "title": "LessonCatalog",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "memory-lesson-catalog.json",
+  "description": "Operator-declared annotations; runtime also validates unique IDs, citation identity and non-future review times."
+}

@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cascade Memory Explorer</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --red: #ee0000;
+      --red-dark: #a60000;
+      --canvas: #151515;
+      --panel: #1f1f1f;
+      --panel-raised: #292929;
+      --line: #3d3d3d;
+      --text: #f5f5f5;
+      --muted: #b8bbbe;
+      --green: #3e8635;
+      --gold: #f0ab00;
+      --blue: #4394e5;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--canvas);
+      color: var(--text);
+      font: 15px/1.5 "Red Hat Text", "Helvetica Neue", Arial, sans-serif;
+    }
+    header {
+      border-top: 6px solid var(--red);
+      border-bottom: 1px solid var(--line);
+      background: #101010;
+      padding: 22px max(22px, 5vw);
+    }
+    .header-row, .section-heading, .answer-meta {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    h1, h2, h3 { font-family: "Red Hat Display", "Helvetica Neue", Arial, sans-serif; }
+    h1 { margin: 0; font-size: clamp(26px, 4vw, 38px); }
+    h2 { margin: 0; font-size: 23px; }
+    h3 { margin: 0 0 8px; font-size: 17px; }
+    p { margin: 7px 0; }
+    a { color: #fff; }
+    .eyebrow { color: #ff6b6b; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+    .muted { color: var(--muted); }
+    main { max-width: 1280px; margin: auto; padding: 28px; }
+    section { margin-bottom: 34px; }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 20px;
+    }
+    .summary-grid, .citation-grid, .metrics {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+      gap: 12px;
+    }
+    .summary-card, .citation, .metric {
+      background: var(--panel-raised);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 16px;
+    }
+    .summary-card { border-top: 3px solid var(--red); }
+    .metric .value { display: block; font-size: 25px; font-weight: 700; }
+    .metric .label { color: var(--muted); font-size: 13px; }
+    form { display: grid; gap: 14px; }
+    textarea, select, input {
+      width: 100%;
+      background: #101010;
+      color: var(--text);
+      border: 1px solid #6a6e73;
+      border-radius: 4px;
+      padding: 11px 12px;
+      font: inherit;
+    }
+    textarea { min-height: 108px; resize: vertical; }
+    textarea:focus, select:focus, input:focus { outline: 2px solid var(--blue); outline-offset: 1px; }
+    .form-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    label span { display: block; color: var(--muted); font-size: 13px; margin-bottom: 5px; }
+    .check { display: flex; align-items: center; gap: 8px; color: var(--muted); }
+    .check input { width: auto; }
+    button {
+      border: 0;
+      border-radius: 4px;
+      background: var(--red);
+      color: white;
+      padding: 11px 18px;
+      font: 700 15px/1 "Red Hat Text", Arial, sans-serif;
+      cursor: pointer;
+    }
+    button:hover { background: var(--red-dark); }
+    button:disabled { cursor: wait; opacity: .65; }
+    .secondary { background: transparent; border: 1px solid #8a8d90; }
+    .secondary:hover { background: #3d3d3d; }
+    .quick-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+    .quick-actions button { font-size: 13px; padding: 9px 12px; }
+    #answer { white-space: pre-wrap; font-size: 17px; }
+    .badge {
+      display: inline-block;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 9px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+    .badge.good { color: #b6f2ad; border-color: var(--green); }
+    .badge.warn { color: #ffe08a; border-color: var(--gold); }
+    .citation { border-left: 3px solid var(--blue); }
+    .citation-id { color: #9dc9f4; font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; word-break: break-all; }
+    .citation-meta { color: var(--muted); font-size: 13px; }
+    .error { color: #ff8a8a; }
+    .empty { padding: 30px; text-align: center; color: var(--muted); }
+    .privacy { border-left: 3px solid var(--gold); }
+    @media (max-width: 850px) {
+      main { padding: 18px; }
+      .form-grid { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-width: 520px) {
+      .form-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-row">
+      <div>
+        <div class="eyebrow">Cascade Compression</div>
+        <h1>Federated Memory Explorer</h1>
+        <p class="muted">Ask grounded questions and inspect the memories behind each answer.</p>
+      </div>
+      <a href="/memory-summary">Open aggregate briefing</a>
+    </div>
+  </header>
+  <main>
+    <section>
+      <div class="section-heading">
+        <div>
+          <h2>What the aggregate remembers</h2>
+          <p class="muted" id="summary-status">Loading retrieval summary…</p>
+        </div>
+        <button class="secondary" id="refresh" type="button">Refresh</button>
+      </div>
+      <div class="metrics" id="metrics"></div>
+      <div class="summary-grid" id="summaries"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Ask Cascade memory</h2>
+      <p class="muted">Answers are constrained to retrieved evidence. Open each citation to verify the result.</p>
+      <form id="rag-form">
+        <label>
+          <span>Question</span>
+          <textarea id="question" maxlength="2000" required placeholder="What recurring failures deserve attention, and what evidence supports that conclusion?"></textarea>
+        </label>
+        <div class="quick-actions">
+          <button class="secondary prompt" type="button" data-prompt="What are the strongest recurring operational risks?">Strongest risks</button>
+          <button class="secondary prompt" type="button" data-prompt="What failures appear repeatedly across sources?">Repeated failures</button>
+          <button class="secondary prompt" type="button" data-prompt="What important patterns should an operator review?">Needs review</button>
+          <button class="secondary prompt" type="button" data-prompt="What organizational knowledge is related to operational incidents?">Knowledge context</button>
+        </div>
+        <div class="form-grid">
+          <label><span>Time window</span><select id="period"><option value="all">All retained memories</option><option value="hour">Last hour</option><option value="today">Today</option><option value="yesterday">Yesterday</option><option value="week">Last seven days</option></select></label>
+          <label><span>Severity</span><select id="severity"><option value="">Any severity</option><option>critical</option><option>high</option><option>medium</option><option>low</option><option>info</option></select></label>
+          <label><span>Signal type</span><input id="signal-type" placeholder="Optional exact type"></label>
+          <label><span>Evidence count</span><select id="top-k"><option>5</option><option>10</option><option>15</option><option>20</option></select></label>
+        </div>
+        <label class="check"><input id="generate" type="checkbox" checked> Generate a concise answer with the configured model</label>
+        <div><button id="ask" type="submit">Ask memory</button></div>
+      </form>
+    </section>
+
+    <section id="result" hidden>
+      <div class="panel">
+        <div class="answer-meta">
+          <h2>Grounded answer</h2>
+          <div><span class="badge" id="backend"></span> <span class="badge" id="grounding"></span></div>
+        </div>
+        <p id="answer"></p>
+        <p class="error" id="generation-error"></p>
+      </div>
+      <h2 style="margin:22px 0 12px">Retrieved evidence</h2>
+      <div class="citation-grid" id="citations"></div>
+    </section>
+
+    <section class="panel privacy">
+      <h3>Privacy boundary</h3>
+      <p class="muted">The production-proof aggregate stores sanitized memory metadata. Answers can explain patterns, severity, timing, classification, source relationships, and memory strength. Original raw event text is not persisted unless an operator explicitly introduces an approved sanitized synopsis field.</p>
+    </section>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    const formatNumber = value => Number(value || 0).toLocaleString();
+    const formatTime = value => value ? new Date(value).toLocaleString() : "Unknown";
+    const friendly = value => String(value || "unknown").replaceAll("_", " ");
+
+    function timeWindow(period) {
+      const now = new Date();
+      if (period === "all") return {};
+      if (period === "hour") return {since: new Date(now - 3600000).toISOString()};
+      if (period === "week") return {since: new Date(now - 7 * 86400000).toISOString()};
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      if (period === "today") return {since: today.toISOString()};
+      const yesterday = new Date(today - 86400000);
+      return {since: yesterday.toISOString(), until: today.toISOString()};
+    }
+
+    function addText(parent, tag, text, className) {
+      const node = document.createElement(tag);
+      node.textContent = text;
+      if (className) node.className = className;
+      parent.appendChild(node);
+      return node;
+    }
+
+    function renderSummaryCard(parent, title, data, period) {
+      const card = document.createElement("article");
+      card.className = "summary-card";
+      addText(card, "h3", title);
+      addText(card, "p", `${formatNumber(data.count)} aggregated memories`, "muted");
+      const top = Object.entries(data.top_patterns || {}).slice(0, 3)
+        .map(([name, count]) => `${friendly(name)} (${formatNumber(count)})`).join(", ");
+      addText(card, "p", top ? `Leading patterns: ${top}.` : "No new patterns in this window.");
+      const urgent = Number(data.severities?.critical || 0) + Number(data.severities?.high || 0);
+      addText(card, "p", `${formatNumber(urgent)} high or critical.`, urgent ? "" : "muted");
+      const button = addText(card, "button", "Summarize this period", "secondary");
+      button.type = "button";
+      button.addEventListener("click", () => loadPeriodAnswer(period, button));
+      parent.appendChild(card);
+    }
+
+    async function loadPeriodAnswer(period, button) {
+      const original = button.textContent;
+      button.disabled = true;
+      button.textContent = "Summarizing…";
+      try {
+        const response = await fetch("/memories/rag/summary", {
+          method: "POST",
+          headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({period, generate: $("generate").checked}),
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        renderAnswer(await response.json());
+      } catch (error) {
+        renderAnswer({answer: `Unable to summarize period: ${error.message}`, grounded: false, citations: [], retrieval_backend: "unavailable"});
+      } finally {
+        button.disabled = false;
+        button.textContent = original;
+      }
+    }
+
+    async function loadSummary() {
+      $("refresh").disabled = true;
+      try {
+        const [periodResponse, memoryResponse, searchResponse] = await Promise.all([
+          fetch("/memories/period-summaries", {cache: "no-store"}),
+          fetch("/memories/stats", {cache: "no-store"}),
+          fetch("/memories/search/stats", {cache: "no-store"}),
+        ]);
+        const periods = await periodResponse.json();
+        const memory = await memoryResponse.json();
+        const search = await searchResponse.json();
+        $("metrics").replaceChildren();
+        [["Retained memories", memory.size], ["Federated sources", memory.federated_sources], ["Average strength", Number(memory.avg_strength || 0).toFixed(2)], ["Retrieval index", search.connected ? formatNumber(search.memories_indexed) : "Local fallback"]]
+          .forEach(([label, value]) => {
+            const card = document.createElement("div"); card.className = "metric";
+            addText(card, "span", value, "value"); addText(card, "span", label, "label");
+            $("metrics").appendChild(card);
+          });
+        $("summaries").replaceChildren();
+        renderSummaryCard($("summaries"), "Last seven days", periods.periods.last_7_days, "week");
+        renderSummaryCard($("summaries"), "Yesterday", periods.periods.yesterday, "yesterday");
+        renderSummaryCard($("summaries"), "Today so far", periods.periods.today, "today");
+        $("summary-status").textContent = `Updated ${formatTime(periods.generated_at)} · refreshes every 30 minutes`;
+      } catch (error) {
+        $("summary-status").textContent = `Unable to load summary: ${error.message}`;
+        $("summary-status").className = "error";
+      } finally {
+        $("refresh").disabled = false;
+      }
+    }
+
+    function renderAnswer(data) {
+      $("result").hidden = false;
+      $("answer").textContent = data.answer || "No answer returned.";
+      $("backend").textContent = `retrieval: ${data.retrieval_backend || "unknown"}`;
+      $("grounding").textContent = data.grounded ? "grounded" : "insufficient evidence";
+      $("grounding").className = `badge ${data.grounded ? "good" : "warn"}`;
+      $("generation-error").textContent = data.generation_error ? `Generation fallback: ${data.generation_error}` : "";
+      $("citations").replaceChildren();
+      if (!data.citations?.length) {
+        addText($("citations"), "div", "No matching evidence was retrieved.", "empty");
+        return;
+      }
+      data.citations.forEach(item => {
+        const card = document.createElement("article"); card.className = "citation";
+        addText(card, "h3", `${friendly(item.signal_type)} · ${item.severity}`);
+        addText(card, "div", `[memory:${item.memory_id}]`, "citation-id");
+        addText(card, "p", item.excerpt || "Sanitized metadata-only memory; original event text was not persisted.");
+        addText(card, "p", `Classification: ${friendly(item.classification)} · strength ${Number(item.strength || 0).toFixed(2)} · similarity ${Number(item.similarity || 0).toFixed(2)} · formed ${formatTime(item.formed_at)}`, "citation-meta");
+        $("citations").appendChild(card);
+      });
+      $("result").scrollIntoView({behavior: "smooth", block: "start"});
+    }
+
+    $("rag-form").addEventListener("submit", async event => {
+      event.preventDefault();
+      const button = $("ask"); button.disabled = true; button.textContent = "Retrieving…";
+      const payload = {
+        query: $("question").value.trim(),
+        top_k: Number($("top-k").value),
+        severity: $("severity").value,
+        signal_type: $("signal-type").value.trim(),
+        generate: $("generate").checked,
+        reinforce: true,
+        ...timeWindow($("period").value),
+      };
+      try {
+        const response = await fetch("/memories/rag", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload)});
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        renderAnswer(await response.json());
+      } catch (error) {
+        renderAnswer({answer: `Unable to query memory: ${error.message}`, grounded: false, citations: [], retrieval_backend: "unavailable"});
+      } finally {
+        button.disabled = false; button.textContent = "Ask memory";
+      }
+    });
+
+    document.querySelectorAll(".prompt").forEach(button => button.addEventListener("click", () => {
+      $("question").value = button.dataset.prompt;
+      $("question").focus();
+    }));
+    $("refresh").addEventListener("click", loadSummary);
+    loadSummary();
+    setInterval(loadSummary, 1800000);
+  </script>
+</body>
+</html>

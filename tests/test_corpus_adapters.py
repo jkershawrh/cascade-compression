@@ -77,14 +77,20 @@ def test_loghub_entry():
     assert sig["labels"]["label"] == "anomaly"
 
 
-def test_loghub_info_is_low_severity():
+def test_loghub_info_maps_to_medium_band():
+    # Routine log lines must land in the medium band: the qualified dedup
+    # profile folds verified repeats only at medium severity (the same
+    # band K8s events and fraud transactions use). INFO-level logs at
+    # 'info' severity are severity-gate targets — in the governed nano
+    # profile they are neither folded nor dropped, paying full
+    # classification cost with no compression.
     entry = {
         "timestamp": "2026-01-01", "level": "INFO",
         "component": "NameNode", "event_id": "E5678",
         "content": "Block report received", "label": "normal",
     }
     sig = loghub_entry_to_signal(entry)
-    assert sig["severity"] == "info"
+    assert sig["severity"] == "medium"
 
 
 def test_healthcare_domain_pack_has_exemplars():

@@ -1,0 +1,33 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="refresh" content="1800"><title>Cascade · Memory Briefing</title>
+<style>
+:root{color-scheme:dark;--red:#ee0000;--panel:#1f1f1f;--line:#3d3d3d;--muted:#aaa}
+*{box-sizing:border-box}body{margin:0;background:#151515;color:#f5f5f5;font:15px Arial,sans-serif}
+header{border-top:5px solid var(--red);padding:22px max(24px,5vw);border-bottom:1px solid var(--line)}
+h1{margin:0;font-size:27px}header p,.muted{color:var(--muted)}main{max-width:1250px;margin:auto;padding:28px}
+.period{margin-bottom:34px}.period>h2{font-size:23px;margin-bottom:4px}.window{color:var(--muted);margin:0 0 14px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}.card{background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:17px;margin-bottom:14px}
+.value{font-size:27px;font-weight:bold}.layout{display:grid;grid-template-columns:1.25fr 1fr;gap:14px}li{margin:8px 0}code{color:#fff}.error{color:#ff6b6b}
+@media(max-width:750px){main{padding:14px}.layout{grid-template-columns:1fr}.value{font-size:22px}}
+</style></head><body><header><h1>Cascade aggregate · memory briefing</h1><p id="updated">Loading…</p></header><main id="reports"></main>
+<script>
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const labels={last_7_days:'Last seven days',yesterday:'Yesterday',today:'Today so far'};
+const when=s=>new Date(s).toLocaleString(undefined,{dateStyle:'medium',timeStyle:'short'});
+const names={task_warning:'automation task warnings',event_deprecatedannotation:'deprecated Kubernetes configuration',metric_api_server_slow:'slow Kubernetes API responses',metric_pod_high_restarts:'pods restarting repeatedly',event_failedtoretrieveimagepullsecret:'image pull credential failures',event_unhealthy:'unhealthy workload checks',metric_pod_stuck_pending:'pods unable to start',event_resolutionfailed:'name resolution failures',task_runner_on_failed:'failed automation tasks',pool_low:'resource pools running low',event_logging:'cluster logging events'};
+const friendly=k=>names[k]||String(k||'an uncategorized condition').replaceAll('_',' ');
+function briefing(d){const sev=d.severities||{},src=d.sources||{},cls=d.classifications||{},top=Object.entries(d.top_patterns||{}),total=d.count||0,urgent=(sev.critical||0)+(sev.high||0),unknown=cls.unknown||0;if(!total)return 'Cascade did not receive any new federated memories during this period.';
+ const leaders=top.slice(0,3).map(([k,v])=>`${friendly(k)} (${v.toLocaleString()})`);
+ const operational=urgent?`${urgent.toLocaleString()} were marked high or critical and deserve review.`:'None were marked high or critical.';
+ const source=`Most activity came from ${Number(src.k8s||0)>=Number(src.aap||0)?'the Kubernetes estate':'automation jobs'}, with ${(src.k8s||0).toLocaleString()} Kubernetes and ${(src.aap||0).toLocaleString()} AAP memories.`;
+ const knowledge=(src.knowledge||0)?`Organizational knowledge added ${(src.knowledge||0).toLocaleString()} related memories.`:'The knowledge collectors added no new context in this window; they remain connected but were quiet.';
+ const quality=unknown?`${unknown.toLocaleString()} older records still lack classification because they predate the classification fix; this lowers confidence in historical conclusions.`:'All records in this window have a classification.';
+ return `Cascade received ${total.toLocaleString()} memories. The main story was ${leaders.join(', followed by ')}. ${source} ${operational} ${knowledge} ${quality}`;}
+function render(key,d){const sev=d.severities||{},src=d.sources||{},cls=d.classifications||{},top=Object.entries(d.top_patterns||{}),lead=top[0]||['no dominant pattern',0],total=d.count||0,urgent=(sev.critical||0)+(sev.high||0),unknown=cls.unknown||0;
+ const narrative=briefing(d);
+ const notable=(d.notable||[]).map(m=>`<li><b>${esc(m.severity)}</b> ${esc(m.signal_type)} from ${esc(m.source)} · ${esc(m.classification||'unknown')}<br><span class="muted">Originally formed ${when(m.formed_at)} · strength ${Number(m.strength||0).toFixed(2)}</span></li>`).join('')||'<li>None</li>';
+ return `<section class="period"><h2>${labels[key]}</h2><p class="window">Aggregate window: ${when(d.window_start)} – ${when(d.window_end)}</p><div class="grid">${[['Memories aggregated',total],['Critical / high',urgent],['K8s',src.k8s||0],['AAP',src.aap||0],['Knowledge',src.knowledge||0],['Unknown classification',unknown]].map(x=>`<div class="card"><div class="muted">${x[0]}</div><div class="value">${x[1]}</div></div>`).join('')}</div><div class="card"><h3>Plain-English briefing</h3><p>${narrative}</p></div><div class="layout"><div class="card"><h3>What Cascade observed</h3><ol>${top.map(([k,v])=>`<li>${esc(friendly(k))} — ${v.toLocaleString()} <span class="muted">(${esc(k)})</span></li>`).join('')||'<li>None</li>'}</ol></div><div class="card"><h3>Notable memories</h3><ul>${notable}</ul></div></div></section>`}
+async function refresh(){const r=await fetch('/memories/period-summaries',{cache:'no-store'});if(!r.ok)throw Error(`HTTP ${r.status}`);const d=await r.json();document.getElementById('updated').textContent=`Refreshed ${when(d.generated_at)} · ${d.timezone} · automatic refresh every 30 minutes`;document.getElementById('reports').innerHTML=['last_7_days','yesterday','today'].map(k=>render(k,d.periods[k])).join('');}
+refresh().catch(e=>document.getElementById('reports').innerHTML=`<p class="error">Unable to load summary: ${esc(e.message)}</p>`);setInterval(refresh,1800000);
+</script></body></html>
