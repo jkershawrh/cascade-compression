@@ -283,7 +283,18 @@ def build_server(source: Any):
     # RAG extension: multi-perspective system understanding (service mode only)
     if hasattr(source, "_base"):
         try:
-            from .mcp_rag import register_rag_tools
+            try:
+                from .mcp_rag import register_rag_tools  # package context
+            except ImportError:
+                # Standalone-file execution (e.g. a ConfigMap script dir):
+                # the sibling module sits next to this file, so a plain
+                # import works once that directory is on sys.path.
+                import sys as _sys
+                from os.path import dirname as _dirname
+                _here = _dirname(__file__)
+                if _here not in _sys.path:
+                    _sys.path.insert(0, _here)
+                from mcp_rag import register_rag_tools
             import httpx as _httpx
             _client = _httpx.Client(base_url=source._base, timeout=15.0)
             register_rag_tools(server, _client, source._base)

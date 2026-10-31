@@ -4,6 +4,7 @@ The core tool logic is SDK-independent; only the final wiring test needs the
 optional ``mcp`` extra and skips without it. No network, models or writes.
 """
 import json
+import sys
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
@@ -232,3 +233,77 @@ class TestServerWiring:
                                         "mcp.server.mcpserver": None}):
             with pytest.raises(SystemExit, match="optional"):
                 build_server(source)
+
+
+class TestRagToolRegistration:
+    """The RAG tools must register in both execution contexts.
+
+    Package imports use the relative path; standalone-file execution
+    (the ConfigMap deployment layout) falls back to a sibling import.
+    The wiring tests need Python 3.10+ and the mcp SDK (the deployments
+    run 3.11); the sibling-import mechanics test runs everywhere.
+    """
+
+    RAG_TOOLS = {"system_perspective", "explain_signal",
+                 "search_knowledge", "system_narrative"}
+
+    def test_mcp_rag_module_loads_standalone(self):
+        """The fallback import's target: mcp_rag.py as a plain file."""
+        import importlib.util
+        from pathlib import Path
+        import cascade_compression
+
+        path = Path(cascade_compression.__file__).parent / "mcp_rag.py"
+        spec = importlib.util.spec_from_file_location(
+            "standalone_mcp_rag_under_test", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert hasattr(module, "register_rag_tools")
+
+    @pytest.mark.skipif(sys.version_info < (3, 10), reason="MCP server needs 3.10+")
+    def test_package_context_registers_rag_tools(self, tmp_path):
+        pytest.importorskip("mcp")
+        pytest.importorskip("httpx")
+        import httpx
+        from cascade_compression.mcp_server import ServiceMemorySource
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"matches": [], "stats": {}})
+
+        source = ServiceMemorySource("http://127.0.0.1:9",
+                                     transport=httpx.MockTransport(handler))
+        import asyncio
+        from cascade_compression.mcp_server import build_server
+        server = build_server(source)
+        names = {t.name for t in asyncio.run(server.list_tools())}
+        assert self.RAG_TOOLS <= names, names
+        assert {"recall", "memories_stats", "query_memories",
+                "export_memories"} <= names
+
+    @pytest.mark.skipif(sys.version_info < (3, 10), reason="MCP server needs 3.10+")
+    def test_standalone_file_execution_registers_rag_tools(self, tmp_path):
+        """Simulate `python /script/mcp_server.py`: no package context."""
+        pytest.importorskip("mcp")
+        pytest.importorskip("httpx")
+        import importlib.util
+        from pathlib import Path
+        import httpx
+        import cascade_compression
+
+        path = Path(cascade_compression.__file__).parent / "mcp_server.py"
+        spec = importlib.util.spec_from_file_location(
+            "standalone_mcp_server_under_test", path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        assert not getattr(module, "__package__", ""), "test premise: file context"
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"matches": [], "stats": {}})
+
+        source = module.ServiceMemorySource("http://127.0.0.1:9",
+                                            transport=httpx.MockTransport(handler))
+        import asyncio
+        server = module.build_server(source)
+        names = {t.name for t in asyncio.run(server.list_tools())}
+        assert self.RAG_TOOLS <= names, (
+            "RAG tools missing in standalone mode — import fallback broken")
