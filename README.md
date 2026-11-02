@@ -159,7 +159,7 @@ in the GCL repository.
 
 ## Status
 
-Release candidate (`0.2.0rc40`). The engine, governance, Helm chart, and MCP
+**0.2.0** — staging qualified. The engine, governance, Helm chart, and MCP
 server are complete and tested. Classification quality is actively
 improving (41.9% agreement on the pilot's adjudicated subset — see the
 case study for honest scope). Python 3.9–3.13.

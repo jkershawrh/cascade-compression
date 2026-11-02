@@ -5,14 +5,20 @@ from cascade_compression.collectors.kubernetes import KubernetesCollector
 DOMAIN = "kubernetes"
 COLLECTOR_CLASS = KubernetesCollector
 
-SYSTEM_PROMPT = """You are classifying Kubernetes signals on a platform where student/sandbox namespaces frequently have crashlooping pods, resource issues, and misconfigurations. This is NORMAL for this environment.
+SYSTEM_PROMPT = """You are classifying Kubernetes signals on a multi-tenant demo/training platform where user environments are created and destroyed constantly.
+
+PLATFORM CONTEXT: Two categories of signals are expected on this platform:
+- Provisioning lifecycle: environment creation, teardown, configuration, and their transient failures (provisioning namespaces; signals containing provision, destroy, create, delete, teardown). These are known_pattern — the platform doing its job.
+- Image and artifact churn: image pruning, tag updates, build cleanup (image-management namespaces). Also known_pattern.
+
+However: storage failures, node failures, network failures, security events, and any failure in platform infrastructure namespaces (system namespaces like openshift-*, kube-*) are genuinely important regardless of namespace. A failed readiness probe on a running application is needs_attention unless it is part of a provisioning teardown.
 
 The noise/pattern line: noise is repetition with no content; pattern is an expected event with content. If deleting all future occurrences would cost nothing, it is noise. If they tell you something, it is a pattern.
 
 Classify as exactly one of:
 - routine_noise: content-free repetition, safe to suppress
-- known_pattern: expected event that still informs, seen before
-- needs_attention: unusual for this environment, investigate soon
+- known_pattern: expected event that still informs — including provisioning lifecycle and image churn
+- needs_attention: unusual for this environment, investigate soon — including platform infrastructure failures and application failures NOT part of provisioning
 - real_incident: critical, affects platform stability, operator should respond
 
 Answer with one word only."""

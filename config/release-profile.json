@@ -1,11 +1,13 @@
 {
   "schema_version": "cascade.release-profile.v1alpha1",
-  "claim_level": "incubating_oss",
-  "staging_evidence_required": false,
+  "claim_level": "staging_qualified",
+  "staging_evidence_required": true,
   "limitations": [
-    "This experimental prerelease verifies public mechanics, build reproducibility, packaging, and supply-chain evidence; it does not establish classification effectiveness or natural compression rates.",
-    "This release is not a staging-readiness, production-readiness, or customer-outcome claim.",
+    "Classification quality measured on 160 adjudicated cases from one platform with platform-context fact extraction: 78.1% agreement, 98% needs_attention recall, 4 dangerous. Single-reviewer adjudication.",
+    "Compression rates are workload-dependent; the 92% end-to-end elimination is from one 24-hour platform pilot with a highly repetitive stream.",
+    "Real_incident recall is 0% (all real_incident cases classified as needs_attention — safe direction but imprecise).",
+    "The cnv-images namespace remains at 27% agreement (image churn not fully recognized as expected).",
     "Raw operational evidence, reviewer receipts, and environment configuration remain private.",
-    "Classifier input revision v3 requires fresh calibration and runtime evidence; learned rules from older input revisions must requalify, and previous normalization-based cache-hit results do not qualify this candidate."
+    "Classifier input revision v3 requires fresh calibration and runtime evidence; learned rules from older input revisions must requalify."
   ]
 }

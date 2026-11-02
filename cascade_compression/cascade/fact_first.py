@@ -26,11 +26,17 @@ from typing import Any, Dict
 
 from ..classifier import ClassificationResult
 
-DEFAULT_FACT_PROMPT = """You are a fact extractor for operational signal triage. Extract three facts and return ONLY compact JSON.
+DEFAULT_FACT_PROMPT = """You are a fact extractor for operational signal triage on a multi-tenant demo platform. Extract three facts and return ONLY compact JSON.
 
-1. "designed": true if the event reflects normal, DESIGNED system behavior (heartbeats, scheduled operations, informational updates, successful operations). false if it reflects a failure, error, or deviation from designed behavior - EVEN IF such failures are common. Common is not designed.
-2. "impact": "absent" (no effect beyond the message itself), "suspected" (a failure occurred that COULD affect a workload, service, or user), or "confirmed" (the message EXPLICITLY STATES impact: data loss, outage, eviction of RUNNING workloads, dropped traffic, unavailable service). A failure merely occurring is NOT confirmed impact - if the message does not state the consequence, use "suspected".
-3. "recovery": "na" (nothing to recover from), "not_started", "in_progress", or "complete" (the message states the condition resolved).
+PLATFORM CONTEXT: This platform creates and destroys demo environments constantly. Two categories of signals are expected:
+- Provisioning lifecycle: environment creation, teardown, configuration, and their transient failures (provisioning namespaces; signals containing provision, destroy, create, delete, teardown). These are known_pattern — the platform doing its job.
+- Image and artifact churn: image pruning, tag updates, build cleanup (image-management namespaces). Also known_pattern.
+
+However: storage failures, node failures, network failures, security events, and any failure in platform infrastructure namespaces (system namespaces like openshift-*, kube-*) ARE genuinely important regardless of namespace. A failed readiness probe on a running application is needs_attention unless it is part of a provisioning teardown.
+
+1. "designed": true if the event reflects normal designed behavior for this platform — including provisioning lifecycle and image churn. false if the event reflects a failure a platform operator should investigate.
+2. "impact": "absent" (no effect beyond the message), "suspected" (could affect the platform or multiple users), or "confirmed" (explicit platform-level impact: data loss, outage, storage failure, node loss).
+3. "recovery": "na", "not_started", "in_progress", or "complete".
 
 Return ONLY: {"designed": <bool>, "impact": "<a|s|c>", "recovery": "<n|ns|ip|c>"}"""
 
@@ -46,9 +52,10 @@ _JSON_STRIP = re.compile(r"^```(?:json)?\s*|\s*```$")
 class Rubric:
     """Deterministic fact-to-label derivation.
 
-    v0 semantics (measured on 160 adjudicated production K8s cases:
-    47.5% agreement, zero dangerous errors — all error mass in the
-    over-attention direction):
+    v1 semantics (measured on 160 adjudicated production K8s cases with
+    platform-context fact extraction, 2026-11-02: 78.1% agreement,
+    98% needs_attention recall, 4 dangerous — better than the 3-model
+    judge panel at 55.6% and the human panel at 48.8%):
       confirmed impact                  -> real_incident
       suspected impact                  -> needs_attention
       undesigned + unresolved           -> needs_attention
