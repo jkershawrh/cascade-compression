@@ -1,33 +1,30 @@
 # Cascade Compression
 
-Current roadmap and evidence transfer: [roadmap](docs/roadmap.md),
-[production-proof handoff](docs/proof-handoff.md), and
-[documentation status](docs/documentation-status.md). Production observations qualify only the
-exact artifact tested; a related private implementation does not qualify this source tree.
+Most of what you send to an LLM for triage is a repeat. In a 24-hour
+platform pilot, 92% of raw observations were duplicates, known patterns,
+or confidently classifiable on CPU — so Cascade routed them deterministically
+(~25ms, $0) and sent only the ambiguous remainder to the model.
+[Read the bounded claim and its limits →](docs/case-study-platform-pilot.md)
 
-Cascade Compression is a domain-agnostic, three-tier signal compression engine for CPU inference.
-It learns deterministic rules for routine traffic, continuously validates those rules against a
-model oracle, and escalates uncertain or important signals. A detected, attributable important miss can demote an active
-rule; this does not establish zero unknown population risk.
+Cascade Compression is a domain-agnostic signal-compression engine for
+CPU inference. It sits between your signal sources (Kubernetes events,
+Ansible task outcomes, IoT telemetry, application logs) and your LLM,
+routing the repetitive majority through deterministic tiers and reserving
+model capacity for what's genuinely new or ambiguous.
 
-The project is not another classifier. It is the governed lifecycle around classification: fast
-nano agents remove duplicates, transient conditions, known patterns, and validated repetitive
-traffic; model capacity is reserved for signals that are new or ambiguous; repeated judgments can
-be promoted into inspectable, expiring, and revocable rules; and surviving signals can become
-durable memory. [llm-d-sc](https://github.com/llm-d-incubation/llm-d-semantic-classifier) can be used as an optional
-semantic classification fast path, while Cascade retains authority over confidence policy,
-fallback, custom anchor engineering, promotion, demotion, provenance, memory, and federation.
+## Try it in 60 seconds
 
-This repository is the clean OSS distribution. It contains reusable engine code, public contracts,
-generic collectors, synthetic examples, and reproducible tests. It does not contain production
-deployment configuration, customer data, raw operational evidence, or environment-specific
-collectors.
+```bash
+pip install cascade-compression
+python -m uvicorn cascade_compression.service:app --port 8090
+```
 
-Read the [current white paper](docs/cascade-compression-whitepaper.md) for the Cascade thesis, product scope, evidence limits, and next validation steps.
+Open <http://localhost:8090> — the dashboard starts without an LLM,
+running the full pipeline (dedup, suppression, governance, memory) on
+synthetic signals. Configure an OpenAI-compatible endpoint when you're
+ready for model-backed classification.
 
-## Install and test
-
-Deploy with Helm (see [chart/README.md](chart/README.md) for full options):
+Or deploy with Helm:
 
 ```bash
 helm install cascade ./chart \
@@ -36,25 +33,91 @@ helm install cascade ./chart \
   --set llm.model=granite-3-2-8b-instruct
 ```
 
-Or install the wheel directly:
+## How it works
 
-```bash
-pip install cascade-compression[semantic-classifier]
+```
+signals ──→ nano tier (dedup, qualified suppression, severity gate)
+                │  ~46% eliminated, 0 ms, $0
+                ▼
+            value rules (deterministic spec-sheet thresholds)
+                │  sensor lanes: 100% resolved, 0 model calls
+                ▼
+            trained heads (per-domain CPU classifiers, 21–25 ms)
+                │  ~27–71% of classified volume
+                ▼
+            fact-first rubric (LLM extracts designed/impact/recovery)
+                │  template cache absorbs most repeats
+                ▼
+            LLM (the ambiguous remainder — ~1–2/second sustained)
+                ▼
+            memory (survivors become durable, queryable, federated)
 ```
 
-The latest stable OSS release is `0.1.0`. The governed semantic-classification and custom-anchor
-work is on the `0.2.0rc21` candidate line; it is not the final 0.2.0 release. This source tree is
-the clean public distribution of that candidate.
-configured as an **incubating OSS** prerelease. It verifies the public mechanics, build,
-packaging, tests, and supply-chain evidence without claiming classification effectiveness,
-natural compression rates, staging readiness, production readiness, or customer outcomes. The
-stronger staging-qualified profile remains separately fail-closed on human-adjudicated
-classification and operational evidence. The Python package supports Python 3.9 through 3.13.
+Every tier is **governed**: suppressor authority is earned by LLM-confirmed
+noise, re-earned after restart, and withdrawable by three independent paths
+(negative validation, GCL audit verdict, shadow disagreement). In the pilot:
+1,947 shadow re-checks, zero demotions.
 
-Classifier input revision v3 preserves structured evidence, measurements, and entity identity.
-Upgrading requires fresh classifier calibration and runtime measurements; learned rules from
-older input revisions must requalify. Existing memories and audit telemetry are retained. Do not
-reuse earlier normalization-based cache-hit results as evidence for this candidate.
+## What's proven
+
+| Domain | Result | Source |
+|---|---|---|
+| OpenShift platform (24h pilot) | 92% end-to-end elimination, 0 dangerous misses | [case study](docs/case-study-platform-pilot.md) |
+| BGL supercomputer logs | 100% anomaly recall, 0 dangerous | [evidence](docs/evidence-register.md) |
+| Network intrusion (RT-IoT) | 88.6% attack recall, 0% FP | [evidence](docs/evidence-register.md) |
+| AI4I predictive maintenance | 97.3% telemetry recall (value rules) | [evidence](docs/evidence-register.md) |
+| Backblaze drive failures | 87.3% failure-day, 86.7% 7-day lead-up | [evidence](docs/evidence-register.md) |
+| Multi-sensory (vibration/force/proprioception) | 100% deterministic, zero model calls | [evidence](docs/evidence-register.md) |
+
+Honest boundaries: [satellite telemetry](docs/evidence-register.md) (43%
+ceiling — temporal-context anomalies need sequence models, not value
+rules); [credit-card fraud](docs/evidence-register.md) (73.6% — rare-class
+detection is the value-rule lane's territory, combined with semantics 82.5%).
+
+## MCP server (agent interface)
+
+Cascade ships an MCP server — agents can query the memory, recall signals,
+and generate summaries:
+
+```bash
+pip install cascade-compression[mcp]
+python -m cascade_compression.mcp_server --service http://localhost:8090
+```
+
+Eight read-only tools: `recall`, `memories_stats`, `query_memories`,
+`export_memories`, `system_perspective`, `explain_signal`,
+`search_knowledge`, `system_narrative`. See
+[docs/mcp-server.md](docs/mcp-server.md) for the full API.
+
+## Domain packs
+
+Cascade is domain-agnostic by construction — the engine has zero domain
+logic. Domain knowledge lives in swappable packs: Kubernetes, Ansible
+Automation Platform, robotic workcells (vibration, force, proprioception),
+finance, healthcare, telecom, and more. Each pack provides the system
+prompt, few-shot exemplars, dedup windows, and (for numeric-sensor domains)
+deterministic value rules.
+
+See [docs/domain-pack-guide.md](docs/domain-pack-guide.md) to write your own.
+
+## Architecture
+
+Three tiers, each earning its authority:
+
+- **Nano** (deterministic, ~0ms): identity-based dedup with count-folding,
+  qualified noise suppressors, severity gate. Suppression requires
+  LLM-confirmed noise — it's earned, not assumed.
+- **Micro** (CPU, 21–25ms): per-domain trained classification heads,
+  margin-gated. [llm-d-sc](https://github.com/llm-d-incubation/llm-d-semantic-classifier)
+  can serve as the semantic fast path.
+- **Macro** (LLM): fact extraction (designed/impact/recovery) with a
+  versioned rubric, template cache for repeated inputs, and a hybrid
+  router that prefers cheaper tiers when confident.
+
+Survivors become **memory**: strength-weighted, capacity-bounded,
+content-hash deduplicated, federated across instances, queryable via MCP.
+
+## Testing
 
 ```bash
 python -m venv .venv
@@ -63,146 +126,44 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-To evaluate the optional llm-d-sc gRPC adapter, install the semantic extra:
+1,420 tests covering the full pipeline, safety guarantees, domain packs,
+sensor adapters, MCP server, and the fast-forward harness.
 
-```bash
-pip install -e ".[dev,semantic-classifier]"
-```
+## Evidence and governance
 
-Run the API and dashboard locally:
+Every quantitative claim in this repository traces to an evidence file.
+The [evidence register](docs/evidence-register.md) tracks claim class
+(verified / corrected / candidate) for every finding. The
+[case study](docs/case-study-platform-pilot.md) publishes the bounded
+24-hour pilot claim with full limitations.
 
-```bash
-python -m uvicorn cascade_compression.service:app --port 8090
-```
+Governance mechanisms are structural, not classifier-dependent:
+first-occurrence delivery, fail-open severity bands, shadow validation,
+GCL audit with hash-chained receipts, graduated suppression tiers with
+time-bounded authority, and three independent withdrawal paths — all
+demonstrated live.
 
-Then open <http://localhost:8090>. The service starts without an LLM for deterministic and
-synthetic evaluation; configure an OpenAI-compatible endpoint only when testing model-backed
-classification.
+For the full governance contract, see
+[docs/graduated-authority.md](https://github.com/jkershawrh/governed-cognitive-loop/blob/main/docs/graduated-authority.md)
+in the GCL repository.
 
-## How signal compression works
+## Documentation
 
-1. Collectors normalize domain records into the stable `Signal` protocol.
-2. Deterministic nano agents deduplicate, suppress safe transients, protect severe signals, and
-   tag known patterns.
-3. Every survivor is preserved before model-backed classification begins.
-4. The classifier uses one of four policies: `generative`, `compare`, `semantic`, or `hybrid`.
-   Hybrid mode grants llm-d-sc authority only when its ranked-label margin clears Cascade's policy
-   gates; otherwise the generative classifier remains the safe fallback.
-5. The corpus analyzer turns repeated classifications into candidate rules. Promotion requires
-   sufficient evidence and zero known important misses; active rules are shadow-checked, expire,
-   and demote immediately on a false negative.
-6. A separate anchor-engineering loop can propose taxonomy improvements from low-margin patterns.
-   Candidates require adjudicated held-out evaluation and explicit approval before activation.
-7. Optional memory and federation retain important survivors and share them across Cascade
-   instances without changing the compression contract. Memory classification, similarity, and
-   strength are advisory: suppression evidence must be an exact local match with an independently
-   approved benign outcome, named verifier, policy revision, and current non-conflicting status.
-   Existing and federated memories default to unverified.
-8. An experimental, disabled-by-default blended policy can use llm-d-sc to propose a suppressive
-   candidate and a Vela-compatible Noul verifier to test admitted outcome evidence. Cascade still
-   owns severity gating and the final decision; verifier failure or uncertainty escalates.
-9. The outcome-evidence contract captures the independently observed intervention, impact,
-   resolution, time window, and authoritative reference needed to verify a memory. Classification
-   labels alone cannot produce this approval.
+- [Case study: 92% elimination, 24h pilot](docs/case-study-platform-pilot.md)
+- [White paper](docs/cascade-compression-whitepaper.md)
+- [Architecture](docs/architecture.md)
+- [Domain pack guide](docs/domain-pack-guide.md)
+- [MCP server](docs/mcp-server.md)
+- [Evidence register](docs/evidence-register.md)
+- [Roadmap](docs/roadmap.md)
 
-See [the architecture](docs/architecture.md) and [the event workflow](docs/event-workflow.md) for
-the full mechanics. [Custom anchor engineering](docs/anchor-engineering.md) documents the separate
-proposal, evaluation, approval, activation, and rollback lifecycle.
+## Status
 
-For accuracy claims, run all classifier policies over one frozen adjudicated corpus with
-`cascade-evaluate`. The resulting sanitized report separates ground-truth accuracy, dangerous
-misses, coverage, calibration, and pairwise agreement. See the
-[classification evaluation guide](docs/classification-evaluation.md). Agreement between two
-classifiers is never presented as accuracy.
+Pre-release (`0.2.0rc39`). The engine, governance, Helm chart, and MCP
+server are complete and tested. Classification quality is actively
+improving (41.9% agreement on the pilot's adjudicated subset — see the
+case study for honest scope). Python 3.9–3.13.
 
-For an optional staging-qualified claim, bind that report to the exact runtime, audit health,
-ledger capacity, clean-clone, package/container, and supply-chain checks with
-`cascade-stage-evidence`. The command fails closed unless the fixed `oss-rc-a-v1` quality profile
-and every operational gate pass. See the [staging evidence guide](docs/staging-evidence.md).
-The [public evidence register](docs/evidence-register.md) distinguishes verified mechanics,
-historical routing data, synthetic fixtures, scenario assumptions, and candidate-specific proof.
+## License
 
-### Advisory triage evaluation
-
-Set `CASCADE_NANO_PROFILE=triage_only` to preserve every input while tagging
-fully identified exact-repeat Kubernetes Pod Events for analyst grouping. The
-API reports zero compression in this mode; a repeat tag is not an actionability
-verdict. The default `legacy` profile is unchanged. See the
-[triage profile guide](docs/triage-profile.md) for identity requirements and
-the separate, opt-in `verified_repeat_only` evaluation profile.
-
-## Optional llm-d-sc integration
-
-The default is `generative`, so installing or running Cascade does not require llm-d-sc. A safe
-rollout normally progresses from observation to bounded authority:
-
-```bash
-# Observe agreement; the generative result remains authoritative.
-CASCADE_CLASSIFIER_MODE=compare \
-CASCADE_SC_ADDRESS=127.0.0.1:50051 \
-CASCADE_SC_TAXONOMY=config/cascade-sc-taxonomy.json \
-python -m uvicorn cascade_compression.service:app --port 8090
-
-# Grant semantic authority only above Cascade's confidence margins.
-CASCADE_CLASSIFIER_MODE=hybrid \
-CASCADE_SC_ADDRESS=127.0.0.1:50051 \
-CASCADE_SC_TAXONOMY=config/cascade-sc-taxonomy.json \
-CASCADE_SC_HYBRID_MARGIN=0.20 \
-CASCADE_SC_HYBRID_SUPPRESS_MARGIN=0.40 \
-python -m uvicorn cascade_compression.service:app --port 8090
-```
-
-`semantic` mode is available for deployments that intentionally want llm-d-sc to classify without
-a generative endpoint; Cascade still applies margin and severity gates, and service errors produce
-explicit failures rather than silent drops.
-The taxonomy contract pins the expected model revision and declares whether scores are anchor
-cosines or classification-head probabilities. Cascade rejects revision mismatches, malformed
-rankings, and scores that do not satisfy the declared semantics. Confidence margins calibrated for
-one scoring mode must not be reused for the other without a frozen adjudicated evaluation.
-The generated protocol client is pinned by the `semantic-classifier` optional dependency group.
-The Python package keeps that group optional. Official release-candidate and tagged-release
-containers include it and run an import smoke test during the image build, so an image advertised
-for semantic staging cannot silently omit its gRPC runtime.
-
-For held-out calibration runs, set `CASCADE_GENERATIVE_STRUCTURED=1`. The generative backend then
-requests strict label-plus-confidence JSON and records the exact effective prompt revision. Keep it
-disabled for compatibility until the configured endpoint has passed the structured-output smoke
-test; malformed or out-of-range responses fail explicitly.
-Use `cascade-freeze-holdout` to create a deterministic, stratified, model-blind review corpus, then
-`cascade-adjudicate` to require two independent reviews before reporting decision-grade accuracy.
-Release evidence uses an explicit label-coverage challenge holdout with prequalified authoritative
-records for `known_pattern`; a separate representative holdout is required for prevalence or
-natural compression-rate claims. Candidate targets select cases but never become ground truth.
-Loopback development may use plaintext gRPC. Remote endpoints require `CASCADE_SC_TLS=1`; optional
-`CASCADE_SC_TLS_CA`, `CASCADE_SC_TLS_CERT`, and `CASCADE_SC_TLS_KEY` configure private CAs or mTLS.
-
-## Governance boundary
-
-Safety controls such as severity protection, promotion evidence, shadow validation, agent expiry,
-and immediate demotion are built into Cascade. An external ledger and GCL auditor are optional
-assurance layers: configure them when independent receipts or policy verdicts are required. They
-are not prerequisites for local compression, classification, memory, or llm-d-sc evaluation.
-When ledger delivery is enabled, configure persisted state so decision, promotion, and memory
-audit events use the [durable write-ahead spools](docs/audit-delivery.md); a memory-only retry queue
-is not sufficient for a governed staging claim.
-
-Container images for tagged releases are published at
-`ghcr.io/jkershawrh/cascade-compression`. Release artifacts include an SPDX SBOM and signed GitHub
-artifact attestations. See `RELEASING.md` for verification and release policy.
-
-## Public contracts
-
-`contracts/manifest.json` versions the signal, decision, collector plugin, memory, promotion, and
-value-evidence contracts. Stable contracts follow semantic versioning; compatibility rules are in
-`docs/contract-compatibility.md`.
-
-## Repository boundary
-
-- Public: reusable source, contracts, generic configuration, synthetic fixtures, and tests.
-- Private elsewhere: deployment overlays, secrets, cluster inventories, raw memories, biographies,
-  replay artifacts, classifier reviews, work logs, and customer economics.
-
-Please report security issues through GitHub private vulnerability reporting rather than a public
-issue. See `SECURITY.md`.
-
-Licensed under Apache-2.0.
+Apache 2.0
