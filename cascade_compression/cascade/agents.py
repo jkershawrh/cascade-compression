@@ -391,6 +391,23 @@ class ValueRuleAgent:
     (the same authority discipline as the qualified sc-head: deterministic,
     versioned, and backed by held-out evidence). Rules without a label
     escalate only and leave the final label to the classifier lane.
+
+    The spec may also declare ``covers``: {signal_type: else_label}. A
+    signal of a covered type that carries the referenced numeric fields
+    (the spec actually applied) but matches NO rule takes the else label
+    authoritatively — the spec-sheet semantics: within spec is healthy.
+    The else path never applies to critical/high severity (the severity
+    gate wins) and requires field presence, so malformed or event-like
+    signals of a covered type still fall to the semantic lane.
+
+    Backstop honesty: the semantic lane CANNOT validate numeric telemetry
+    (measured: 0% clean-input recall on AI4I; 100% over-escalation on
+    healthy sensor windows) — an LLM shadow re-check would disagree with
+    correct else-labels and is therefore NOT used as a demotion trigger.
+    The else path's authority is the versioned spec plus its held-out
+    corpus evidence, monitored through the else-rate (a collapse means
+    new signatures outside the spec) and withdrawable via
+    CASCADE_VALUE_RULES=off.
     """
 
     name = "value_rule"
@@ -412,7 +429,40 @@ class ValueRuleAgent:
         derived = spec.get("derived", {})
         if not isinstance(derived, dict):
             raise ValueError("value-rule spec derived must be a mapping")
+        covers = spec.get("covers", {})
+        if not isinstance(covers, dict):
+            raise ValueError("value-rule spec covers must be a mapping")
+        self._covers: Dict[str, dict] = {}
+        for type_name, value in covers.items():
+            if not isinstance(type_name, str) or not type_name:
+                raise ValueError("value-rule covers keys must be non-empty strings")
+            if isinstance(value, str):
+                # Shorthand: label only; the spec must evaluate every
+                # referenced field (single-type specs).
+                if not value:
+                    raise ValueError(
+                        f"value-rule covers[{type_name!r}] label must be non-empty")
+                self._covers[type_name] = {"label": value,
+                                           "requires": None}
+            elif isinstance(value, dict):
+                label = value.get("label")
+                requires = value.get("requires")
+                if not isinstance(label, str) or not label:
+                    raise ValueError(
+                        f"value-rule covers[{type_name!r}] must declare a label")
+                if not isinstance(requires, list) or not requires or not all(
+                        isinstance(f, str) and f for f in requires):
+                    raise ValueError(
+                        f"value-rule covers[{type_name!r}] requires must be a "
+                        "non-empty list of field names")
+                self._covers[type_name] = {"label": label,
+                                           "requires": list(requires)}
+            else:
+                raise ValueError(
+                    f"value-rule covers[{type_name!r}] must be a label string "
+                    "or {{label, requires}}")
         self.revision = revision
+        self.covers = {k: v["label"] for k, v in self._covers.items()}
         self._derived = {name: self._validate_expression(name, expr)
                          for name, expr in derived.items()}
         self._rules = [self._validate_rule(rule) for rule in rules]
@@ -606,6 +656,49 @@ class ValueRuleAgent:
             if all(self._condition_holds(c, context, raw) for c in rule["conditions"]):
                 return rule, context
         return None
+
+    def spec_applied(self, signal: Signal) -> bool:
+        """Did this signal carry the fields the spec evaluates for its type?
+
+        A covered signal type without its required numeric fields was
+        never actually evaluated by the spec — it must not take an else
+        label and falls to the semantic lane instead.
+        """
+        entry = self._covers.get(signal.signal_type)
+        if entry is None:
+            return False
+        required = entry["requires"]
+        if required is None:
+            required = sorted(self._referenced_fields)
+            if not required:
+                return False
+        content = signal.content or {}
+        for field in required:
+            value = content.get(field)
+            if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                    or not math.isfinite(value)):
+                return False
+        return True
+
+    def else_label(self, signal: Signal):
+        """The healthy-by-spec label for a covered, unmatched signal.
+
+        Returns the else entry (label/rule/classification/revision) when
+        the signal's type is covered, the spec's fields were present,
+        and no severity gate protects it; otherwise None. Callers must
+        have already established that no rule matched (evaluate -> None).
+        """
+        if signal.signal_type not in self._covers:
+            return None
+        if signal.severity in ("critical", "high"):
+            return None  # the severity gate wins over suppressive labels
+        if not self.spec_applied(signal):
+            return None
+        return {"label": self._covers[signal.signal_type]["label"],
+                "rule": f"else:{signal.signal_type}",
+                "classification": "spec_healthy",
+                "confidence": 0.9,
+                "revision": self.revision}
 
     def process(self, signals: List[Signal]) -> List[CascadeDecision]:
         decisions = []

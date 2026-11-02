@@ -159,7 +159,7 @@ class TestPackCoversSenses:
                     "tactile_torque_anomaly", "servo_following_error",
                     "servo_overcurrent", "servo_severe_overcurrent"}
         assert expected <= names
-        assert rules["revision"] == "robotic-value-rules-v3"
+        assert rules["revision"] == "robotic-value-rules-v4"
 
     def test_spec_validates_in_agent(self):
         from cascade_compression.cascade.agents import ValueRuleAgent

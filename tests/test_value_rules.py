@@ -7,8 +7,10 @@ from cascade_compression.cascade.protocol import Outcome, Signal
 
 
 def _signal(content, **kwargs):
-    return Signal(signal_type="maintenance_telemetry", severity="medium",
-                  source="M1", labels={"domain": "robotic"}, content=content, **kwargs)
+    kwargs.setdefault("signal_type", "maintenance_telemetry")
+    kwargs.setdefault("severity", "medium")
+    return Signal(source="M1", labels={"domain": "robotic"},
+                  content=content, **kwargs)
 
 
 SPEC = {
@@ -236,7 +238,7 @@ class TestRoboticPackSpec:
         plugin = load_domain_plugin("robotic")
         assert plugin.value_rules is not None
         agent = ValueRuleAgent(plugin.value_rules)  # validates the spec
-        assert agent.revision == "robotic-value-rules-v3"
+        assert agent.revision == "robotic-value-rules-v4"
         # The pack rules only escalate or classify.
         for rule in plugin.value_rules["rules"]:
             assert rule["outcome"] in ("escalate", "classify")
@@ -336,7 +338,7 @@ class TestBridgeValueRulePath:
         rule = matched[0]["_value_rule"]
         assert rule["label"] == "real_incident"
         assert rule["rule"] == "overstrain_l"
-        assert rule["revision"] == "robotic-value-rules-v3"
+        assert rule["revision"] == "robotic-value-rules-v4"
 
     def test_non_matching_signal_enqueues_without_rule(self):
         from cascade_compression.bridge import CascadeBridge
@@ -358,14 +360,14 @@ class TestBridgeValueRulePath:
         entry = {"_value_rule": {"label": "real_incident", "rule": "overstrain_l",
                                  "classification": "overstrain_risk",
                                  "confidence": 0.95,
-                                 "revision": "robotic-value-rules-v3"},
+                                 "revision": "robotic-value-rules-v4"},
                  "signal_type": "maintenance_telemetry", "severity": "medium",
                  "namespace": "cell_1", "content": {}, "labels": {}}
         result = bridge._classify_entry(entry, client=None)
         assert result.ok
         assert result.label == "real_incident"
         assert result.authoritative_backend == "value_rule"
-        assert result.model_revision == "robotic-value-rules-v3"
+        assert result.model_revision == "robotic-value-rules-v4"
         assert result.latency_ms == 0.0
 
     def test_classify_entry_without_rule_uses_classifier(self):
@@ -388,7 +390,7 @@ class TestBridgeValueRulePath:
         bridge = CascadeBridge(domain="robotic")
         bridge.process([self._telemetry_signal()])
         stats = bridge.get_stats()
-        assert stats["value_rule_revision"] == "robotic-value-rules-v3"
+        assert stats["value_rule_revision"] == "robotic-value-rules-v4"
         assert stats["value_rule_fires"].get("overstrain_l") == 1
 
 
@@ -405,3 +407,130 @@ class _FakeTelemetry:
         self.severity = "medium"
         self.evidence = {}
         self.labels = {"domain": "robotic"}
+
+
+class TestElseLabel:
+    """Healthy-by-spec else labels for covered signal types."""
+
+    SPEC = {
+        "revision": "else-v1",
+        "covers": {
+            "vibration_window": {"label": "routine_noise",
+                                 "requires": ["vib_rms_g"]},
+            "servo_state": "routine_noise",  # shorthand: all referenced fields
+        },
+        "rules": [
+            {"name": "severe_vibration", "classification": "severe_vibration",
+             "label": "real_incident",
+             "when": [{"field": "vib_rms_g", "op": "gt", "value": 2.0}]},
+            {"name": "servo_overcurrent", "classification": "servo_overcurrent",
+             "when": [{"field": "servo_current_ratio", "op": "gt", "value": 1.2}]},
+        ],
+    }
+
+    def test_covered_unmatched_takes_else_label(self):
+        agent = ValueRuleAgent(self.SPEC)
+        sig = _signal({"vib_rms_g": 0.4}, signal_type="vibration_window")
+        assert agent.evaluate(sig) is None  # no rule matched
+        entry = agent.else_label(sig)
+        assert entry == {"label": "routine_noise", "rule": "else:vibration_window",
+                         "classification": "spec_healthy", "confidence": 0.9,
+                         "revision": "else-v1"}
+
+    def test_severity_gate_wins(self):
+        agent = ValueRuleAgent(self.SPEC)
+        for severity in ("critical", "high"):
+            sig = _signal({"vib_rms_g": 0.4}, signal_type="vibration_window",
+                          severity=severity)
+            assert agent.else_label(sig) is None
+
+    def test_missing_fields_not_else_labeled(self):
+        agent = ValueRuleAgent(self.SPEC)
+        sig = _signal({"message": "no numeric fields"},
+                      signal_type="vibration_window")
+        assert agent.else_label(sig) is None
+
+    def test_partial_fields_not_else_labeled(self):
+        agent = ValueRuleAgent(self.SPEC)
+        sig = _signal({"vib_rms_g": 0.4}, signal_type="servo_state")
+        # servo_state shorthand requires all referenced fields
+        # (servo_current_ratio is referenced by the overcurrent rule)
+        assert agent.else_label(sig) is None
+
+    def test_uncovered_type_not_else_labeled(self):
+        agent = ValueRuleAgent(self.SPEC)
+        sig = _signal({"message": "an event"}, signal_type="robot_cycle")
+        assert agent.else_label(sig) is None
+
+    def test_bad_covers_rejected(self):
+        for bad in ({"vibration_window": None}, {"vibration_window": ""},
+                    {"vibration_window": {"label": "x", "requires": []}},
+                    {"vibration_window": {"requires": ["f"]}},
+                    {"vibration_window": {"label": "x", "requires": [1]}}):
+            spec = {"revision": "v", "covers": bad,
+                    "rules": self.SPEC["rules"]}
+            with pytest.raises(ValueError, match="covers"):
+                ValueRuleAgent(spec)
+
+    def test_covers_shorthand_and_full_forms(self):
+        agent = ValueRuleAgent(self.SPEC)
+        assert agent.covers == {"vibration_window": "routine_noise",
+                                "servo_state": "routine_noise"}
+        sig = _signal({"servo_current_ratio": 0.5, "vib_rms_g": 0.1},
+                      signal_type="servo_state")
+        entry = agent.else_label(sig)
+        assert entry and entry["label"] == "routine_noise"
+
+
+class TestRoboticPackElse:
+    def test_pack_v4_covers_sensor_types(self):
+        from cascade_compression.domain_plugins import load_domain_plugin
+        rules = load_domain_plugin("robotic").value_rules
+        assert rules["revision"] == "robotic-value-rules-v4"
+        covers = rules["covers"]
+        assert set(covers) == {"vibration_window", "force_contact", "servo_state"}
+        # The AI4I lane is deliberately NOT covered (RNF residual).
+        assert "maintenance_telemetry" not in covers
+        agent = ValueRuleAgent(rules)
+        assert agent.covers["vibration_window"] == "routine_noise"
+
+    def test_bridge_else_label_skips_model(self):
+        from unittest.mock import MagicMock
+        from cascade_compression.bridge import CascadeBridge
+        bridge = CascadeBridge(domain="robotic")
+        bridge._qualification_bindings = lambda sig: {}
+        bridge.classifier = MagicMock()
+        bridge.classifier.classify.side_effect = AssertionError(
+            "the model must not be called for else-labeled signals")
+        entry = {"_value_rule": {"label": "routine_noise",
+                                 "rule": "else:vibration_window",
+                                 "classification": "spec_healthy",
+                                 "confidence": 0.9,
+                                 "revision": "robotic-value-rules-v4"},
+                 "signal_type": "vibration_window", "severity": "medium",
+                 "namespace": "cell_1", "content": {}, "labels": {}}
+        result = bridge._classify_entry(entry, client=None)
+        assert result.ok
+        assert result.label == "routine_noise"
+        assert result.authoritative_backend == "value_rule"
+
+    def test_bridge_process_else_labels_covered_healthy(self):
+        from cascade_compression.bridge import CascadeBridge
+        bridge = CascadeBridge(domain="robotic")
+        healthy = _FakeTelemetry()
+        healthy.evidence = {
+            "message": "machine M type L: air 298.1K proc 308.6K speed 1551rpm torque 42.0Nm tool_wear 10min",
+            "machine_type": "L", "air_temp_k": 298.1, "process_temp_k": 308.6,
+            "rotational_speed_rpm": 1551, "torque_nm": 42.0, "tool_wear_min": 10,
+        }
+        healthy.signal_type = "vibration_window"
+        healthy.evidence.update({"vib_rms_g": 0.4, "vib_band1_energy": 0.0001,
+                                 "vib_band3_energy": 0.0001, "vib_band4_energy": 0.0})
+        bridge.process([healthy])
+        entries = list(bridge._llm_buffer) + list(bridge._llm_priority_buffer)
+        matched = [e for e in entries if e.get("_value_rule")]
+        assert matched, "healthy covered signal must be else-labeled"
+        assert matched[0]["_value_rule"]["rule"] == "else:vibration_window"
+        assert matched[0]["_value_rule"]["label"] == "routine_noise"
+        stats = bridge.get_stats()
+        assert stats.get("value_rule_else_classified") == 1

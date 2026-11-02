@@ -60,11 +60,31 @@ DEDUP_WINDOWS = {
 # signature by construction and remains the residual for the semantic
 # classifier lane.
 VALUE_RULES = {
-    # v3: multi-sensory extension — vibration/acoustic, force/tactile,
+    # v4: multi-sensory extension — vibration/acoustic, force/tactile,
     # proprioception rules over sensor_fields features (the numeric-sense
     # front-end adapters). Thresholds are the synthetic cell's equipment
     # spec; real deployments substitute the actual spec sheet.
-    "revision": "robotic-value-rules-v3",
+    # v4 adds `covers` (healthy-by-spec else labels): a covered signal
+    # type carrying its required fields with no rule match is healthy by
+    # spec — resolved deterministically, no model call. Authority: the
+    # versioned spec + held-out corpus evidence (NOT LLM shadow re-checks:
+    # the semantic lane's telemetry incompetence is a measured result).
+    # Monitored via the else-rate; withdrawable via CASCADE_VALUE_RULES=off.
+    "revision": "robotic-value-rules-v4",
+    "covers": {
+        # Else-label only types whose corpus shows ZERO signature-less
+        # failures (100% rule recall) — the healthy side is safe to
+        # resolve by spec. maintenance_telemetry (AI4I) is deliberately
+        # NOT covered: its RNF residual (random failures, no signature)
+        # must keep falling to the semantic lane.
+        "vibration_window": {"label": "routine_noise",
+                             "requires": ["vib_rms_g", "vib_band1_energy",
+                                          "vib_band3_energy", "vib_band4_energy"]},
+        "force_contact": {"label": "routine_noise",
+                          "requires": ["force_peak_n", "force_sustained_share"]},
+        "servo_state": {"label": "routine_noise",
+                        "requires": ["servo_following_error", "servo_current_ratio"]},
+    },
     "derived": {
         # Process-air temperature differential (K) — heat dissipation margin.
         "temp_diff_k": ["sub", ["field", "process_temp_k"], ["field", "air_temp_k"]],

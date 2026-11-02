@@ -105,6 +105,7 @@ class BridgeStats:
     llm_noise: int = 0
     llm_important: int = 0
     value_rule_classified: int = 0
+    value_rule_else_classified: int = 0
     compression_ratio: float = 0.0
     started_at: str = ""
     last_updated: str = ""
@@ -616,17 +617,31 @@ class CascadeBridge(LifecycleControls):
         self._checkpoint_classification_memories()
         # Value-rule matches carry their taxonomy label authoritatively
         # (deterministic, versioned spec — the qualified-head discipline).
-        value_rule_labels = {
-            str(d.signal_id): {
-                "label": d.metadata["label"],
-                "rule": d.metadata["value_rule"],
-                "classification": d.classification,
-                "confidence": d.confidence,
-                "revision": d.metadata["spec_revision"],
-            }
-            for d in cascade_result.decisions
-            if d.agent_name == "value_rule" and d.metadata.get("label")
-        }
+        # Covered types with no rule match take the healthy-by-spec else
+        # label on the same authoritative path.
+        value_rule_labels = {}
+        for d in cascade_result.decisions:
+            if d.agent_name == "value_rule" and d.metadata.get("label"):
+                value_rule_labels[str(d.signal_id)] = {
+                    "label": d.metadata["label"],
+                    "rule": d.metadata["value_rule"],
+                    "classification": d.classification,
+                    "confidence": d.confidence,
+                    "revision": d.metadata["spec_revision"],
+                }
+        if (self._value_rule_agent is not None
+                and self._value_rule_agent._covers):
+            remaining_ids = {str(s.signal_id) for s in cascade_result.remaining}
+            for sig in cascade_result.remaining:
+                if str(sig.signal_id) in value_rule_labels:
+                    continue
+                match = self._value_rule_agent.evaluate(sig)
+                if match is not None:
+                    continue  # a rule matched but declared no label
+                else_entry = self._value_rule_agent.else_label(sig)
+                if else_entry is not None:
+                    value_rule_labels[str(sig.signal_id)] = else_entry
+                    self.stats.value_rule_else_classified += 1
         if not self._enqueue_llm_signals(cascade_result.remaining,
                                          value_rule_labels):
             return {
@@ -2926,6 +2941,8 @@ class CascadeBridge(LifecycleControls):
             stats['value_rule_revision'] = self._value_rule_agent.revision
             stats['value_rule_fires'] = dict(
                 sorted(self._value_rule_agent.fires.items(), key=lambda x: -x[1]))
+            stats['value_rule_else_classified'] = (
+                self.stats.value_rule_else_classified)
         stats['classifier_work_recovery'] = (
             'sqlite_replay' if self._durable_queue is not None
             else 'terminal_receipts_on_restart' if self._state_file
