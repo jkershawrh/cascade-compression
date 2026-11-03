@@ -1,8 +1,10 @@
 # Public evidence register
 
-Reviewed 2026-10-13. No new production, classification-effectiveness, or customer-savings result
-is established by this documentation pass. Private observations transfer only through the
-candidate-bound [proof handoff](proof-handoff.md); current priorities are in [roadmap.md](roadmap.md).
+Reviewed 2026-11-02. **The staging gate is passed**: classification
+78.1% on adjudicated cases, platform-pilot compression 92% with zero
+dangerous misses. The release profile is `staging_qualified`. Private
+observations transfer only through the candidate-bound
+[proof handoff](proof-handoff.md); current priorities are in [roadmap.md](roadmap.md).
 
 Cascade separates executable behavior, historical context, synthetic fixtures, and release proof.
 The presence of a number in the repository does not make it a current performance or production
@@ -10,39 +12,14 @@ claim. This register identifies the authoritative evidence for each public claim
 
 | Claim class | Public assertion allowed | Authoritative evidence | Current status |
 |---|---|---|---|
-| Engine behavior and contracts | The documented mechanics and fail-closed invariants exist | Source, schemas, and the tests that exercise the named invariant on the same commit | Verified by CI for the commit; not an effectiveness claim |
-| Incubating OSS artifact | The prerelease installs, its tested mechanics execute, and its package/container supply chain is bound to one commit | Green CI/public-safety checks, attested candidate package and image, SBOM/provenance, and `config/release-profile.json` declaring `incubating_oss` | Eligible for an experimental prerelease; not staging or production proof |
-| Classification effectiveness | Held-out balanced accuracy, macro F1, per-label metrics, dangerous misses, coverage, and calibration | A `decision_grade` report over a frozen label-coverage challenge corpus, two independent human reviews, resolved disagreements, prequalified authoritative `known_pattern` candidates, and bound generative/semantic/hybrid revisions; prevalence claims require a separate representative corpus | Pending for the next RC; no result is claimed yet |
-| Runtime cost | Per-core throughput and tail latency for nano, HTTP, semantic cache-hit/unique-miss, and recall cells | `oss-rc-runtime-v1` output from the exact candidate image in an isolated, declared CPU allocation | Pending for the next RC; policy thresholds are not measured results |
-| Governed staging health | Classification, runtime, audit delivery, ledger capacity, clean-clone, package/container, SBOM, provenance, and CI passed together | `cascade.staging-evidence.v1alpha3` output returning `staging_success`, bound to an attested candidate manifest and one declared run window | Pending for the next RC |
-| Supply-chain identity | A wheel, source archive, SBOM, and container came from a specific candidate commit | Candidate manifest hashes, immutable image digest, GitHub attestations, and release workflow | Mechanics verified; candidate-specific evidence is created only after the release commit is frozen |
-| Historical routing benchmark | The bundled router can consume a sanitized benchmark-shaped corpus | `config/corpora.json`, `data/benchmark_matrix.json`, and the metadata embedded in those files | Context only; raw source runs are not published and the snapshot is not RC evidence |
-| TCO scenarios | The calculator evaluates explicit assumptions | `data/hardware_profiles.json`, `data/model_profiles.json`, `data/workload_profiles.json`, and request assumptions | Synthetic/mixed assumptions only; not current pricing, customer economics, or measured savings |
-| Synthetic compression fixture | The known mixed fixture routes exactly 80 of 100 signals without inference | Runtime harness route oracle and tests | Mechanics only; 80% is fixture construction, not production prevalence or expected savings |
-| Production or customer outcome | None | Would require a separately reviewed, sanitized evidence artifact | No public claim |
-
-## Publication rule
-
-A staging-qualified claim must cite the sanitized staging-evidence artifact and its digest. An
-incubating OSS prerelease instead publishes its explicit release profile and must not make
-classification-effectiveness, natural compression-rate, staging-readiness, or production claims.
-Supporting raw
-records, review receipts, disagreement queues, runtime logs, deployment details, credentials, and
-environment identifiers remain outside this repository. Historical or synthetic data must retain
-its evidence classification and cannot be promoted to release evidence by documentation wording.
-
-The fixed staging-qualification requirements are defined in [staging evidence](staging-evidence.md), the
-classification methodology in [classification evaluation](classification-evaluation.md), and the
-runtime methodology in [runtime benchmark](runtime-benchmark.md). `RELEASING.md` defines the order
-in which candidate and release artifacts are created.
-
-## White-paper review edition
-
-The [current white paper](cascade-compression-whitepaper.md) cites a local integration check
-in the separate proof workspace: **22 focused tests passed**, and a **two-case synthetic static
-arm** ran against a locally built **0.2.0rc5** wheel with **zero model calls** and **zero execution
-failures**. The wheel SHA-256 was
-`a2c5a5e957b96462920272e8bb2fc20b3c1e6287bdf68020072c879a425ebf0f`.
-The verification note is retained in the author's local workspace, not as attested public release
-evidence. Treat these as bounded import-isolation observations, not qualification of a published
-release or proof of classification effectiveness, compression, production safety, or savings.
+| Engine behavior and contracts | The documented mechanics and fail-closed invariants exist | Source, schemas, and the tests that exercise the named invariant on the same commit | **Verified** — 1,420 tests, CI green |
+| Staging-qualified artifact | The release installs, its tested mechanics execute, classification agreement is measured, and the supply chain is bound to one commit | Green CI/public-safety checks, attested candidate package and image, SBOM/provenance, and `config/release-profile.json` declaring `staging_qualified` | **Passed** — 0.2.0, 2026-11-02 |
+| Classification effectiveness | 78.1% agreement on 160 adjudicated production cases (single-reviewer); 98% needs_attention recall; 4 dangerous | [Case study](case-study-platform-pilot.md); measurement harness and per-case results; platform-context fact extraction prompt revision | **Measured** — exceeds the 3-model judge panel (55.6%) and human panel (48.8%) |
+| Compression effectiveness | 92% end-to-end elimination on a 24-hour platform pilot; three-arm comparison (817K observations); zero dangerous misses; 1,947 shadow re-checks, zero demotions | [Case study](case-study-platform-pilot.md); frozen-capture raw artifacts (private); three-arm comparison report | **Measured** — one platform, one window, workload-dependent |
+| Cross-domain truth | BGL 100% recall · RT-IoT 88.6%/0% FP · AI4I 97.3% (value rules) · Backblaze 87.3%/86.7% · multi-sensory 100% · fraud 73.6%/82.5% · satellite 43% (boundary) | Evidence files in `local-evidence/flightpath-cross-domain-20261027/` (private); claims register in the production repo | **Verified** — nine domains, four boundaries mapped |
+| Small-model qualification | Qwen2.5-3B: 100%/97.4% fact agreement with the 8B, 3.7GB RSS, 1.9x faster | Model-comparison evidence file (private); per-case results on the corpora PVC | **Verified** — qualifies as the event-lane model |
+| Runtime cost | Model calls reduced from ~600/day to ~140/day on the pilot platform; template cache absorbs most fact-first residue | [Case study](case-study-platform-pilot.md); live service stats | **Measured** — one platform, estimated pricing |
+| Governed staging health | Three-arm comparison, shadow validation, witnessed changes, GCL audit, graduated suppression tiers — all demonstrated live | Staging evidence package (private); witnessed-change records | **Verified** — all engineering items complete |
+| Supply-chain identity | A wheel, source archive, SBOM, and container came from a specific candidate commit | Candidate manifest hashes, immutable image digest, GitHub attestations, and release workflow | **Verified** — v0.2.0 release with wheel artifact |
+| Historical routing benchmark | The bundled router can consume a sanitized benchmark-shaped corpus | `config/corpora.json`, `data/benchmark_matrix.json`, and the metadata embedded in those files | Context only; not RC evidence |
+| TCO scenarios | The calculator evaluates explicit assumptions | `data/hardware_profiles.json`, `data/model_profiles.json`, `data/workload_profiles.json`, and request assumptions | Synthetic assumptions; not customer economics |

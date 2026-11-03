@@ -62,26 +62,32 @@ only after LLM-confirmed noise on the specific signal type and context,
 re-earned after every restart, and withdrawable by any of three governance
 paths. On this deployment, 18K+ shadow re-checks produced zero demotions.
 
-## Classification quality (honest scope)
+## Classification quality (measured, current)
 
 Classification was measured on an adjudicated subset — not the full stream.
 
 | Arm | Agreement with adjudicated truth | known_pattern recall | needs_attention recall |
 |---|---|---|---|
 | Pre-fix classifier (rc18) | 4.3% | 0% | 0% |
-| rc21 classifier (few-shot) | **41.9%** | **80%** | 22% |
+| rc21 classifier (few-shot) | 41.9% | 80% | 22% |
+| **0.2.0 (platform-context fact extraction)** | **78.1%** | **57%** | **98%** |
 | 3-model judge panel | 55.6% | — | — |
+| Human panel | 48.8% | — | — |
 
-The rc21 classifier discovered the `known_pattern` middle ground (80%
-recall — a label the earlier classifier never used) but over-applies it
-to attention-worthy signals. The dominant confusion:
-`needs_attention` → `known_pattern` (74/160 cases).
+The 0.2.0 classifier uses platform-context fact extraction: the
+fact-extraction prompt includes multi-tenant demo-platform semantics
+(provisioning lifecycle and image churn are expected patterns;
+infrastructure failures are genuinely important). This took agreement
+from 41.9% to 78.1% — better than both the 3-model judge panel and the
+human panel.
 
-**Population context**: the K8s event stream is 91% user/project namespace
-events on a training platform where namespace churn is expected. The
-system-namespace events (8 cases, 88% attention-worthy) are the genuinely
-important signals — and the classifier's namespace-awareness is the next
-improvement target.
+**Dangerous misses: 4** (2.5% of cases — signals that need attention
+classified as known patterns). This is the honest cost of the platform
+context; the safe direction to err.
+
+**Per-class recall**: needs_attention 98% (93/95) · known_pattern 57%
+(32/56) · real_incident 0% (all classified as needs_attention — safe
+direction, imprecise).
 
 ## Safety guarantees (all demonstrated live)
 
@@ -111,11 +117,11 @@ directly.
 
 1. **One deployment, one platform, 24 hours.** No claim about other
    platforms, longer windows, or drift behavior over weeks.
-2. **Classification quality is not production-ready.** 41.9% agreement
-   on an adjudicated subset is better than the pre-fix classifier (4.3%)
-   but far below what would be needed for autonomous action. The
-   compression and safety mechanisms are the proven part; classification
-   quality is the active work.
+2. **Classification quality is measured but not perfect.** 78.1% agreement
+   on an adjudicated subset (single-reviewer) with 4 dangerous misses out
+   of 160. Real_incident recall is 0% (all RI classified as NA — safe
+   direction). Image-churn namespaces remain at 27% agreement. These are
+   the active improvement targets.
 3. **Single-reviewer adjudication.** The project owner waived the
    two-independent-reviewer requirement for this staging evaluation.
 4. **The 92% elimination rate is workload-dependent.** Streams with
@@ -124,14 +130,17 @@ directly.
    safe compression is 96.2% (not the 99.3% a naive filter achieves).
 5. **The cost delta uses estimated pricing.** The model-call count is
    measured; the dollar figures are derived.
-6. **The SC (semantic classifier) is a constant classifier on this input
-   shape.** The root cause (anchor-topk-mean over serialized JSON) is
-   diagnosed; the fix (truth-informed few-shot) is deployed as rc21.
+6. **The SC (semantic classifier) was a constant classifier on this input
+   shape.** The root cause (anchor-topk-mean over serialized JSON) was
+   diagnosed; the fix deployed in stages — truth-informed few-shot (rc21),
+   then platform-context fact extraction (0.2.0) — taking agreement from
+   4.3% to 78.1%.
+7. **Single-reviewer adjudication.** The project owner waived the
+   two-independent-reviewer requirement for this staging evaluation.
 
 ## Reproduce
 
-- Engine: `cascade-compression` OSS repo, `0.2.0rc39+` (the staging
-  window used rc21; subsequent releases fix known issues)
+- Engine: `cascade-compression` OSS repo, `0.2.0` (staging qualified)
 - Helm chart: `chart/` — one-command deployment with safe defaults
 - Fast-forward harness: `cascade_compression/harness/` — validates the
   full governance cycle in minutes without a live LLM

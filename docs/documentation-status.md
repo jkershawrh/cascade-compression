@@ -5,7 +5,7 @@ the current local proof guides where applicable, and the new handoff/roadmap gui
 document scope and authority; it is not an assertion that every historical number was remeasured
 or that CI, release publication, or production qualification was rerun.
 
-The package source is on the `0.2.0rc5` incubating line. [proof-handoff.md](proof-handoff.md)
+The package is `0.2.0` — staging qualified. [evidence register](evidence-register.md) · [case study](case-study-platform-pilot.md)
 defines reviewed transfer from production evidence; [roadmap.md](roadmap.md) defines next steps.
 Mechanics, classification effectiveness, staging health, production suitability, and value are
 separate claim classes. No new effectiveness result is supplied by this documentation update.

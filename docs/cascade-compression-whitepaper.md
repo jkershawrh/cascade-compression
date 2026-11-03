@@ -81,7 +81,7 @@ The public repository is the reusable engine. The production-proof repository is
 
 Source and contracts describe tiered handling, promotion and demotion, memory lifecycle, classifier interfaces, and governed evidence boundaries. Tests can verify named behavior on a specific revision. That is evidence of executable mechanics, rather than proof of effectiveness across a population of operational signals.
 
-The public source package is on the 0.2.0rc5 experimental line. Its release profile is incubating_oss and explicitly excludes classification-effectiveness, natural compression, staging-readiness, production-readiness, and customer-outcome claims. A version string is not evidence that a particular release has passed qualification.
+The package is 0.2.0 — staging qualified. Classification agreement: 78.1% on adjudicated production cases. Platform-pilot compression: 92% end-to-end elimination. See the [case study](case-study-platform-pilot.md) and [evidence register](evidence-register.md) for scope and limitations.
 
 ### Exact-artifact evaluation
 

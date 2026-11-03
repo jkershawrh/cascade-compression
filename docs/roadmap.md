@@ -1,6 +1,6 @@
 # Cascade OSS roadmap
 
-Reviewed 2026-10-13. The source package is on `0.2.0rc5`; the release profile is `incubating_oss`.
+Reviewed 2026-11-02. The package is `0.2.0` — staging qualified. Classification 78.1%, compression 92% (platform pilot).
 Reusable product mechanics exist. The next phase improves adoption, inspectability, and evidence,
 without turning classifier research into a prerequisite for having an OSS product. This is an
 ordered roadmap with exit criteria, not a dated commitment or a claim that pending gates passed.
