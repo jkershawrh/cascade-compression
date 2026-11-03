@@ -109,7 +109,9 @@ Three tiers, each earning its authority:
   LLM-confirmed noise — it's earned, not assumed.
 - **Micro** (CPU, 21–25ms): per-domain trained classification heads,
   margin-gated. [llm-d-sc](https://github.com/llm-d-incubation/llm-d-semantic-classifier)
-  can serve as the semantic fast path.
+  can serve as the semantic fast path — measured at 55% agreement on
+  adjudicated production signals (91% needs_attention recall), equivalent
+  to a 3-model judge panel.
 - **Macro** (LLM): fact extraction (designed/impact/recovery) with a
   versioned rubric, template cache for repeated inputs, and a hybrid
   router that prefers cheaper tiers when confident.

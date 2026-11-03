@@ -1,8 +1,8 @@
 # PR to llm-d-sc: Add Cascade Compression as a known integration
 
 **Target repo:** https://github.com/llm-d-incubation/llm-d-semantic-classifier
-**PR title:** docs: add Cascade Compression as a known integration
-**Files changed:** `README.md` (one section added after existing integrations/examples)
+**PR title:** docs: add Cascade Compression as a measured integration
+**Files changed:** `README.md` (one section added)
 
 ---
 
@@ -14,20 +14,24 @@
 ### Cascade Compression
 
 [Cascade Compression](https://github.com/jkershawrh/cascade-compression)
-uses llm-d-sc as an optional semantic-classification fast path within a
-three-tier signal-compression engine. Cascade routes the repetitive
-majority of operational signals (Kubernetes events, Ansible task
-outcomes, IoT telemetry) through deterministic tiers and reserves LLM
-capacity for what's genuinely ambiguous — llm-d-sc serves as the CPU
-classification layer for the traffic that survives deterministic
-filtering.
+is a signal-compression engine that uses llm-d-sc as a margin-gated
+CPU fast path within a three-tier classification pipeline. Cascade
+routes the repetitive majority of operational signals (Kubernetes
+events, Ansible task outcomes, IoT telemetry) through deterministic
+tiers; llm-d-sc serves the confident remainder on CPU; the LLM handles
+only what anchor similarity can't discriminate.
 
-In a 24-hour platform pilot, the combined system eliminated 92% of raw
-observations before they reached LLM inference, with zero dangerous
-misses verified against a three-arm comparison. Cascade retains
-authority over confidence policy, fallback, promotion, demotion, and
-provenance; llm-d-sc provides the semantic classification within that
-governed lifecycle.
+**Measured on 160 adjudicated production signals** (Kubernetes event
+stream, multi-tenant demo platform): llm-d-sc's anchor-based
+classification achieved 55% agreement with human adjudication —
+equivalent to a 3-model judge panel (55.6%). Needs_attention recall:
+91%. The integration is deployed as a margin-gated fast path: confident
+anchor matches are served on CPU (zero model calls); ambiguous cases
+fall through to the LLM's fact-extraction rubric.
+
+In the full pipeline (nano tier + value rules + llm-d-sc + LLM): 92%
+end-to-end signal elimination with zero dangerous misses on a 24-hour
+platform pilot.
 
 ```bash
 helm install cascade ./chart \
@@ -36,9 +40,9 @@ helm install cascade ./chart \
 ```
 
 See the [Cascade Compression README](https://github.com/jkershawrh/cascade-compression)
-for the full architecture, and the
+and the
 [platform pilot case study](https://github.com/jkershawrh/cascade-compression/blob/main/docs/case-study-platform-pilot.md)
-for measured results.
+for full architecture and measured results.
 ```
 
 ---
@@ -48,20 +52,35 @@ for measured results.
 ```markdown
 ## Summary
 
-Adds Cascade Compression as a known integration of llm-d-sc. Cascade is
-an open-source signal-compression engine that uses llm-d-sc as its
-semantic-classification fast path, wrapping it in a governed lifecycle
-(qualified suppression, shadow validation, graduated authority, audit).
+Adds Cascade Compression as a measured integration of llm-d-sc.
+Cascade is an open-source signal-compression engine that deploys
+llm-d-sc as a margin-gated CPU classification fast path, wrapping it
+in a governed lifecycle (qualified suppression, shadow validation,
+graduated authority, audit).
 
-## Why this is useful to llm-d-sc users
+## What this demonstrates
 
-Demonstrates llm-d-sc running in a production-shaped pipeline at volume
-(~7.4M signals/day on the referenced deployment), with measured results.
-Also shows the gRPC integration pattern for projects that want to use
-llm-d-sc as a component rather than a standalone service.
+- llm-d-sc's anchor-based classification running on structured
+  operational signals at production volume (~7.4M signals/day on the
+  referenced deployment)
+- 55% agreement with human adjudication on 160 production signals —
+  equivalent to a 3-model judge panel
+- 91% needs_attention recall — effective at identifying genuinely
+  important signals
+- The margin-gated integration pattern: confident anchor matches
+  served on CPU, ambiguous cases routed to the LLM
+
+## Feedback for llm-d-sc
+
+- The anchor-topk-mean approach discriminates effectively on
+  structured signals with truth-informed anchors (an improvement over
+  earlier testing with serialized JSON blobs)
+- Known_pattern recall remains low (4%) — embedding similarity between
+  "expected operational pattern" and "genuine failure" is small.
+  Domain-specific anchor enrichment or a secondary discrimination
+  layer could address this.
 
 ## Changes
 
 - Adds a "Known integrations" section to the README with Cascade
-  Compression, including install instructions and a link to the
-  measured case study.
+  Compression, including the measured results and install instructions.
