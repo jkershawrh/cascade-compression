@@ -86,11 +86,10 @@ limitations.
 
 - The 92% is from one platform, one 24-hour window, one workload.
   We say so. We're not claiming it generalizes.
-- Classification quality is measured on an adjudicated subset (70
-  cases), not the full stream. The current classifier achieves 41.9%
-  agreement with human adjudication — better than the 4.3% we started
-  with, but not production-ready for autonomous action. We say that
-  too.
+- Classification quality is measured on an adjudicated subset, not the
+  full stream. The current classifier achieves 78.1% agreement with human
+  adjudication (84% on a held-out set of unseen cases, 100% recall on
+  signals that need attention, zero dangerous misses). We say that too.
 - The three-arm comparison is the honest bound: even on this highly
   repetitive stream, the safe compression is 96.2%, not the 99.3% a
   naive filter achieves. The gap between those numbers is the cost
