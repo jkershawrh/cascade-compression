@@ -28,36 +28,57 @@ dropped 145 signals that mattered. One hundred forty-five instances
 where "this looks like a repeat" was wrong, and the signal someone
 needed to see never arrived.
 
-## The approach: earn the right to suppress
+## Why a filter isn't enough
 
-We built [Cascade Compression](https://github.com/jkershawrh/cascade-compression),
-an open-source signal-compression engine that sits between signal
-sources and the LLM. It's not a filter — it's a governed lifecycle
-around classification. The core idea: **suppression authority must be
-earned, not assumed.**
+We tested the obvious fix first. A simple dedup filter achieved 99.3%
+compression on our stream — and dropped 145 signals that mattered.
+One hundred forty-five instances where "this looks like a repeat" was
+wrong, and the signal someone needed to see never arrived.
 
-The pipeline has three tiers, each cheaper than the last:
+But the real problem with a filter isn't the 145 misses — it's that
+a filter is a **static snapshot of what looked repetitive yesterday**.
+It can't learn that a new signal type is routine. It can't adapt when
+the platform's operating rhythm changes. It can't tell you *why* it
+suppressed something, or *what* survived, or *whether* its assumptions
+still hold. And it has no memory — the compressed signals are gone.
 
-1. **Nano tier** (deterministic, ~0ms): identity-based dedup with
-   count-folding, qualified noise suppressors, and a severity gate.
-   A suppressor can only act on a signal type after the LLM has
-   confirmed that type as noise — and the authority expires after 72
-   hours, requiring re-qualification.
+## What Cascade actually does
 
-2. **Value rules** (deterministic, ~0ms): for numeric telemetry,
-   spec-sheet thresholds. If a vibration sensor reads within its rated
-   range, it's healthy. If a temperature differential exceeds the
-   equipment spec, it escalates. No model call needed.
+Cascade Compression isn't a filter. It's a **governed lifecycle around
+classification** — a system that learns what's routine, earns the right
+to suppress it, remembers what survived, and can withdraw that right
+the moment it's wrong.
 
-3. **Trained heads** (CPU, 21–25ms): per-domain classification heads
-   running on [llm-d-sc](https://github.com/llm-d-incubation/llm-d-semantic-classifier),
-   margin-gated so uncertain predictions fall through to the next tier.
+**It learns.** A suppressor can only act on a signal type after the
+LLM has confirmed that type as noise. New patterns get discovered,
+promoted, and become suppressible. When the platform changes — a new
+namespace, a new automation job, a new failure mode — the system adapts.
+After every restart, authority resets and must be re-earned. We've
+watched compression climb from 0% to 46% after each deployment as
+suppressors re-qualify, live.
 
-Only the ambiguous remainder reaches the LLM, where a fact-extraction
-rubric (designed behavior? impact? recovery state?) produces the final
-label. A template cache absorbs repeated classification inputs.
+**It routes by what the signal IS.** Text events (Kubernetes warnings,
+Ansible failures) go to an LLM rubric that extracts facts. Numeric
+telemetry (vibration, temperature, drive health) goes to deterministic
+spec-sheet rules — because we measured that LLMs can't distinguish
+"the temperature is 298K" from "the temperature is dangerously high."
+The right lane for the right signal, measured across nine domains.
 
-## The results (measured, not projected)
+**It remembers.** Signals that survive compression become an
+institutional memory — strength-weighted, federated across instances,
+queryable by agents through MCP tools. When someone asks "why did this
+environment fail?", the answer comes from what the system actually
+observed, not from a log search. The compression is the cost saving;
+the memory is the value.
+
+**It's accountable.** Every decision is recorded in an immutable
+ledger. Shadow validation re-checks 5% of suppressions. Three
+independent withdrawal paths — negative validation, GCL audit verdicts,
+shadow disagreement — can strip authority instantly. When we ran a
+three-arm comparison on a frozen 24-hour capture, Cascade achieved
+96.2% compression with **zero** dangerous misses (vs the filter's 145).
+
+## The results
 
 We ran a three-arm comparison on a frozen 24-hour capture of 817,000
 observations from the live platform:
