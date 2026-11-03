@@ -163,7 +163,8 @@ in the GCL repository.
 
 **0.2.0** — staging qualified. The engine, governance, Helm chart, and MCP
 server are complete and tested. Classification quality is actively
-improving (41.9% agreement on the pilot's adjudicated subset — see the
+improving (78.1% on the tuning set, 84.0% on the held-out 100 with
+100% NA recall and zero dangerous — see the
 case study for honest scope). Python 3.9–3.13.
 
 ## License

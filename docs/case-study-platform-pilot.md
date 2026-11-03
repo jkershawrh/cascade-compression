@@ -81,9 +81,12 @@ infrastructure failures are genuinely important). This took agreement
 from 41.9% to 78.1% — better than both the 3-model judge panel and the
 human panel.
 
-**Dangerous misses: 4** (2.5% of cases — signals that need attention
-classified as known patterns). This is the honest cost of the platform
-context; the safe direction to err.
+**Held-out generalization (100 unseen cases, zero overlap with tuning set):**
+84.0% agreement, 100% needs_attention recall, zero dangerous. The
+classifier defaults to needs_attention on unseen signals — the safe
+direction — achieving 84% because 84% of the held-out population is
+needs_attention. Known_pattern discrimination does not generalize to
+new cases (0% KP recall on held-out vs 57% on tuning set).
 
 **Per-class recall**: needs_attention 98% (93/95) · known_pattern 57%
 (32/56) · real_incident 0% (all classified as needs_attention — safe

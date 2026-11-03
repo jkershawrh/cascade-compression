@@ -14,7 +14,7 @@
 | 1.2 | Publish the Red Hat Developer blog post | 1 review | draft ready (`docs/pr-drafts/redhat-developer-blog-post.md`) |
 | 1.3 | List MCP in registries (Smithery, PulseMCP, official MCP registry) | 30 min | needs account setup |
 | 1.4 | Get the first external contributor | ongoing | the "PR #1 from someone else" milestone |
-| 1.5 | Close one outcome loop on infra01 | 1 session | fix `pool_exhausted`, show the signal drop on the live view |
+| 1.5 | Close one outcome loop on the production platform | 1 session | fix `pool_exhausted`, show the signal drop on the live view |
 
 **1.5 is the one that matters most** — one chronic issue from the memory, remediated, with the effect visible on the dashboard. That's the lighthouse-user story.
 
@@ -24,7 +24,7 @@
 
 | # | Item | What it fixes | Effort |
 |---|---|---|---|
-| 2.1 | cnv-images namespace exemplars | 27% → target 70%+ (16 cases) | domain-pack change |
+| 2.1 | image-churn namespace exemplars | 27% → target 70%+ (16 cases) | domain-pack change |
 | 2.2 | Real_incident label discrimination | 0% RI recall (all RI → NA) | rubric or prompt refinement |
 | 2.3 | Run the held-out 100 | the generalization number | 1 measurement session |
 | 2.4 | AAP head retrain (v2) | the margin-gate hedge | needs better training data, not more data |
@@ -65,7 +65,7 @@
 
 | # | Item | Why | Effort |
 |---|---|---|---|
-| 5.1 | Roll infra01 to 0.2.0 | both clusters on the same revision | 30 min |
+| 5.1 | Roll the production cluster to 0.2.0 | both clusters on the same revision | 30 min |
 | 5.2 | AAP estate stabilization | the 4 new collectors need state to stabilize; the malformed memories (from the wire-format bug) will decay through consolidation | wait |
 | 5.3 | Memory archive O(n) eviction | 8s/POST at archive capacity — heap-indexed eviction | optimization |
 | 5.4 | Backblaze pack formalization | candidate spec validated (87.3%); formalize if a replay deploys | optional |
@@ -75,7 +75,7 @@
 ## What I'd do next session, in order
 
 1. **Submit the llm-d-sc PR** (5 minutes, highest distribution leverage)
-2. **Roll infra01 to 0.2.0** (30 minutes, parity)
+2. **Roll the production cluster to 0.2.0** (30 minutes, parity)
 3. **Run the held-out 100** (the generalization number — the most important measurement remaining)
 4. **Turn on the digest** (config only — the first consumer activation)
 5. **Build the NUC-edge envelope** (the verge proof)
