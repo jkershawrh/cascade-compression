@@ -1,21 +1,20 @@
 # Cascade Compression
 
-Most of what you send to an LLM for triage is a repeat. In a 24-hour
-platform pilot, 92% of raw observations were duplicates, known patterns,
-or confidently classifiable on CPU — so Cascade routed them deterministically
-(~25ms, $0) and sent only the ambiguous remainder to the model.
-[Read the bounded claim and its limits →](docs/case-study-platform-pilot.md)
+A recurring signal can take a cheaper path once its handling has been
+validated. Cascade can withdraw that authority when later evidence
+disagrees and keep what survived for the next investigation.
 
 Cascade Compression is a domain-agnostic signal-compression engine for
 CPU inference. It sits between your signal sources (Kubernetes events,
 Ansible task outcomes, IoT telemetry, application logs) and your LLM,
-routing the repetitive majority through deterministic tiers and reserving
-model capacity for what's genuinely new or ambiguous.
+routing eligible repeats through deterministic tiers and reserving
+model capacity for unresolved cases. The public v0.2.0 wheel lacks a
+verified staging handoff. [Release evidence](docs/evidence-register.md)
 
 ## Try it in 60 seconds
 
 ```bash
-pip install cascade-compression
+pip install .  # from this checkout
 python -m uvicorn cascade_compression.service:app --port 8090
 ```
 
@@ -28,6 +27,7 @@ Or deploy with Helm:
 
 ```bash
 helm install cascade ./chart \
+  --set image.repository=your-registry.example.com/cascade \
   --set llm.url=https://your-gateway \
   --set llm.key=your-key \
   --set llm.model=granite-3-2-8b-instruct
@@ -37,32 +37,32 @@ helm install cascade ./chart \
 
 ```
 signals ──→ nano tier (dedup, qualified suppression, severity gate)
-                │  ~46% eliminated, 0 ms, $0
+                │  eligible repeats can be folded or suppressed
                 ▼
             value rules (deterministic spec-sheet thresholds)
-                │  sensor lanes: 100% resolved, 0 model calls
+                │  covered measurements can resolve without an LLM call
                 ▼
-            trained heads (per-domain CPU classifiers, 21–25 ms)
-                │  ~27–71% of classified volume
+            trained heads (per-domain CPU classifiers)
+                │  confident classifications can take the CPU path
                 ▼
             fact-first rubric (LLM extracts designed/impact/recovery)
-                │  template cache absorbs most repeats
+                │  template cache can reuse prior fact extraction
                 ▼
-            LLM (the ambiguous remainder — ~1–2/second sustained)
+            LLM (unresolved cases)
                 ▼
             memory (survivors become durable, queryable, federated)
 ```
 
 Every tier is **governed**: suppressor authority is earned by LLM-confirmed
 noise, re-earned after restart, and withdrawable by three independent paths
-(negative validation, GCL audit verdict, shadow disagreement). In the pilot:
-1,947 shadow re-checks, zero demotions.
+(negative validation, GCL audit verdict, shadow disagreement). The pilot
+reported shadow rechecks with zero demotions during observed windows.
 
-## What's proven
+## Historical measurements
 
 | Domain | Result | Source |
 |---|---|---|
-| OpenShift platform (24h pilot) | 92% end-to-end elimination, 0 dangerous misses | [case study](docs/case-study-platform-pilot.md) |
+| OpenShift events (24h rc7 replay) | 748,787/817,479 retained. All 215 recurring final counts preserved. | [case study](docs/case-study-platform-pilot.md) |
 | BGL supercomputer logs | 100% anomaly recall, 0 dangerous | [evidence](docs/evidence-register.md) |
 | Network intrusion (RT-IoT) | 88.6% attack recall, 0% FP | [evidence](docs/evidence-register.md) |
 | AI4I predictive maintenance | 97.3% telemetry recall (value rules) | [evidence](docs/evidence-register.md) |
@@ -80,7 +80,7 @@ Cascade ships an MCP server — agents can query the memory, recall signals,
 and generate summaries:
 
 ```bash
-pip install cascade-compression[mcp]
+pip install ".[mcp]"
 python -m cascade_compression.mcp_server --service http://localhost:8090
 ```
 
@@ -104,14 +104,14 @@ See [docs/domain-pack-guide.md](docs/domain-pack-guide.md) to write your own.
 
 Three tiers, each earning its authority:
 
-- **Nano** (deterministic, ~0ms): identity-based dedup with count-folding,
+- **Nano** (deterministic): identity-based dedup with count-folding,
   qualified noise suppressors, severity gate. Suppression requires
   LLM-confirmed noise — it's earned, not assumed.
-- **Micro** (CPU, 21–25ms): per-domain trained classification heads,
-  margin-gated. [llm-d-sc](https://github.com/llm-d-incubation/llm-d-semantic-classifier)
-  can serve as the semantic fast path — measured at 55% agreement on
-  adjudicated production signals (91% needs_attention recall), equivalent
-  to a 3-model judge panel.
+- **Micro** (CPU): per-domain trained classification heads, margin-gated.
+  [llm-d-sc](https://github.com/llm-d-incubation/llm-d-semantic-classifier)
+  can serve as the semantic fast path. On 160 development cases the anchor
+  classifier had 55% agreement, 91% needs_attention recall and 4%
+  known_pattern recall.
 - **Macro** (LLM): fact extraction (designed/impact/recovery) with a
   versioned rubric, template cache for repeated inputs, and a hybrid
   router that prefers cheaper tiers when confident.
@@ -128,22 +128,20 @@ pip install -e ".[dev]"
 pytest -q
 ```
 
-1,420 tests covering the full pipeline, safety guarantees, domain packs,
-sensor adapters, MCP server, and the fast-forward harness.
+Tests cover the pipeline, safety contracts, domain packs, sensor adapters,
+MCP server, and the fast-forward harness.
 
 ## Evidence and governance
 
-Every quantitative claim in this repository traces to an evidence file.
-The [evidence register](docs/evidence-register.md) tracks claim class
-(verified / corrected / candidate) for every finding. The
-[case study](docs/case-study-platform-pilot.md) publishes the bounded
-24-hour pilot claim with full limitations.
+The evidence register identifies the published artifact and the checks
+that ran. The case study separates the rc7 replay, the live pilot's ~92%
+estimate of traffic avoiding inference, and the classifier experiments.
+[Evidence register](docs/evidence-register.md) · [Case study](docs/case-study-platform-pilot.md)
 
 Governance mechanisms are structural, not classifier-dependent:
 first-occurrence delivery, fail-open severity bands, shadow validation,
 GCL audit with hash-chained receipts, graduated suppression tiers with
-time-bounded authority, and three independent withdrawal paths — all
-demonstrated live.
+time-bounded authority, and three independent withdrawal paths.
 
 For the full governance contract, see
 [docs/graduated-authority.md](https://github.com/jkershawrh/governed-cognitive-loop/blob/main/docs/graduated-authority.md)
@@ -151,7 +149,7 @@ in the GCL repository.
 
 ## Documentation
 
-- [Case study: 92% elimination, 24h pilot](docs/case-study-platform-pilot.md)
+- [Platform pilot and frozen replay](docs/case-study-platform-pilot.md)
 - [White paper](docs/cascade-compression-whitepaper.md)
 - [Architecture](docs/architecture.md)
 - [Domain pack guide](docs/domain-pack-guide.md)
@@ -161,11 +159,15 @@ in the GCL repository.
 
 ## Status
 
-**0.2.0** — staging qualified. The engine, governance, Helm chart, and MCP
-server are complete and tested. Classification quality is actively
-improving (78.1% on the tuning set, 84.0% on the held-out 100 with
-100% NA recall and zero dangerous — see the
-case study for honest scope). Python 3.9–3.13.
+The published `v0.2.0` release has no verified, candidate-bound staging
+qualification. The local working candidate is `0.2.1rc1` with the
+`incubating_oss` profile. Python 3.9–3.13.
+
+On 160 tuning cases, the platform-context classifier had 78.1% agreement
+and four dangerous errors. On the held-out 100 it got 84/84 needs_attention
+and 0/16 known_pattern correct, tying the always-needs_attention baseline.
+The holdout contained no real_incident or routine_noise cases.
+[Case study](docs/case-study-platform-pilot.md)
 
 ## License
 

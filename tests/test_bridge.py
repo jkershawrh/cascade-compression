@@ -300,19 +300,9 @@ class TestGCLBuiltinFiltering:
         assert stats["gcl_builtin_fails"] == 100
         assert stats["fn_count"] is None  # no FN evaluated
 
-    def test_first_poll_sends_from_ts_window(self):
-        """First poll must window the query, not fetch full history.
-
-        Found on a live deployment while wiring the governance loop:
-        with watermark=0 the first poll sends no ``from_ts``, the ledger
-        gateway pulls its full-content cap (~10k entries, >15s against
-        a large verdict history), the 15s httpx timeout fires, the
-        watermark never advances, and every retry repeats the same
-        doomed query — the verdict poll is silently stuck forever.
-        The first poll must open a bounded lookback window (covering the audit cadence), not exactly ``now``: verdict batches are written before the poll opens its window, so a now-windowed first poll finds nothing, never advances the watermark, and misses every batch.
-        """
-        import time as _time
-
+    def test_first_poll_has_explicit_bounds(self, monkeypatch):
+        """A new consumer covers the ledger in bounded pages from its origin."""
+        monkeypatch.setenv("CASCADE_VERDICT_MODE", "legacy")
         bridge = CascadeBridge(domain="kubernetes")
         bridge._ledger_url = "https://ledger.example"
         response = MagicMock()
@@ -321,32 +311,19 @@ class TestGCLBuiltinFiltering:
         client.get.return_value = response
         client.__enter__.return_value = client
 
-        before = int(_time.time() * 1000)
         with patch("httpx.Client", return_value=client):
             bridge._poll_gcl_verdicts()
-        after = int(_time.time() * 1000)
 
         params = client.get.call_args.kwargs.get("params", {})
-        assert "from_ts" in params, "first poll must not query full history"
-        # First poll looks back ~20 minutes (covers a 15-minute audit
-        # cadence with margin), bounded either side.
-        lookback_ms = 20 * 60 * 1000
-        assert before - lookback_ms - 2000 <= params["from_ts"] <= after - lookback_ms + 2000
+        assert params["from_ts"] == 0
+        assert params["to_ts"] > 0
+        assert 0 < int(params["page_size"]) <= 500
 
-    def test_stale_watermark_is_capped_to_bounded_window(self):
-        """A stale watermark must not query the full verdict backlog.
-
-        Found on a live deployment: pre-fix pods crawled the oldest
-        historical verdicts and persisted a days-old watermark; the
-        successor pod inherited it via the state snapshot. Every poll
-        then queried the entire backlog since that watermark — the
-        gateway's full-content cap makes that query far outlast the
-        HTTP timeout, so the poll consumes nothing and the frozen
-        watermark dooms every retry. The effective window must be
-        capped: stale watermarks skip to the recent window.
-        """
+    def test_stale_watermark_is_preserved(self, monkeypatch):
+        """The page budget bounds the read; skipping old FAILS drops feedback."""
         import time as _time
 
+        monkeypatch.setenv("CASCADE_VERDICT_MODE", "legacy")
         bridge = CascadeBridge(domain="kubernetes")
         bridge._ledger_url = "https://ledger.example"
         bridge._verdict_watermark = (
@@ -358,19 +335,15 @@ class TestGCLBuiltinFiltering:
         client.get.return_value = response
         client.__enter__.return_value = client
 
-        before = int(_time.time() * 1000)
+        floor = bridge._verdict_watermark
         with patch("httpx.Client", return_value=client):
             bridge._poll_gcl_verdicts()
 
         params = client.get.call_args.kwargs.get("params", {})
-        # The query must NOT use the stale watermark; it must be capped
-        # to the bounded recent window (~20 min).
-        assert params["from_ts"] >= before - 22 * 60 * 1000, (
-            "stale watermark passed through — full-backlog query would "
-            "time out and freeze the poll forever"
-        )
+        assert params["from_ts"] == floor
 
-    def test_written_ts_advances_watermark_and_entry_id_deduplicates(self):
+    def test_legacy_partial_page_applies_negative_and_pins_watermark(self, monkeypatch):
+        monkeypatch.setenv("CASCADE_VERDICT_MODE", "legacy")
         bridge = CascadeBridge()
         bridge._ledger_url = "https://ledger.example"
         entry = {
@@ -395,7 +368,7 @@ class TestGCLBuiltinFiltering:
             bridge._poll_gcl_verdicts()
             bridge._poll_gcl_verdicts()
 
-        assert bridge._verdict_watermark == 1786208236746
+        assert bridge._verdict_watermark == 0  # No terminal pagination metadata.
         assert list(bridge._verdict_seen_ids) == ["verdict-1"]
         assert bridge._fn_count == 1
         assert bridge._fn_evaluated == 1

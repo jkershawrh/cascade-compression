@@ -12,7 +12,7 @@
     },
     "event_type": {
       "type": "string",
-      "enum": ["formed", "recalled", "consolidated", "evicted", "federated", "rejected", "verified"],
+      "enum": ["formed", "recalled", "consolidated", "evicted", "federated", "rejected", "verified", "classification_updated"],
       "description": "Type of lifecycle event"
     },
     "timestamp": {
@@ -23,5 +23,23 @@
       "type": "object",
       "description": "Event-specific details (strength change, eviction reason, etc.)"
     }
-  }
+  },
+  "allOf": [{
+    "if": {"properties": {"event_type": {"const": "classification_updated"}}},
+    "then": {
+      "required": ["details"],
+      "properties": {"details": {
+        "type": "object",
+        "required": ["work_id", "signal_id", "event_id", "previous_classification", "classification", "classifier"],
+        "properties": {
+          "work_id": {"type": "string", "minLength": 1},
+          "signal_id": {"type": "string", "minLength": 1},
+          "event_id": {"type": "string", "minLength": 1},
+          "previous_classification": {"type": "string"},
+          "classification": {"enum": ["routine_noise", "known_pattern", "needs_attention", "real_incident"]},
+          "classifier": {"type": "object"}
+        }
+      }}
+    }
+  }]
 }

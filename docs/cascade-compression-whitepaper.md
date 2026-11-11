@@ -81,7 +81,7 @@ The public repository is the reusable engine. The production-proof repository is
 
 Source and contracts describe tiered handling, promotion and demotion, memory lifecycle, classifier interfaces, and governed evidence boundaries. Tests can verify named behavior on a specific revision. That is evidence of executable mechanics, rather than proof of effectiveness across a population of operational signals.
 
-The package is 0.2.0 — staging qualified. Classification agreement: 78.1% on adjudicated production cases. Platform-pilot compression: 92% end-to-end elimination. See the [case study](case-study-platform-pilot.md) and [evidence register](evidence-register.md) for scope and limitations.
+A wheel was published at v0.2.0. Release verification failed before the candidate-bound staging handoff. The platform replay, live estimates and classification experiments have separate denominators and evidence limits. [Case study](case-study-platform-pilot.md) · [Evidence register](evidence-register.md)
 
 ### Exact-artifact evaluation
 

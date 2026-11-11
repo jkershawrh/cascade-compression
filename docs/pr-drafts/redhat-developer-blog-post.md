@@ -1,42 +1,33 @@
-# How we cut LLM triage cost 92% on our demo platform — and the evidence contract that made us trust it
+# How our demo platform earns and withdraws the right to suppress triage signals
 
-*Draft for Red Hat Developer blog / enabled channels. Written in the
-platform engineer's voice. All numbers from the published case study:
-[cascade-compression/docs/case-study-platform-pilot.md](https://github.com/jkershawrh/cascade-compression/blob/main/docs/case-study-platform-pilot.md)*
+*Draft for Red Hat Developer. Pilot observations and the scope of the
+frozen replay are documented in the [platform case study](https://github.com/jkershawrh/cascade-compression/blob/main/docs/case-study-platform-pilot.md).*
 
 ---
 
-Our team runs the Red Hat Partner Demo System — a multi-cluster OpenShift
-platform that provisions demo environments for partners, runs Ansible
-Automation Platform playbooks to build and tear down workloads, and
-generates about 7.4 million operational signals per day. Kubernetes
-events, task outcomes, deployment lifecycle notifications, the usual
-platform noise.
+Our team runs a multi-cluster OpenShift platform that provisions demo
+environments for partners and runs Ansible Automation Platform playbooks
+to build and tear down workloads. A pilot summary estimated 7.4 million
+observations in a day. Kubernetes events, task outcomes, deployment
+lifecycle notifications, the usual platform noise.
 
 Every one of those signals is a triage candidate. Is this important?
 Does someone need to look at it? Is it just another pod restarting?
 
-The naive answer: send them all to an LLM. That works — until you see
-the bill and the latency. At our volume, routing everything through a
-granite-class model costs roughly $60/day in inference and overwhelms
-the processing queue: we measured 3.3 million buffer drops in a 24-hour
-window when the LLM lane couldn't keep up.
-
-The obvious fix — a dedup filter — works until it doesn't. We measured
-this too: a simple filter achieved 99.3% compression on our stream but
-dropped 145 signals that mattered. One hundred forty-five instances
-where "this looks like a repeat" was wrong, and the signal someone
-needed to see never arrived.
+We tried sending traffic down the LLM lane. In one 24-hour window the
+pilot reported 3.3 million buffer drops when that lane couldn't keep up.
+The team estimated about $60 a day in inference under that scenario.
+Cutting the queue sounded straightforward. Deciding which signals a
+system could safely stop sending was harder.
 
 ## Why a filter isn't enough
 
-We tested the obvious fix first. A simple dedup filter achieved 99.3%
-compression on our stream — and dropped 145 signals that mattered.
-One hundred forty-five instances where "this looks like a repeat" was
-wrong, and the signal someone needed to see never arrived.
+We tested the obvious fix first. On a frozen capture, a simple dedup
+filter suppressed 99.3% of observations. It also lost the final count
+for 145 recurring events. An operator could see that an event happened
+and still miss how many times it recurred.
 
-But the real problem with a filter isn't the 145 misses — it's that
-a filter is a **static snapshot of what looked repetitive yesterday**.
+A static filter encodes **what looked repetitive yesterday**.
 It can't learn that a new signal type is routine. It can't adapt when
 the platform's operating rhythm changes. It can't tell you *why* it
 suppressed something, or *what* survived, or *whether* its assumptions
@@ -44,8 +35,8 @@ still hold. And it has no memory — the compressed signals are gone.
 
 ## What Cascade actually does
 
-Cascade Compression isn't a filter. It's a **governed lifecycle around
-classification** — a system that learns what's routine, earns the right
+Cascade Compression puts a **governed lifecycle around
+classification**. It learns what's routine, earns the right
 to suppress it, remembers what survived, and can withdraw that right
 the moment it's wrong.
 
@@ -53,86 +44,78 @@ the moment it's wrong.
 LLM has confirmed that type as noise. New patterns get discovered,
 promoted, and become suppressible. When the platform changes — a new
 namespace, a new automation job, a new failure mode — the system adapts.
-After every restart, authority resets and must be re-earned. We've
-watched compression climb from 0% to 46% after each deployment as
-suppressors re-qualify, live.
+After a restart, the pilot's suppressors had to earn authority again.
+We watched the reported suppression rate climb from 0% to about 46%
+as they re-qualified.
 
 **It routes by what the signal IS.** Text events (Kubernetes warnings,
 Ansible failures) go to an LLM rubric that extracts facts. Numeric
 telemetry (vibration, temperature, drive health) goes to deterministic
 spec-sheet rules — because we measured that LLMs can't distinguish
 "the temperature is 298K" from "the temperature is dangerously high."
-The right lane for the right signal, measured across nine domains.
+For text events with a confident match, a margin-gated head can classify
+on CPU. The LLM handles cases the cheaper lane leaves unresolved.
 
 **It remembers.** Signals that survive compression become an
 institutional memory — strength-weighted, federated across instances,
 queryable by agents through MCP tools. When someone asks "why did this
 environment fail?", the answer comes from what the system actually
-observed, not from a log search. The compression is the cost saving;
-the memory is the value.
+observed. Retaining that context gives the next investigation a place
+to start.
 
-**It's accountable.** Every decision is recorded in an immutable
-ledger. Shadow validation re-checks 5% of suppressions. Three
-independent withdrawal paths — negative validation, GCL audit verdicts,
-shadow disagreement — can strip authority instantly. When we ran a
-three-arm comparison on a frozen 24-hour capture, Cascade achieved
-96.2% compression with **zero** dangerous misses (vs the filter's 145).
+**It's accountable.** A hash-chained ledger records decisions. Shadow
+validation samples suppressions for a second look. Three independent
+withdrawal paths — negative validation, GCL audit verdicts, shadow
+disagreement — can strip a suppressor of its authority.
 
 ## The results
 
-We ran a three-arm comparison on a frozen 24-hour capture of 817,000
-observations from the live platform:
+We ran a three-arm comparison on one frozen 24-hour capture. The rc7
+replay tested the deterministic tier and made zero model calls.
 
-| Arm | Delivered | Compression | Dangerous misses |
-|---|---|---|---|
+| Arm | Observations retained | Share suppressed | Recurring events missing their final count (of 215) |
+|---|---:|---:|---:|
 | No cascade (baseline) | 817,479 | 0% | 0 |
-| Simple dedup filter | 5,930 | 99.3% | **145** |
-| Full cascade | 30,966 | 96.2% | **0** |
+| Simple dedup filter, keep first | 5,930 | 99.3% | 145 |
+| rc7 verified-repeat-only profile | 748,787 | 8.4% | 0 |
 
-End to end, across the full day's volume: **92% of raw observations
-eliminated before LLM inference.** Daily model calls dropped from ~600
-to ~140. Inference cost dropped from ~$60/day to ~$14/day. Buffer
-drops went from 3.3 million to zero.
+A separate live summary estimated that ~620K of ~7.4M observations
+reached inference over a day (~92% avoided). It also reported ~600
+versus ~140 daily model calls. The corresponding ~$60 and ~$14 daily
+costs were pricing estimates. A matched cost comparison is still open.
 
-And the safety net held: 1,947 shadow-validation re-checks (5% of
-suppressed signals re-examined by the LLM) produced **zero demotions**.
-Three independent withdrawal paths — negative validation, GCL audit
-verdicts, shadow disagreement — were all demonstrated live.
+Pilot accounts reported shadow rechecks with zero demotions during
+observed windows. A recheck tells us whether the verifier agreed with
+the suppression. Incident detection needs independent incident labels.
 
 ## The part that made us trust it: the evidence contract
 
-Here's what separates this from "we built a filter and it worked":
-every claim above is bounded, measured, and published with its
-limitations.
+The kind of evidence matters when deciding how much authority to grant.
 
-- The three-arm comparison used one frozen 24-hour capture — that's
-  the rigorous bound. But the system has been running continuously
-  since, across two clusters and four automation controllers, with
-  compression climbing from 0% to 46% as suppressors earn qualification
-  after every restart. Each restart cycle is a fresh measurement of
-  the same mechanism.
-- Classification quality is measured on an adjudicated subset, not the
-  full stream. The current classifier achieves 78.1% agreement with
-  human adjudication (84% on a held-out set of unseen cases, 100%
-  recall on signals that need attention, zero dangerous misses).
-- The approach has been validated across nine signal domains — BGL
+- The replay checks a specific property of recorded events. The live
+  restart observations show suppressors qualifying again as traffic
+  arrives. They use different windows and answer different questions.
+- The platform-context classifier agreed with the reference on 78.1%
+  of 160 tuning cases, with four dangerous classification errors. On
+  the held-out 100, it got 84/84 needs_attention and 0/16 known_pattern
+  correct. Always choosing needs_attention also scores 84%. There were
+  no real_incident or routine_noise cases in that holdout.
+- Separate experiments examined how the lanes perform across domains — BGL
   supercomputer logs (100% recall), network intrusion (88.6%, 0% FP),
   predictive maintenance telemetry (97.3% via value rules), drive
   failure prediction (87.3%), multi-sensory robotics (100%
   deterministic), and credit-card fraud (73.6% on the value-rule lane).
   Different signal types, different truth sources, same engine.
-- The three-arm comparison is the honest bound: even on this highly
-  repetitive stream, the safe compression is 96.2%, not the 99.3% a
-  naive filter achieves. The gap between those numbers is the cost
-  of not dropping signals that matter.
+- A post-hoc latest-wins dedup filter also preserved every recurring
+  final count in the replay. This check alone cannot establish which
+  approach best supports an operator's decisions.
 
-We built the evidence machinery before we built the claims: an
-immutable ledger recording every decision, a hash-chained audit trail,
-per-claim evidence files with independent verification status. The
-[governance contract](https://github.com/jkershawrh/governed-cognitive-loop)
-— graduated authority with evidence-earned tiers, withdrawal clearing
-the ladder, non-zero verification floors — is the part that makes the
-compression trustworthy. Not the compression rate.
+The governance contract gives a reviewer something to inspect: the
+evidence used to grant authority, the decisions recorded in the ledger,
+and the conditions that withdraw it. For the published v0.2.0 wheel,
+release verification failed before the formal staging handoff.
+[Governance contract](https://github.com/jkershawrh/governed-cognitive-loop)
+· [Release evidence](https://github.com/jkershawrh/cascade-compression/blob/main/docs/evidence-register.md)
 
 ## What we learned building it
 
@@ -147,16 +130,16 @@ engineering.
 
 **Suppression authority must expire.** Our most important safety
 mechanism isn't a better classifier — it's the 72-hour TTL on
-suppressor authority. Every restart, every deployment, every
-configuration change resets the qualification state. The system has to
-re-earn the right to suppress. This is annoying and it's the reason
-the three-arm comparison shows zero dangerous misses.
+suppressor authority. An expired suppressor has to re-earn the right
+to act. An operator reviewing a rule can therefore ask when it was
+last validated and what would cause its withdrawal.
 
 **The memory is the product.** Signals that survive compression become
 a queryable institutional memory — strength-weighted, federated across
 instances, accessible via MCP tools that let agents ask "why did this
 environment fail?" and get an answer grounded in what actually
-happened. The compression is the cost saving; the memory is the value.
+happened. That history is useful even after the rule that retained it
+has expired.
 
 ## Try it
 
@@ -164,7 +147,7 @@ The [full case study with all limitations](https://github.com/jkershawrh/cascade
 is in the repo. The engine runs without an LLM for evaluation:
 
 ```bash
-pip install cascade-compression
+pip install .  # from the Cascade checkout
 python -m uvicorn cascade_compression.service:app --port 8090
 ```
 
@@ -181,7 +164,5 @@ their own signal types — the engine is domain-agnostic by construction.
 ---
 
 *[Cascade Compression](https://github.com/jkershawrh/cascade-compression)
-is an Apache 2.0 open-source project. The author runs the Red Hat
-Partner Demo System and deploys Cascade on it daily. All numbers in
-this post are from the published case study and can be reproduced with
-the fast-forward harness in the repo.*
+is an Apache 2.0 open-source project. The fast-forward harness exercises
+the governance lifecycle on synthetic inputs.*

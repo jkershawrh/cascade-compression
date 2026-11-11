@@ -16,6 +16,7 @@ import threading
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import wraps
 from typing import Any, Callable, Dict, List, Optional
 from uuid import UUID, uuid4
 
@@ -371,11 +372,25 @@ def _extract_features(signal: Signal) -> Dict[str, float]:
     return features
 
 
+class MemoryEventBackpressure(RuntimeError):
+    """The bounded audit buffer cannot admit another memory transition."""
+
+
+def _archive_locked(method):
+    @wraps(method)
+    def locked(self, *args, **kwargs):
+        with self._lock:
+            return method(self, *args, **kwargs)
+    return locked
+
+
 class MemoryArchive:
     """Capacity-bounded, in-memory survivor archive."""
 
     def __init__(self, max_capacity: int = _DEFAULT_MAX_CAPACITY,
-                 instance_id: str = ""):
+                 instance_id: str = "", *, audit_backpressure: bool = False):
+        if type(audit_backpressure) is not bool:
+            raise ValueError("audit_backpressure must be a boolean")
         self._memories: Dict[UUID, Memory] = {}
         self._hash_index: Dict[str, UUID] = {}
         # Classifier workers store survivors while CascadeBridge._save_state
@@ -387,14 +402,18 @@ class MemoryArchive:
         self._max_capacity = max_capacity
         self._instance_id = instance_id or str(uuid4())[:8]
         self._events: List[MemoryEvent] = []
+        self._event_bytes = 0
+        self._audit_backpressure = audit_backpressure
+        self._event_max_pending = 20000
+        self._event_max_bytes = 16 * 1024 * 1024
         self._formed_total = 0
         self._evictions_total = 0
         self._rejection_set: List[str] = []
         self._rejection_max = max_capacity * 2
-        self._decay_config = None
-        # Observability consumers of newly federated memories (e.g. the
-        # durable digest). Listener failures must never block the archive.
         self._federated_listeners: List[Callable[["Memory"], None]] = []
+        self._handoff_id = str(uuid4())
+        self._handoff_offset = 0
+        self._decay_config = None
 
     @property
     def size(self) -> int:
@@ -424,9 +443,6 @@ class MemoryArchive:
                     existing.analysis = metadata["analysis"]
                 return existing
 
-        if self.size >= self._max_capacity:
-            self._evict_weakest()
-
         now = datetime.now(timezone.utc).isoformat()
         severity_weight = SEVERITY_WEIGHTS.get(signal.severity, 0.4)
         initial_strength = severity_weight
@@ -444,11 +460,7 @@ class MemoryArchive:
             analysis=metadata.get("analysis") if metadata else None,
         )
 
-        self._memories[memory.memory_id] = memory
-        self._hash_index[content_hash] = memory.memory_id
-        self._formed_total += 1
-
-        self._events.append(MemoryEvent(
+        self._admit_memory(memory, MemoryEvent(
             memory_id=memory.memory_id,
             event_type="formed",
             details={"initial_strength": initial_strength,
@@ -457,9 +469,11 @@ class MemoryArchive:
 
         return memory
 
+    @_archive_locked
     def get(self, memory_id: UUID) -> Optional[Memory]:
         return self._memories.get(memory_id)
 
+    @_archive_locked
     def verify_memory(
         self, memory_id: UUID, *, outcome: str, source: str,
         policy_revision: str, evidence_ref: str = "",
@@ -481,7 +495,7 @@ class MemoryArchive:
             raise ValueError("verification policy_revision is required")
 
         now = datetime.now(timezone.utc).isoformat()
-        memory.verification = MemoryVerification(
+        verification = MemoryVerification(
             status="approved",
             outcome=outcome,
             source=source.strip(),
@@ -491,9 +505,8 @@ class MemoryArchive:
             expires_at=expires_at,
             contradictory=contradictory,
         )
-        memory.verification_context_hash = _compute_content_hash(memory.signal)
-        memory.last_modified_at = now
-        self._events.append(MemoryEvent(
+        context_hash = _compute_content_hash(memory.signal)
+        self._queue_events([MemoryEvent(
             memory_id=memory.memory_id,
             event_type="verified",
             details={
@@ -501,11 +514,14 @@ class MemoryArchive:
                 "source": source.strip(),
                 "policy_revision": policy_revision.strip(),
                 "evidence_ref": evidence_ref.strip(),
-                "verification_context_hash": memory.verification_context_hash,
+                "verification_context_hash": context_hash,
                 "expires_at": expires_at,
                 "contradictory": contradictory,
             },
-        ))
+        )])
+        memory.verification = verification
+        memory.verification_context_hash = context_hash
+        memory.last_modified_at = now
         return memory
 
     def query(self, signal_type: str = None, labels: Dict[str, str] = None,
@@ -553,29 +569,13 @@ class MemoryArchive:
                 memory.strength *= math.exp(-rate * hours_elapsed)
                 memory.strength = max(memory.strength, 0.0)
 
-    def _evict_weakest(self) -> None:
-        count = max(1, int(self._max_capacity * _EVICTION_FRACTION))
-        sorted_memories = sorted(self._memories.values(), key=lambda m: m.strength)
-        to_evict = sorted_memories[:count]
-
-        for memory in to_evict:
-            self._events.append(MemoryEvent(
-                memory_id=memory.memory_id,
-                event_type="evicted",
-                details={"final_strength": memory.strength,
-                         "reason": "capacity"},
-            ))
-            self._add_to_rejection_set(memory.content_hash)
-            self._hash_index.pop(memory.content_hash, None)
-            del self._memories[memory.memory_id]
-            self._evictions_total += 1
-
     def _add_to_rejection_set(self, content_hash: str) -> None:
         if content_hash and content_hash not in self._rejection_set:
             self._rejection_set.append(content_hash)
             if len(self._rejection_set) > self._rejection_max:
                 self._rejection_set = self._rejection_set[-self._rejection_max:]
 
+    @_archive_locked
     def consolidate(self, pipeline_or_factory, strength_decay: float = 0.3,
                      strength_boost: float = 0.05,
                      eviction_threshold: float = 0.05,
@@ -643,31 +643,36 @@ class MemoryArchive:
         effective_config = decay_config or self._decay_config
         now = datetime.now(timezone.utc).isoformat()
         evicted_count = 0
+        changes = {}
         for fresh_id, memory in id_to_memory.items():
-            memory.last_consolidated_at = now
+            strength = memory.strength
+            count = memory.consolidation_count
             if fresh_id in survived_ids:
-                memory.consolidation_count += 1
-                memory.strength = min(memory.strength + strength_boost, 1.0)
-                memory.last_modified_at = now
+                count += 1
+                strength = min(strength + strength_boost, 1.0)
             elif fresh_id in suppressed_ids:
                 if effective_config:
                     rate = effective_config.rate_for(memory.signal.signal_type)
                     penalty = min(rate * 10, 0.5)
                 else:
                     penalty = strength_decay
-                memory.strength -= penalty
-                memory.strength = max(memory.strength, 0.0)
-                memory.last_modified_at = now
+                strength = max(strength - penalty, 0.0)
+            changes[memory.memory_id] = (strength, count)
 
         to_evict = [m for m in self._memories.values()
-                    if m.strength < eviction_threshold]
-        for memory in to_evict:
-            self._events.append(MemoryEvent(
+                    if changes.get(m.memory_id, (m.strength,))[0] < eviction_threshold]
+        self._queue_events([MemoryEvent(
                 memory_id=memory.memory_id,
                 event_type="evicted",
-                details={"final_strength": memory.strength,
+                details={"final_strength": changes.get(memory.memory_id, (memory.strength,))[0],
                          "reason": "consolidation"},
-            ))
+            ) for memory in to_evict])
+        for memory_id, (strength, count) in changes.items():
+            memory = self._memories[memory_id]
+            memory.strength, memory.consolidation_count = strength, count
+            memory.last_consolidated_at = now
+            memory.last_modified_at = now
+        for memory in to_evict:
             self._add_to_rejection_set(memory.content_hash)
             self._hash_index.pop(memory.content_hash, None)
             del self._memories[memory.memory_id]
@@ -697,6 +702,7 @@ class MemoryArchive:
             "memories": [m.to_dict() for m in memories],
         }
 
+    @_archive_locked
     def import_memories(self, data: Dict[str, Any]) -> int:
         source_instance = data.get("instance_id", "unknown")
         imported = 0
@@ -738,9 +744,6 @@ class MemoryArchive:
                     existing.last_modified_at = datetime.now(timezone.utc).isoformat()
                     continue
 
-            if self.size >= self._max_capacity:
-                self._evict_weakest()
-
             memory = Memory(
                 memory_id=uuid4(),
                 signal=signal,
@@ -755,17 +758,12 @@ class MemoryArchive:
                 feature_vector=entry.get("feature_vector", {}),
             )
 
-            self._memories[memory.memory_id] = memory
-            if memory.content_hash:
-                self._hash_index[memory.content_hash] = memory.memory_id
-            self._formed_total += 1
-            imported += 1
-
-            self._events.append(MemoryEvent(
+            self._admit_memory(memory, MemoryEvent(
                 memory_id=memory.memory_id,
                 event_type="federated",
                 details={"source_instance": source_instance},
             ))
+            imported += 1
             for listener in self._federated_listeners:
                 try:
                     # Notification/observability consumers must never block
@@ -794,9 +792,95 @@ class MemoryArchive:
             self._priming_windows: Dict[str, PrimingWindow] = {}
         return dict(self._priming_windows)
 
+    @_archive_locked
+    def update_classification(self, memory_id, classification, *, work_id, signal_id,
+                              event_id, timestamp, provenance):
+        """Reserve an update event before mutation; caller checkpoints both.
+
+        This does not verify an outcome or grant suppression authority. Stable
+        event/work identity allows consumers to deduplicate at-least-once delivery.
+        """
+        from ..lifecycle import valid_time
+        if (classification not in {'routine_noise', 'known_pattern', 'needs_attention', 'real_incident'}
+                or any(type(v) is not str or not v for v in (work_id, signal_id, event_id))
+                or not valid_time(timestamp) or type(provenance) is not dict):
+            raise ValueError('invalid classification update event')
+        backend = provenance.get("authoritative_backend")
+        if not isinstance(backend, str):
+            raise ValueError("missing classification backend")
+        json.dumps(provenance, allow_nan=False)
+        memory = self._memories[memory_id]
+        event = MemoryEvent(memory_id, 'classification_updated', timestamp, details={
+            'work_id': work_id, 'signal_id': signal_id, 'event_id': event_id,
+            'previous_classification': memory.classification,
+            'classification': classification, 'classifier': deepcopy(provenance),
+        })
+        self._queue_events([event])
+        memory.evidence.update(
+            classification_status="classified", classification_backend=backend,
+            classification_event_id=event_id, classification_work_id=work_id,
+            classification_signal_id=signal_id, classified_at=timestamp,
+        )
+        memory.classification = classification
+        memory.last_modified_at = timestamp
+        return event
+
+    def _queue_events(self, events):
+        sizes = [len(json.dumps(e.to_dict(), sort_keys=True).encode()) for e in events]
+        if self._audit_backpressure and (any(size > 65536 for size in sizes)
+                or len(self._events) + len(events) > self._event_max_pending
+                or self._event_bytes + sum(sizes) > self._event_max_bytes):
+            raise MemoryEventBackpressure("memory audit buffer full or event oversized; retry after delivery")
+        self._events.extend(events)
+        self._event_bytes += sum(sizes)
+
+    def _admit_memory(self, memory, event):
+        victims = []
+        if self.size >= self._max_capacity:
+            count = max(1, int(self._max_capacity * _EVICTION_FRACTION))
+            victims = sorted(self._memories.values(), key=lambda m: m.strength)[:count]
+        # Reserve both eviction and formation events before changing the archive.
+        self._queue_events([MemoryEvent(m.memory_id, "evicted", details={
+            "final_strength": m.strength, "reason": "capacity"}) for m in victims] + [event])
+        for victim in victims:
+            self._add_to_rejection_set(victim.content_hash)
+            self._hash_index.pop(victim.content_hash, None)
+            del self._memories[victim.memory_id]
+            self._evictions_total += 1
+        self._memories[memory.memory_id] = memory
+        self._hash_index[memory.content_hash] = memory.memory_id
+        self._formed_total += 1
+
+    @_archive_locked
+    def pending_event_count(self):
+        return len(self._events)
+
+    @_archive_locked
+    def transfer_events(self, accept, limit=1000):
+        """Remove only the durably accepted prefix; failures retain the source.
+
+        The callback must return an exact accepted count. Crash replay can
+        duplicate already accepted events; this is at-least-once handoff.
+        """
+        if type(limit) is not int or limit < 1:
+            raise ValueError("limit must be positive")
+        selected = self._events[:limit]
+        if not selected:
+            return 0
+        accepted = accept([deepcopy(e.to_dict()) for e in selected])
+        if type(accepted) is not int or not 0 <= accepted <= len(selected):
+            raise ValueError("invalid accepted-prefix count")
+        self._handoff_offset += accepted
+        del self._events[:accepted]
+        self._event_bytes -= sum(len(json.dumps(e.to_dict(), sort_keys=True).encode()) for e in selected[:accepted])
+        return accepted
+
+    @_archive_locked
     def drain_events(self) -> List[MemoryEvent]:
         events = list(self._events)
+        self._handoff_offset += len(events)
         self._events.clear()
+        self._event_bytes = 0
         return events
 
     def stats(self) -> Dict[str, Any]:
@@ -820,25 +904,41 @@ class MemoryArchive:
         with self._lock:
             return {
                 "memories": [m.to_dict() for m in self._memories.values()],
-            "stats": {
-                "formed_total": self._formed_total,
-                "evictions_total": self._evictions_total,
-                "instance_id": self._instance_id,
-                "max_capacity": self._max_capacity,
-            },
-            "rejection_set": list(self._rejection_set),
-        }
+                "stats": {
+                    "formed_total": self._formed_total,
+                    "evictions_total": self._evictions_total,
+                    "instance_id": self._instance_id,
+                    "max_capacity": self._max_capacity,
+                },
+                "rejection_set": list(self._rejection_set),
+                "handoff_id": self._handoff_id,
+                "handoff_offset": self._handoff_offset,
+                "pending_events": [deepcopy(e.to_dict()) for e in self._events],
+            }
 
     @staticmethod
-    def from_dict(data: Dict[str, Any]) -> MemoryArchive:
+    def from_dict(data: Dict[str, Any], *, audit_backpressure: bool = False) -> MemoryArchive:
         stats = data.get("stats", {})
         archive = MemoryArchive(
             max_capacity=stats.get("max_capacity", _DEFAULT_MAX_CAPACITY),
             instance_id=stats.get("instance_id", ""),
+            audit_backpressure=audit_backpressure,
         )
         archive._formed_total = stats.get("formed_total", 0)
         archive._evictions_total = stats.get("evictions_total", 0)
         archive._rejection_set = list(data.get("rejection_set", []))
+        if "handoff_id" in data:
+            archive._handoff_id = str(UUID(data["handoff_id"]))
+        archive._handoff_offset = data.get("handoff_offset", 0)
+        if type(archive._handoff_offset) is not int or archive._handoff_offset < 0:
+            raise ValueError("invalid memory handoff offset")
+        for event in data.get("pending_events", []):
+            if (not isinstance(event, dict) or not isinstance(event.get("timestamp"), str)
+                    or not event["timestamp"] or not isinstance(event.get("details"), dict)
+                    or not isinstance(event.get("event_type"), str)):
+                raise ValueError("invalid saved memory event")
+            archive._queue_events([MemoryEvent(UUID(event["memory_id"]), event["event_type"],
+                                               event["timestamp"], deepcopy(event["details"]))])
 
         for entry in data.get("memories", []):
             memory = Memory.from_dict(entry)

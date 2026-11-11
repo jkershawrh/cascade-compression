@@ -15,7 +15,7 @@ from copy import deepcopy
 from collections import defaultdict
 from typing import Dict, List, Set
 
-from .protocol import CascadeAgent, CascadeDecision, Outcome, Signal
+from .protocol import CascadeAgent, CascadeDecision, Outcome, Signal, severity_input_is_valid
 from .repeat_integrity import verified_repeat_key, verified_repeat_update_key
 
 
@@ -689,6 +689,8 @@ class ValueRuleAgent:
         have already established that no rule matched (evaluate -> None).
         """
         if signal.signal_type not in self._covers:
+            return None
+        if not severity_input_is_valid(signal.severity, signal.severity_input_valid):
             return None
         if signal.severity in ("critical", "high"):
             return None  # the severity gate wins over suppressive labels

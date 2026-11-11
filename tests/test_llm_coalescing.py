@@ -37,44 +37,24 @@ def bridge():
     b.close()
 
 
-class TestCoalesceKey:
-    def test_identical_entries_share_a_key(self, bridge):
-        first = {"signal_type": "t", "severity": "low", "source": "s",
-                 "namespace": "n", "cluster": "c", "content": {"message": "m"},
-                 "labels": {}}
-        second = dict(first)
-        assert bridge._llm_coalesce_key(first) == bridge._llm_coalesce_key(second)
+@pytest.mark.parametrize("field", ["lastTransitionTime", "resourceVersion", "managedFields",
+                                   "_aggregation", "timestamp"])
+def test_changed_source_metadata_stays_separate(bridge, field):
+    signals = [make_signal(content={"message": "m", "state": {field: value}})
+               for value in ("one", "two")]
+    bridge._enqueue_llm_signals(signals)
+    assert len(bridge._llm_buffer) == 2
 
-    def test_different_content_produces_different_keys(self, bridge):
-        first = {"signal_type": "t", "content": {"message": "one"}}
-        second = {"signal_type": "t", "content": {"message": "two"}}
-        assert bridge._llm_coalesce_key(first) != bridge._llm_coalesce_key(second)
 
-    def test_volatile_fields_are_ignored(self, bridge):
-        """Timestamps and churn fields must not defeat deduplication."""
-        first = {"signal_type": "t", "content": {
-            "message": "m", "lastTransitionTime": "2026-01-01T00:00:00Z",
-            "resourceVersion": "1", "managedFields": [{"x": 1}],
-        }}
-        second = {"signal_type": "t", "content": {
-            "message": "m", "lastTransitionTime": "2026-02-02T00:00:00Z",
-            "resourceVersion": "999", "managedFields": [{"y": 2}],
-        }}
-        assert bridge._llm_coalesce_key(first) == bridge._llm_coalesce_key(second)
-
-    def test_aggregation_marker_is_ignored(self, bridge):
-        """A folded entry keeps matching new occurrences of the same signal."""
-        base = {"signal_type": "t", "content": {"message": "m"}}
-        folded = {"signal_type": "t", "content": {
-            "message": "m",
-            "_aggregation": {"occurrence_count": 5, "first_seen": "x"},
-        }}
-        assert bridge._llm_coalesce_key(base) == bridge._llm_coalesce_key(folded)
-
-    def test_unhashable_values_do_not_crash(self, bridge):
-        entry = {"signal_type": "t", "content": {"nested": {"deep": {"v": 1}}},
-                 "labels": {"l": [1, 2]}}
-        assert isinstance(bridge._llm_coalesce_key(entry), str)
+def test_nested_json_with_different_key_order_can_fold(bridge):
+    first = {"a": [1, 2], "b": {"v": 3}}
+    second = {"b": {"v": 3}, "a": [1, 2]}
+    bridge._enqueue_llm_signals([
+        make_signal(content=content, labels={"scopes": ["one", "two"]})
+        for content in (first, second)
+    ])
+    assert len(bridge._llm_buffer) == 1
+    assert bridge._llm_buffer[0]["content"] == first
 
 
 class TestEnqueueCoalescing:
@@ -85,9 +65,9 @@ class TestEnqueueCoalescing:
         assert len(bridge._llm_buffer) == 1
         entry = bridge._llm_buffer[0]
         assert len(entry["_signal_ids"]) == 5
-        assert entry["content"]["_aggregation"]["occurrence_count"] == 5
-        assert entry["content"]["_aggregation"]["first_seen"]
-        assert entry["content"]["_aggregation"]["last_seen"]
+        assert entry["_aggregation"]["occurrence_count"] == 5
+        assert entry["_aggregation"]["first_seen"]
+        assert entry["_aggregation"]["last_seen"]
         assert bridge._llm_coalesced == 4
         assert bridge._llm_coalesced_by_type["pod_restart"] == 4
 
@@ -195,15 +175,15 @@ class TestDispatchAndExpiry:
         assert len(bridge._llm_buffer) == 1
         assert len(bridge._llm_coalesce_index) == 1
         survivor = bridge._llm_buffer[0]
-        assert bridge._llm_coalesce_index[survivor["_coalesce_key"]] is survivor
+        assert list(bridge._llm_coalesce_index.values()) == [survivor]
 
     def test_rebuild_index_maps_only_existing_entries(self, bridge):
-        buffered = {"_coalesce_key": "live-key", "signal_type": "t"}
-        removed = {"_coalesce_key": "dead-key", "signal_type": "t"}
-        bridge._llm_buffer = [buffered]
-        bridge._llm_coalesce_index = {"dead-key": removed, "live-key": buffered}
+        bridge._enqueue_llm_signals([make_signal(), make_signal(namespace="other")])
+        buffered = bridge._llm_buffer.pop()
+        # Old persisted/user-provided keys do not establish admission evidence.
+        bridge._llm_buffer = [buffered, {"_coalesce_key": "forged", "signal_type": "t"}]
         bridge._rebuild_llm_coalesce_index_locked()
-        assert bridge._llm_coalesce_index == {"live-key": buffered}
+        assert list(bridge._llm_coalesce_index.values()) == [buffered]
 
     def test_oldest_queue_age_seconds_tracks_enqueued_at(self, bridge):
         assert bridge._llm_oldest_queue_age_seconds() == 0.0

@@ -5,5 +5,5 @@ description: |
   infrastructure. Signals earn suppression authority through classified
   evidence; authority is graduated, audited, and instantly revocable.
 type: application
-version: 0.2.0
-appVersion: "0.2.0"
+version: 0.2.1-rc.1
+appVersion: "0.2.1rc1"

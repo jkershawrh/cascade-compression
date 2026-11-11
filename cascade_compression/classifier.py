@@ -120,6 +120,7 @@ class ClassificationResult:
     authoritative_backend: str = ""
     fallback_used: bool = False
     alternatives: Dict[str, "ClassificationResult"] = field(default_factory=dict)
+    cache_hit: bool = False
 
     @property
     def ok(self) -> bool:
@@ -192,6 +193,16 @@ class GenerativeClassifierBackend:
         self.prompt_revision = hashlib.sha256(
             self.system_prompt.encode("utf-8")
         ).hexdigest()
+
+    def cache_identity(self) -> dict:
+        """Declared inference configuration for exact-result reuse."""
+        return {
+            "url": self.url, "micro_model": self.micro_model, "macro_model": self.macro_model,
+            "system_prompt": self.system_prompt, "prompt_revision": self.prompt_revision,
+            "structured_confidence": self.structured_confidence,
+            "completion_max_tokens": self.completion_max_tokens,
+            "credential_scope": hashlib.sha256(self.key.encode("utf-8")).hexdigest(),
+        }
 
     def classify(self, signal: Dict[str, Any], text: str,
                  client: Any = None) -> ClassificationResult:
@@ -1003,13 +1014,8 @@ def classifier_from_environment(*, url: str, key: str, micro_model: str,
             ),
         )
     if os.getenv("CASCADE_TEMPLATE_CACHE", "").strip().lower() in {"1", "true", "yes"}:
-        # Deterministic template reuse: the first occurrence of a template
-        # pays the generative cost; repeats within the TTL inherit the
-        # result. High/critical severities and prompt changes bypass.
+        # Context settings may add scope. All decision evidence is always exact.
         from .cascade.template_cache import TemplateCachedClassifierBackend
-        # Context scoping is opt-in and separate from the suppression
-        # context keys: classification facts are template-intrinsic by
-        # default; context-dependent handling belongs downstream.
         cache_context = tuple(
             k.strip() for k in os.getenv(
                 "CASCADE_TEMPLATE_CACHE_CONTEXT_KEYS", "").split(",")

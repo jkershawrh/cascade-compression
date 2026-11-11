@@ -64,115 +64,51 @@ class TestVerdictPollVsStateSave:
     """
 
     def test_save_state_survives_concurrent_verdict_poll(self, bridge):
-        parked = threading.Event()
-        release = threading.Event()
-        inserted = threading.Event()
+        # A poll can fetch during another snapshot, but cannot publish an ID
+        # or continuation inside it. The next snapshot includes the whole page.
+        from cascade_compression import bridge as bridge_module
 
-        class RacingSeenIds(dict):
-            """Dict that reproduces the production interleaving.
+        fetched = threading.Event()
+        saving = threading.Event()
+        real_snapshot = bridge_module.atomic_snapshot
+        snapshots = []
 
-            ``list()`` calls ``__iter__``; the hook releases the real
-            poller thread at that exact point.  If the poller's mutation is
-            not excluded by ``_verdict_lock`` it lands between iterator
-            creation and consumption and the copy raises.
-            """
+        def snapshot(path, state):
+            snapshots.append((state["verdict_watermark"], list(state["verdict_seen_ids"])))
+            if len(snapshots) == 1:
+                saving.set()
+                assert fetched.wait(5)
+            real_snapshot(path, state)
 
-            def __init__(self, *args, **kwargs):
-                super().__init__(*args, **kwargs)
-                self.on_iterate = None
-                self.on_insert = None
+        def read(request):
+            assert saving.wait(5)
+            fetched.set()
+            return httpx.Response(200, json={
+                "entries": [{
+                    "entry_id": "verdict-1", "entry_type": "audit.verdict",
+                    "source_id": "gcl-cascade-audit", "agent_id": "governed-cognitive-loop",
+                    "written_ts": 1000, "content": {"domain": "test", "verdict": "FAILS",
+                        "original_agent": "synthetic", "subject_type": "routine",
+                        "decision_ref": "decision-1"},
+                }], "next_page_token": "", "total_count": 1,
+            })
 
-            def __setitem__(self, key, value):
-                if self.on_insert is not None:
-                    self.on_insert()
-                super().__setitem__(key, value)
-
-            def __iter__(self):
-                iterator = super().__iter__()
-                if self.on_iterate is not None:
-                    self.on_iterate()
-                return iterator
-
-        seen = RacingSeenIds()
-        bridge._verdict_seen_ids = seen
-        bridge._ledger_url = "http://ledger.test"
-        bridge._ledger_token = ""
-
-        entries = [
-            {"entry_id": "verdict-1", "written_ts": 1000, "content": "{}"},
-            {"entry_id": "verdict-2", "written_ts": 2000, "content": "{}"},
-        ]
-
-        class StubResponse:
-            def raise_for_status(self):
-                pass
-
-            def json(self):
-                return {"entries": entries}
-
-        class StubClient:
-            def __init__(self, timeout=None):
-                pass
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *args):
-                return False
-
-            def get(self, url, params=None, headers=None):
-                return StubResponse()
-
-        real_loads = json.loads
-        gated = {"armed": True}
-
-        def gated_loads(data):
-            # Park the poller between entry 1 and entry 2 processing —
-            # after the first locked mutation, before the second one.
-            if gated["armed"] and isinstance(data, str):
-                gated["armed"] = False
-                parked.set()
-                assert release.wait(timeout=10), "test never released poller"
-            return real_loads(data)
-
+        bridge._ledger_url = "https://ledger.test"
+        bridge._ledger_token = "synthetic"
+        client = httpx.Client
+        transport = httpx.MockTransport(read)
         poller = threading.Thread(target=bridge._poll_gcl_verdicts, daemon=True)
-
-        with patch.object(json, "loads", gated_loads), \
-                patch.object(httpx, "Client", StubClient):
+        with patch.object(bridge_module, "atomic_snapshot", snapshot), patch.object(
+                httpx, "Client", lambda **kw: client(transport=transport, **kw)):
             poller.start()
-            assert parked.wait(timeout=5), "poller never reached content parse"
+            assert bridge._save_state()
+            poller.join(5)
 
-            def on_iterate():
-                # The save now holds _verdict_lock and is inside list().
-                # Arm the insert signal, then release the parked poller:
-                # its next action is the entry-2 mutation.
-                seen.on_insert = inserted.set
-                release.set()
-                # Locked: the poller blocks on _verdict_lock, this times
-                # out, and the snapshot completes consistently.
-                # Unlocked: the poller inserts immediately, this returns
-                # at once, and the snapshot raises RuntimeError.
-                inserted.wait(timeout=0.3)
-
-            seen.on_iterate = on_iterate
-            saved = bridge._save_state()
-
-        assert saved is True, (
-            "state snapshot failed under a concurrent verdict poll — "
-            "the poller mutated _verdict_seen_ids while _save_state "
-            "copied it (rc11/rc14 regression: missing _verdict_lock)"
-        )
-        poller.join(timeout=5)
         assert not poller.is_alive()
-        # The blocked mutation lands after the snapshot released the lock.
-        assert "verdict-1" in bridge._verdict_seen_ids
-        assert "verdict-2" in bridge._verdict_seen_ids
-
-        with open(bridge._state_file) as f:
-            state = json.load(f)
-        # Consistent serial snapshot: verdict-2 was excluded because it
-        # could not mutate while the snapshot held the lock.
-        assert state["verdict_seen_ids"] == ["verdict-1"]
+        assert snapshots[0] == (0, [])
+        assert snapshots[-1] == (bridge._verdict_watermark, ["verdict-1"])
+        assert bridge._fn_count == 1
+        assert bridge.get_stats()["verdict_catchup_complete"]
 
 
 class TestMemoryStoreVsStateSave:

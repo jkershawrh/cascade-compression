@@ -138,7 +138,9 @@ class DurableLedgerQueue:
             pass
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self.path, timeout=10.0)
+        connection = sqlite3.connect(self.path, timeout=10.0)
+        connection.execute("PRAGMA synchronous=FULL")
+        return connection
 
     def enqueue(self, events: Iterable[dict]) -> int:
         """Persist the ordered prefix that fits and return the rejected count.
@@ -146,19 +148,35 @@ class DurableLedgerQueue:
         Existing rows are immutable until explicit acknowledgement. Once either bound is reached,
         this method rejects the remaining new events instead of evicting older audit history.
         """
+        accepted, total = self._enqueue_prefix(events)
+        return total - accepted
+
+    def accept_memory_prefix(self, events, source_id, offset):
+        """Commit source progress and FIFO insertion in the same transaction."""
+        accepted, _ = self._enqueue_prefix(events, source_id, offset)
+        return accepted
+
+    def _enqueue_prefix(self, events, source_id=None, offset=0):
         encoded = []
         for event in events:
             payload = json.dumps(event, sort_keys=True, separators=(",", ":"))
             encoded.append((payload, len(payload.encode("utf-8")), time.time()))
         if not encoded:
-            return 0
+            return 0, 0
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             count, total_bytes = connection.execute(
                 "SELECT COUNT(*), COALESCE(SUM(payload_bytes), 0) FROM ledger_events"
             ).fetchone()
+            replayed = 0
+            if source_id is not None:
+                progress_key = f"memory-source:{source_id}"
+                row = connection.execute(
+                    "SELECT value FROM ledger_queue_meta WHERE key=?", (progress_key,)
+                ).fetchone()
+                replayed = min(len(encoded), max(0, row[0] - offset)) if row else 0
             accepted = []
-            for item in encoded:
+            for item in encoded[replayed:]:
                 payload_bytes = item[1]
                 if count >= self.max_pending or (
                     self.max_bytes and total_bytes + payload_bytes > self.max_bytes
@@ -173,15 +191,21 @@ class DurableLedgerQueue:
                        VALUES (?, ?, ?)""",
                     accepted,
                 )
-            rejected = len(encoded) - len(accepted)
-            if rejected:
+            admitted = replayed + len(accepted)
+            rejected = len(encoded) - admitted
+            if source_id is not None and accepted:
+                connection.execute(
+                    "INSERT OR REPLACE INTO ledger_queue_meta VALUES (?, ?)",
+                    (progress_key, offset + admitted),
+                )
+            if rejected and source_id is None:
                 connection.execute(
                     """UPDATE ledger_queue_meta
                        SET value = value + ? WHERE key = 'rejected_events'""",
                     (rejected,),
                 )
             connection.commit()
-        return rejected
+        return admitted, len(encoded)
 
     def peek(self, limit: int) -> List[QueueItem]:
         if limit < 1:
@@ -196,6 +220,32 @@ class DurableLedgerQueue:
             QueueItem(sequence=row[0], payload=json.loads(row[1]), enqueued_at=row[2])
             for row in rows
         ]
+
+    def memory_delivery_batch(self, limit: int) -> List[QueueItem]:
+        """Pin the batch boundary through ambiguous remote or local acknowledgments."""
+        with closing(self._connect()) as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            end = connection.execute(
+                "SELECT value FROM ledger_queue_meta WHERE key='memory-batch-end'"
+            ).fetchone()
+            rows = []
+            if end:
+                rows = connection.execute(
+                    "SELECT sequence,payload,enqueued_at FROM ledger_events "
+                    "WHERE sequence <= ? ORDER BY sequence", end,
+                ).fetchall()
+            if not rows:
+                rows = connection.execute(
+                    "SELECT sequence,payload,enqueued_at FROM ledger_events "
+                    "ORDER BY sequence LIMIT ?", (limit,),
+                ).fetchall()
+                if rows:
+                    connection.execute(
+                        "INSERT OR REPLACE INTO ledger_queue_meta VALUES ('memory-batch-end', ?)",
+                        (rows[-1][0],),
+                    )
+            connection.commit()
+        return [QueueItem(seq, json.loads(payload), born) for seq, payload, born in rows]
 
     def acknowledge(self, sequences: Iterable[int]) -> int:
         values = [int(sequence) for sequence in sequences]
@@ -302,6 +352,12 @@ class DurableQueue:
                 "CREATE TABLE IF NOT EXISTS counters ("
                 "name TEXT PRIMARY KEY, value INTEGER NOT NULL)"
             )
+            self._db.execute(
+                "CREATE TABLE IF NOT EXISTS spool_identity (singleton INTEGER PRIMARY KEY "
+                "CHECK(singleton=1), identity TEXT NOT NULL)"
+            )
+            self._db.execute("INSERT OR IGNORE INTO spool_identity VALUES (1, hex(randomblob(16)))")
+            self.identity = self._db.execute("SELECT identity FROM spool_identity").fetchone()[0]
             self._db.commit()
         except Exception:
             if hasattr(self, "_db"):
@@ -316,14 +372,15 @@ class DurableQueue:
             (name, amount),
         )
 
-    def expire(self) -> set:
+    def expire(self, *, protected=()) -> set:
         """Delete TTL-expired rows and return their identifiers."""
         with self._mutex, self._db:
             cutoff = time.time() - self.ttl_seconds
             expired = {row[0] for row in self._db.execute(
                 "SELECT id FROM work WHERE born < ?", (cutoff,))}
+            expired.difference_update(protected)
             if expired:
-                self._db.execute("DELETE FROM work WHERE born < ?", (cutoff,))
+                self._db.executemany("DELETE FROM work WHERE id=?", ((k,) for k in expired))
                 self._count("expired", len(expired))
             return expired
 

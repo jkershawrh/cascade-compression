@@ -2,7 +2,7 @@
 
 image:
   repository: ""  # set to your registry path
-  tag: "0.2.0"
+  tag: "0.2.1rc1"
   pullPolicy: IfNotPresent
 
 llm:

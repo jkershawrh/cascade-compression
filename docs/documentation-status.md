@@ -1,14 +1,12 @@
 # Documentation status and authority
 
-Reviewed 2026-10-13. This index covers all tracked Markdown documentation in this checkout,
-the current local proof guides where applicable, and the new handoff/roadmap guides. It records
-document scope and authority; it is not an assertion that every historical number was remeasured
-or that CI, release publication, or production qualification was rerun.
+Release status reviewed 2026-11-05. The published `v0.2.0` wheel has an
+identifiable digest. Its formal staging handoff is missing. The working
+candidate is the unpublished `0.2.1rc1` incubating prerelease. [Evidence register](evidence-register.md) · [Release policy](../RELEASING.md)
 
-The package is `0.2.0` — staging qualified. [evidence register](evidence-register.md) · [case study](case-study-platform-pilot.md)
-defines reviewed transfer from production evidence; [roadmap.md](roadmap.md) defines next steps.
-Mechanics, classification effectiveness, staging health, production suitability, and value are
-separate claim classes. No new effectiveness result is supplied by this documentation update.
+The case study separates rc7 replay counts, reported live estimates and
+classifier evaluation. The proof handoff defines what can transfer to a
+public artifact. [Case study](case-study-platform-pilot.md) · [Proof handoff](proof-handoff.md)
 
 ## Reading order
 

@@ -73,7 +73,7 @@ class CascadePipeline:
         self._agents.append(agent)
         self._agents.sort(key=lambda a: a.stage)
 
-    def run(self, signals: List[Signal]) -> CascadeResult:
+    def run(self, signals: List[Signal], *, withheld_agents=()) -> CascadeResult:
         # Ambiguous IDs make a decision for one input affect another. Reject the
         # whole batch before invoking stateful agents, so the caller can retry.
         ids = [signal.signal_id for signal in signals]
@@ -89,6 +89,8 @@ class CascadePipeline:
         escalated_ids: set[UUID] = set()
 
         for agent in self._agents:
+            if agent in withheld_agents:
+                continue
             if not active:
                 break
 

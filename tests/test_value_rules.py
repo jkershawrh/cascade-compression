@@ -361,7 +361,7 @@ class TestBridgeValueRulePath:
                                  "classification": "overstrain_risk",
                                  "confidence": 0.95,
                                  "revision": "robotic-value-rules-v4"},
-                 "signal_type": "maintenance_telemetry", "severity": "medium",
+                 "signal_type": "maintenance_telemetry", "severity": "medium", "severity_input_valid": True,
                  "namespace": "cell_1", "content": {}, "labels": {}}
         result = bridge._classify_entry(entry, client=None)
         assert result.ok
@@ -507,7 +507,7 @@ class TestRoboticPackElse:
                                  "classification": "spec_healthy",
                                  "confidence": 0.9,
                                  "revision": "robotic-value-rules-v4"},
-                 "signal_type": "vibration_window", "severity": "medium",
+                 "signal_type": "vibration_window", "severity": "medium", "severity_input_valid": True,
                  "namespace": "cell_1", "content": {}, "labels": {}}
         result = bridge._classify_entry(entry, client=None)
         assert result.ok

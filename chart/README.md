@@ -5,6 +5,7 @@
 ```bash
 # minimal deployment (single service, no collectors)
 helm install cascade ./chart \
+  --set image.repository=your-registry.example.com/cascade \
   --set llm.url=https://your-llm-gateway.example.com \
   --set llm.key=your-api-key \
   --set llm.model=granite-3-2-8b-instruct
@@ -25,8 +26,8 @@ kubectl exec deploy/cascade-aap -- curl -s localhost:8090/stats | jq .stats.comp
 
 | Key | Default | Description |
 |---|---|---|
-| `image.repository` | `cascade-compression/cascade` | image repository |
-| `image.tag` | `latest` | image tag |
+| `image.repository` | empty | supply the repository containing your candidate image |
+| `image.tag` | `0.2.1rc1` | local candidate image tag |
 | `llm.url` | **required** | OpenAI-compatible LLM endpoint |
 | `llm.key` | **required** | API key |
 | `llm.model` | **required** | model name for classification |

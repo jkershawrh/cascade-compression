@@ -1,13 +1,12 @@
 {
   "schema_version": "cascade.release-profile.v1alpha1",
-  "claim_level": "staging_qualified",
-  "staging_evidence_required": true,
+  "claim_level": "incubating_oss",
+  "staging_evidence_required": false,
   "limitations": [
-    "Classification quality measured on 160 adjudicated cases from one platform with platform-context fact extraction: 78.1% agreement, 98% needs_attention recall, 4 dangerous. Single-reviewer adjudication.",
-    "Compression rates are workload-dependent; the 92% end-to-end elimination is from one 24-hour platform pilot with a highly repetitive stream.",
-    "Real_incident recall is 0% (all real_incident cases classified as needs_attention — safe direction but imprecise).",
-    "The cnv-images namespace remains at 27% agreement (image churn not fully recognized as expected).",
-    "Raw operational evidence, reviewer receipts, and environment configuration remain private.",
-    "Classifier input revision v3 requires fresh calibration and runtime evidence; learned rules from older input revisions must requalify."
+    "Experimental mechanics only. The published v0.2.0 wheel lacks a verified candidate-bound staging_success handoff.",
+    "0.2.1rc1 is a local incubating candidate. Publication requires a frozen commit and verified, attested candidate artifacts.",
+    "The historical rc7 replay measured recurring-event final counts. Incident safety, natural compression rates and customer savings require separate evidence.",
+    "Classification results are limited to a single-reviewer tuning set and a two-label holdout that tied the always-needs_attention baseline.",
+    "A staging claim requires independent adjudication and the complete attested handoff for the exact candidate."
   ]
 }

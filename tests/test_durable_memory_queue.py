@@ -284,7 +284,9 @@ class TestRestartReplay:
             assert len(again._llm_buffer) == 1
             entry = again._llm_buffer[0]
             assert len(entry["_signal_ids"]) == 3
-            assert len(again._llm_coalesce_index) == 1
+            # Replayed work retains its members, but the original admission
+            # evidence is unavailable after restoring the JSON projection.
+            assert not again._llm_coalesce_index
             outcomes = again.get_stats()["llm_signal_outcomes_since_start"]
             assert outcomes["queued"] == 3
             assert outcomes["reconciled"] is True

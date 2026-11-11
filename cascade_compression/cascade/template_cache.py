@@ -1,31 +1,17 @@
-"""Template-cached classification backend.
-
-Deterministic reuse for repetitive signal sources: the first occurrence of
-a template pays the wrapped backend's cost; repeats within the TTL inherit
-the result. This is the no-training fast tier — it composes with any
-wrapped classifier (label or fact-extraction) and lives in the engine, not
-behind a model artifact.
-
-Key design properties:
-- Keyed on (signal_type, normalized message template, context keys,
-  prompt revision) — the engine's own identity vocabulary plus a
-  representation-level template normalization (digit/IP/hex stripping).
-  This is not domain knowledge: it treats parameter variation as
-  representation, the same convention the corpus adapters use.
-- High/critical severities bypass the cache: volatile facts (recovery
-  progression) and safety-critical signals deserve fresh extraction.
-- Prompt-revision changes invalidate every entry — a prompt or few-shot
-  update can never serve stale judgments.
-- Fail-open: any wrapped-backend failure is returned uncached.
-"""
+"""Reuse a classifier result only for exact decision evidence."""
 from __future__ import annotations
 
+from collections import OrderedDict
+from copy import deepcopy
+import hashlib
 import re
 import threading
 import time
 from typing import Any, Dict
 
-from ..classifier import ClassificationResult
+from ..classifier import ClassificationResult, SERIALIZER_REVISION
+from ..outcome_evidence import _canonical_json
+from .protocol import Signal, severity_input_is_valid
 
 _HEX = re.compile(r"\b[0-9a-fA-F]{8,}\b")
 _IPV4 = re.compile(r"\b\d+\.\d+\.\d+\.\d+\b")
@@ -33,7 +19,7 @@ _DIGITS = re.compile(r"\d+")
 
 
 def normalize_template(message: str, level: str = "digits") -> str:
-    """Collapse parameter variation to a stable template signature.
+    """Group messages for analysis. This signature cannot authorize result reuse.
 
     ``level`` is a deployment convention, not engine knowledge:
     - "digits": numbers/IPs/hex are parameters (templated event streams,
@@ -49,8 +35,56 @@ def normalize_template(message: str, level: str = "digits") -> str:
     return t[:200]
 
 
+# These fields belong to queue delivery, never to the producer's nested content.
+_QUEUE_METADATA = frozenset({
+    "signal_id", "_work_id", "_signal_ids", "_signal_ids_bytes", "_enqueued_at",
+    "_queue_bytes", "_memory_ids", "_aggregation", "_qualification_bindings",
+})
+
+
+class AdmittedQueueEntry(dict):
+    """A live bridge delivery. Its pre-projection fingerprint never enters JSON."""
+
+    __slots__ = ("admission_key",)
+
+    def __init__(self, signal: Signal):
+        super().__init__(
+            signal_type=signal.signal_type, severity=signal.severity,
+            severity_input_valid=severity_input_is_valid(signal.severity, signal.severity_input_valid),
+            source=signal.source, namespace=signal.namespace, cluster=signal.cluster,
+            content=signal.content, labels=signal.labels,
+        )
+        # If a signal extension carries evidence the bridge cannot deliver,
+        # even identical delivered fields cannot establish equivalence.
+        self.admission_key = None
+        if type(signal) is Signal and not (vars(signal).keys() - self.keys() - {"signal_id"}):
+            self.admission_key = self._digest()
+
+    def _digest(self) -> bytes | None:
+        if (not severity_input_is_valid(self.get("severity"), self.get("severity_input_valid"))
+                or self["severity"] in ("high", "critical")
+                or not isinstance(self.get("content"), dict) or self["content"].get("_truncated")
+                or not isinstance(self.get("labels"), dict)):
+            return None
+        evidence = {k: v for k, v in self.items() if k not in _QUEUE_METADATA}
+        try:
+            return hashlib.sha256(_canonical_json(evidence)).digest()
+        except (TypeError, ValueError, RecursionError):
+            return None
+
+    def verified_key(self) -> bytes | None:
+        """Recheck the actual delivery before folding work or reusing a result."""
+        if self.admission_key is None or self.admission_key != self._digest():
+            return None
+        return self.admission_key
+
+
 class TemplateCachedClassifierBackend:
-    """Wraps any classifier backend with per-template result reuse."""
+    """Reuse exact inputs on backends declaring decision settings via cache_identity().
+
+    A cacheable backend treats signal_id and bridge qualification bookkeeping
+    as metadata. A configured context key can make even those fields significant.
+    """
 
     def __init__(self, inner: Any, *,
                  context_keys: tuple = (),
@@ -58,11 +92,12 @@ class TemplateCachedClassifierBackend:
                  max_entries: int = 100_000,
                  normalize_level: str = "digits"):
         self._inner = inner
-        self._context_keys = tuple(context_keys)
-        self._normalize_level = normalize_level
+        # Keep both legacy normalization settings compatible with exact reuse.
+        self._metadata = {"signal_id", "_qualification_bindings"}.difference(context_keys)
+        self.queue_context_keys = _QUEUE_METADATA.intersection(context_keys)
         self._ttl = float(ttl_seconds)
         self._max = int(max_entries)
-        self._cache: Dict[str, tuple] = {}
+        self._cache: OrderedDict[bytes, tuple[float, ClassificationResult]] = OrderedDict()
         self._lock = threading.Lock()
         self.cache_hits = 0
         self.cache_misses = 0
@@ -74,57 +109,72 @@ class TemplateCachedClassifierBackend:
     def __getattr__(self, name):
         return getattr(self._inner, name)
 
-    # NOTE: classification facts are template-intrinsic. Context-dependent
-    # handling (the same template meaning different things in different
-    # namespaces or sources) belongs to the contextual suppressors and the
-    # promotion engine downstream — not to the fact cache. Context-scoped
-    # caching remains available via context_keys for deployments that
-    # want it, but the default shares facts across contexts.
+    def _key(self, signal: Dict[str, Any], text: str) -> bytes | None:
+        severity = signal.get("severity")
+        if (not severity_input_is_valid(severity, signal.get("severity_input_valid", True))
+                or severity in ("high", "critical") or type(text) is not str):
+            return None
+        if isinstance(signal, AdmittedQueueEntry):
+            admitted = signal.verified_key()
+            if admitted is None:
+                return None
+            evidence = [admitted.hex(), {k: signal[k] for k in self.queue_context_keys if k in signal}]
+        elif "_work_id" in signal or "_signal_ids" in signal:
+            # Legacy, replayed, or caller-supplied delivery metadata has no witness.
+            return None
+        else:
+            evidence = {k: v for k, v in signal.items() if k not in self._metadata}
+        content = signal.get("content")
+        if not isinstance(content, dict) or content.get("_truncated"):
+            return None
 
-    def _key(self, signal: Dict[str, Any], prompt_revision: str) -> str:
-        content = signal.get("content") or {}
-        message = str(content.get("message", ""))
-        parts = [str(signal.get("signal_type", "")),
-                 normalize_template(message, self._normalize_level),
-                 prompt_revision]
-        for k in self._context_keys:
-            parts.append(str(signal.get(k, "")))
-        return "\x1f".join(parts)
-
-    def _prune_locked(self, now: float) -> None:
-        if len(self._cache) < self._max:
-            return
-        expired = [k for k, (exp, _) in self._cache.items() if exp <= now]
-        for k in expired:
-            del self._cache[k]
-        if len(self._cache) >= self._max:
-            for k in sorted(self._cache, key=lambda k: self._cache[k][0])[: self._max // 10]:
-                del self._cache[k]
+        try:
+            settings = self._inner.cache_identity()
+        except Exception:
+            # Third-party backends may lack a revision or be unable to resolve it.
+            # Only key construction is optional; the actual classifier still runs.
+            return None
+        try:
+            if not isinstance(settings, dict) or not settings:
+                return None
+            # The wrapper revision also binds fact extraction prompts and rubrics,
+            # even when the transport identity is delegated to the inner backend.
+            material = [SERIALIZER_REVISION, getattr(self._inner, "prompt_revision", ""),
+                        settings, text, evidence]
+            return hashlib.sha256(_canonical_json(material)).digest()
+        except (TypeError, ValueError, RecursionError):
+            # Lossy stringification (e.g. integer object keys) is unsafe here.
+            return None
 
     def classify(self, signal: Dict[str, Any], text: str,
                  client: Any = None) -> ClassificationResult:
-        severity = signal.get("severity", "medium")
-        prompt_revision = getattr(self._inner, "prompt_revision", "")
-        now = time.monotonic()
-        key = self._key(signal, prompt_revision)
+        started = time.monotonic()
+        key = self._key(signal, text)
         with self._lock:
-            hit = self._cache.get(key)
-            if hit is not None:
-                expires, cached = hit
-                if expires > now and severity not in ("high", "critical"):
-                    self.cache_hits += 1
-                    return cached
-                del self._cache[key]
-        if severity in ("high", "critical"):
-            self.cache_bypassed += 1
-        else:
-            self.cache_misses += 1
+            if key is None or self._max <= 0:
+                self.cache_bypassed += 1
+            else:
+                hit = self._cache.get(key)
+                if hit is not None:
+                    expires, cached = hit
+                    if expires > time.monotonic():
+                        result = deepcopy(cached)
+                        result.cache_hit = True
+                        result.latency_ms = (time.monotonic() - started) * 1000
+                        self.cache_hits += 1
+                        return result
+                    del self._cache[key]
+                self.cache_misses += 1
+
         result = self._inner.classify(signal, text, client)
-        # Only cache successful, non-volatile-severity classifications.
-        if result.ok and severity not in ("high", "critical"):
+        if (key is not None and self._max > 0 and result.ok and not result.cache_hit
+                and not result.error_code and key == self._key(signal, text)):
+            expires = started + self._ttl
             with self._lock:
-                self._prune_locked(now)
-                self._cache[key] = (now + self._ttl, result)
+                if expires > time.monotonic():
+                    if key not in self._cache and len(self._cache) >= self._max:
+                        self._cache.popitem(last=False)
+                    self._cache[key] = (expires, deepcopy(result))
         return result
 
     def stats(self) -> Dict[str, Any]:

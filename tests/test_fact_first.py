@@ -24,6 +24,9 @@ class StubFactBackend:
         self.calls = 0
         self.system_prompt = "fact prompt"
 
+    def cache_identity(self):
+        return {"prompt": self.system_prompt, "model": self.micro_model}
+
     def _complete(self, client, model, text):
         self.calls += 1
         if self._fail:
@@ -124,7 +127,7 @@ def test_fact_first_composes_with_template_cache():
     sig = {"signal_type": "event_x", "severity": "medium",
            "content": {"message": "probe failed on host-1"}}
     r1 = cached.classify(sig, "t1")
-    r2 = cached.classify(sig, "t2")  # same template: cache hit
+    r2 = cached.classify(sig, "t1")  # exact input: reuse the extraction
     assert inner.calls == 1
     assert r1.label == r2.label == "needs_attention"
     assert cached.cache_hits == 1

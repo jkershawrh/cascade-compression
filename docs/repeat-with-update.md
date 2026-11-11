@@ -2,12 +2,13 @@
 
 ## Finding that motivates this
 
-The Phase 2 pre-registered three-arm comparison (817,479 observations, 24h,
-one cluster) measured the verified-repeat-only profile at 8.4% suppression
-with zero dangerous misses, while a post-hoc latest-wins simple filter
-achieved 99.3% with zero dangerous misses under the same definition. The gap:
-the profile treats a count increment on an existing event as new information
-to deliver, when an operator needs only the refreshed state.
+On the frozen 24-hour capture (817,479 observations from one cluster),
+rc7 suppressed 8.4% and preserved all 215 recurring final counts. The
+pre-registered simple filter suppressed 99.3% and lost 145 final counts.
+A separate post-hoc latest-wins filter achieved 99.3% suppression with
+all final counts represented. That comparison motivated folding count
+increments into a retained observation when it can still be updated.
+[Replay results and limits](case-study-platform-pilot.md)
 
 ## Semantics
 

@@ -10,7 +10,7 @@
     {"id": "cascade.decision", "version": "1.0.0", "stability": "stable", "schema": "schemas/cascade-decision.json"},
     {"id": "cascade.collector-plugin", "version": "1.0.0", "stability": "stable", "schema": "schemas/collector-plugin.json"},
     {"id": "cascade.memory-record", "version": "1.0.0", "stability": "stable", "schema": "schemas/memory-record.json"},
-    {"id": "cascade.memory-event", "version": "1.0.0", "stability": "stable", "schema": "schemas/memory-event.json"},
+    {"id": "cascade.memory-event", "version": "2.0.0", "stability": "stable", "schema": "schemas/memory-event.json", "migration": "Consumers must accept classification_updated and deduplicate updates by details.event_id before enabling this producer."},
     {"id": "cascade.agent-promotion", "version": "1.0.0", "stability": "stable", "schema": "schemas/agent-promotion.json"},
     {"id": "cascade.value-evidence", "version": "1.0.0-alpha.1", "stability": "alpha", "schema": "schemas/value-evidence-claim.json"},
     {"id": "cascade.classification-evaluation", "version": "1.0.0-alpha.5", "stability": "alpha", "schema": "schemas/classification-evaluation.json"},

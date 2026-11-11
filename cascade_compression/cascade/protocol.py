@@ -108,7 +108,7 @@ def llm_complete(client, url: str, key: str, model: str,
             "max_tokens": max_tokens,
             "temperature": temperature,
         },
-        headers={"Authorization": f"Bearer {key}"},
+        headers={"Authorization": f"Bearer {key}"} if key else {},
     )
     r.raise_for_status()
     return r.json()["choices"][0]["message"]["content"].strip()

@@ -49,6 +49,12 @@ _RECOVERY_MAP = {"n": "na", "ns": "not_started", "ip": "in_progress", "c": "comp
 _JSON_STRIP = re.compile(r"^```(?:json)?\s*|\s*```$")
 
 
+def _valid_fact_shape(raw: Any) -> bool:
+    return (isinstance(raw, dict) and raw.keys() == {"designed", "impact", "recovery"}
+            and type(raw["designed"]) is bool and type(raw["impact"]) is str
+            and type(raw["recovery"]) is str)
+
+
 class Rubric:
     """Deterministic fact-to-label derivation.
 
@@ -64,13 +70,13 @@ class Rubric:
       missing/insufficient facts        -> needs_attention (fail-open)
     """
 
-    VERSION = "v0"
+    VERSION = "v0-strict-facts-1"
 
     _KNOWN_IMPACT = {"absent", "suspected", "confirmed"}
     _KNOWN_RECOVERY = {"na", "not_started", "in_progress", "complete"}
 
     def derive(self, facts: Dict[str, Any] | None) -> str:
-        if not facts:
+        if not _valid_fact_shape(facts):
             return "needs_attention"
         impact = str(facts.get("impact", "")).lower()
         designed = facts.get("designed")
@@ -89,21 +95,34 @@ class Rubric:
         return "routine_noise"
 
 
+def _unique_fields(pairs):
+    result = {}
+    for name, value in pairs:
+        if name in result:
+            raise ValueError("ambiguous fact response")
+        result[name] = value
+    return result
+
+
 def parse_facts(answer: str) -> Dict[str, Any] | None:
     """Parse the tight-schema fact JSON; None when unparseable."""
-    text = (answer or "").strip()
+    if not isinstance(answer, str):
+        return None
+    text = answer.strip()
     text = _JSON_STRIP.sub("", text)
     if text.startswith("json"):
         text = text[4:]
     try:
-        raw = json.loads(text)
+        raw = json.loads(text, object_pairs_hook=_unique_fields)
+        if not _valid_fact_shape(raw):
+            return None
         impact = _IMPACT_MAP.get(str(raw.get("impact", "")).lower())
         recovery = _RECOVERY_MAP.get(str(raw.get("recovery", "")).lower())
         if impact is None or recovery is None:
             return None
-        return {"designed": bool(raw.get("designed", False)),
+        return {"designed": raw["designed"],
                 "impact": impact, "recovery": recovery}
-    except (json.JSONDecodeError, AttributeError, TypeError):
+    except (ValueError, TypeError, RecursionError):
         return None
 
 

@@ -2,22 +2,47 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## 0.2.1rc1 - Unreleased
+
+- Checkpoint final memory labels with their linked classification-update audit
+  events. Recover retained results without treating a failed write as completed.
+- Consume delayed governance verdicts from a bounded, persisted cursor. In
+  strict mode, incomplete catch-up withholds learned suppression authority.
+
+- Set the local candidate to `0.2.1rc1` with the `incubating_oss` profile.
+  The corresponding Helm chart version is `0.2.1-rc.1`.
+- Correct the public evidence register and pilot claims.
+- Repair the project lock and installed-wheel plugin smoke.
+  Include NumPy in the dev extra for the head contract tests.
+- Require an unambiguous fact response with a JSON boolean `designed`.
+  Malformed evidence abstains instead of acquiring a benign label.
+- Reuse results only on matching decision evidence and backend settings.
+  Changed or lossy queue inputs cannot claim an exact repeat; cache hits
+  do not earn a fresh positive qualification sample.
+- Preserve severity validity through classification work. An invalid
+  severity or unverified restored rule cannot take a healthy-by-spec
+  shortcut. Successful value-rule work is counted separately from inference.
+- Omit the authorization header on credential-free model endpoints.
+  Configured bearer credentials and authentication failures are unchanged.
+
 ## 0.2.0 - 2026-11-02
 
-First staging-qualified release. Classification agreement on adjudicated
-production cases: **78.1%** (better than the 3-model judge panel at 55.6%
-and the human panel at 48.8%). Platform-pilot compression: **92%
-end-to-end elimination with zero dangerous misses**.
+The published tag points to `6800cd270a5e14cd419c65c760048c3fda8c5617`.
+Its profile declared `staging_qualified`, but tag CI and release verification
+failed. The published wheel has no verified, candidate-bound staging handoff.
+[Published wheel SHA-256 and workflow records](docs/evidence-register.md)
 
-### Classification
+### Classification and pilot evidence
 
-- Platform-context fact extraction: the DEFAULT_FACT_PROMPT now includes
-  multi-tenant demo-platform semantics — provisioning lifecycle and image
-  churn are known_pattern, infrastructure failures are needs_attention.
-  This took classification agreement from 41.9% to 78.1% on 160
-  adjudicated cases (98% needs_attention recall, 4 dangerous).
-- Matching platform context in the Kubernetes domain-pack system prompt.
-- Release profile upgraded to `staging_qualified` with updated limitations.
+- Added platform context to fact extraction and the Kubernetes domain-pack
+  prompt. Agreement rose from 41.9% to 78.1% on the 160 tuning cases, with
+  four dangerous classifications. On the held-out 100, 84% agreement tied
+  the always-needs_attention baseline.
+- The earlier rc7 replay retained 748,787/817,479 and preserved the final
+  count for all 215 recurring events. The separate ~92% figure was a
+  reported estimate of live traffic avoiding inference. [Case study](docs/case-study-platform-pilot.md)
+
+The measurements below describe the historical experiments cited with the tag.
 
 ### Value rules (deterministic sensor lanes)
 
@@ -39,9 +64,9 @@ end-to-end elimination with zero dangerous misses**.
   force/tactile, proprioception. Validated on the 20K multi-sensory
   corpus: 100% recall, 0% false positives, 57K signals/second.
 
-### Small-model qualification
+### Small-model comparison
 
-- Qwen2.5-3B qualified as the event-lane model: 100% fact-level agreement
+- The event-lane comparison reported for Qwen2.5-3B: 100% fact-level agreement
   with the 8B on K8s doc-truth, 97.4% on BGL, 3.7GB RSS (5x smaller),
   1.9x faster at equal CPU. granite-3.2-2b rejected (0% fact agreement,
   systematic impact inflation).
@@ -72,10 +97,8 @@ end-to-end elimination with zero dangerous misses**.
 
 ### Documentation and distribution
 
-- README rewritten: value-first, one number in the first paragraph,
-  60-second quickstart at the top, MCP server surfaced.
-- Case study published: `docs/case-study-platform-pilot.md` — the bounded
-  24-hour platform claim with full limitations.
+- Added a quickstart and MCP server documentation to the README.
+- Case study published: `docs/case-study-platform-pilot.md` — platform pilot observations.
 - Helm chart: version 0.2.0, appVersion 0.2.0.
 
 ## 0.2.0rc28 - 2026-10-28
