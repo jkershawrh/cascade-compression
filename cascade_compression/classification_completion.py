@@ -205,18 +205,26 @@ def apply(bridge, work_id):
     start = cursor = record["next_member"]
     # All-or-nothing destination check. A member whose linked memory was
     # capacity-evicted can never apply, and nothing has been mutated in this
-    # pass, so there is no committed decision to protect: keep the work
-    # pending and return without fencing (the caller reports
-    # classification_completion_pending backpressure). A restart discards the
-    # record once the snapshot itself shows the destination gone. Mid-flight
-    # eviction inside the application loop still takes the uncertainty fence.
+    # pass. The record is resolved as dropped work — mirroring the
+    # restore-time discard — so admission is not blocked forever; it is never
+    # counted as success. Mid-flight eviction inside the application loop
+    # keeps the stricter deferral (the audit buffer may drain and resume).
     if archive is not None:
         for sid, target in members[cursor:]:
             if target and archive.get(UUID(target)) is None:
+                unapplied = len(members) - cursor
                 log.warning(
-                    "classification %s member %s target %s evicted before "
-                    "application; work stays pending", work_id, sid, target)
-                return False
+                    "Discarding classification %s: %d unapplied member "
+                    "target(s) evicted before application (capacity)",
+                    work_id, unapplied)
+                del bridge._completion_pending[work_id]
+                with bridge._llm_queue_lock:
+                    bridge._classifier_inflight.pop(work_id, None)
+                    bridge._llm_accounting_dropped += unapplied
+                if bridge._durable_queue is not None:
+                    bridge._mark_durable_locked(
+                        {"_work_id": work_id}, delete=True)
+                return True
     original = {}
     noise = value["label"] in SUPPRESSIVE_LABELS
     provenance = dict(value["provenance"], classifier_identity=value["classifier_identity"],

@@ -422,7 +422,17 @@ def test_shared_memory_identifies_the_final_event_and_does_not_gain_verification
         b.close()
 
 
-def test_missing_linked_memory_never_manufactures_a_success(files):
+def test_missing_linked_memory_resolves_as_dropped_never_success(files):
+    """An evicted destination resolves the work as dropped, never success.
+
+    Production incident (2026-11-12, fifth phase): a retained record whose
+    member target was capacity-evicted stayed pending forever, and the
+    admission gate refused every new batch while pending work could not
+    complete — the collectors retried HTTP 503 for 40+ minutes with the
+    instance otherwise healthy. Unapplicable work is now resolved as
+    dropped (mirroring the restore-time discard): no classification is
+    applied, no success is manufactured, and admission continues.
+    """
     b = CascadeBridge(llm_url="http://fixture.invalid")
     try:
         entry, links = admitted(b)
@@ -431,13 +441,20 @@ def test_missing_linked_memory_never_manufactures_a_success(files):
         b.memory_archive.store(Signal(signal_type="pressure"))
         b.classifier.classify = Mock(return_value=ClassificationResult(label="real_incident", backend="fixture"))
         b._dispatch_llm_batches()
-        assert not b.wait_for_llm(2)
+        # The work resolves (as dropped, never success): the cycle completes.
+        assert b.wait_for_llm(2)
         state = json.loads(files.read_text())
-        assert entry["_work_id"] in state["classification_completion"]["pending"]
+        # Never manufactured as success; nothing was applied.
         assert state["classifier_work"]["accounting"]["succeeded"] == 0
         assert not updates(state)
         assert not b._classifier_terminal_receipts
-        assert b._durable_queue.stats()["pending_entries"] == 1
+        # The record is resolved, not stuck: nothing stays pending and the
+        # bridge keeps admitting work.
+        assert entry["_work_id"] not in b._completion_pending
+        assert b._enqueue_llm_signals([Signal(signal_type="fixture2", severity="medium",
+                                               content={"message": "after eviction"})])
+        assert b.process([Signal(signal_type="fixture3", severity="medium",
+                                 content={"message": "admission works"})])["accepted"] is True
     finally:
         b.close()
 
@@ -513,15 +530,15 @@ def test_evicted_classification_target_abandons_member_without_fencing(files, mo
         restored.close()
 
 
-def test_runtime_evicted_target_keeps_work_pending_without_fencing(files):
-    """Capacity eviction must not fence the live bridge.
+def test_runtime_evicted_target_resolves_without_fencing(files):
+    """A capacity-evicted destination is resolved as dropped, not fenced.
 
     Production incident (2026-11-12): instances whose archives run at
     capacity fenced with "classification application uncertain" when a
     linked memory was evicted between retention and application, degrading
-    /health to 503 and crash-looping the instance. The work must stay
-    pending (never manufactured as success) but the bridge must keep
-    serving: eviction is routine capacity behavior, not commit uncertainty.
+    /health to 503 and crash-looping the instance. The work is resolved as
+    dropped (never a manufactured success) and the bridge keeps serving:
+    eviction is routine capacity behavior, not commit uncertainty.
     """
     b = CascadeBridge(llm_url="http://fixture.invalid")
     try:
@@ -531,12 +548,14 @@ def test_runtime_evicted_target_keeps_work_pending_without_fencing(files):
         b.memory_archive.store(Signal(signal_type="pressure"))
         b.classifier.classify = Mock(return_value=ClassificationResult(label="real_incident", backend="fixture"))
         b._dispatch_llm_batches()
-        assert not b.wait_for_llm(2)
+        # The work resolves (as dropped, never success): the cycle completes.
+        assert b.wait_for_llm(2)
         state = json.loads(files.read_text())
-        assert entry["_work_id"] in state["classification_completion"]["pending"]
         assert state["classifier_work"]["accounting"]["succeeded"] == 0
-        # No fence: the bridge keeps accepting and classifying work.
+        # No fence and no stuck pending record: the bridge keeps accepting
+        # and classifying work.
         assert b._classifier_recovery_error == ""
+        assert entry["_work_id"] not in b._completion_pending
         assert b._enqueue_llm_signals([Signal(signal_type="fixture2", severity="medium",
                                                content={"message": "after eviction"})])
     finally:

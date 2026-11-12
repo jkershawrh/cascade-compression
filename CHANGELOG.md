@@ -4,6 +4,19 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## 0.2.1rc1 - 2026-11-12
 
+- Resolve classification work with evicted member targets as dropped at
+  application time, mirroring the restore-time discard. A retained record
+  whose destination was capacity-evicted previously stayed pending forever,
+  and the admission gate refused every new batch while pending work could
+  not complete — collectors retried HTTP 503 for 40+ minutes against an
+  otherwise healthy instance (observed on a production deployment,
+  2026-11-12). The record is now removed and its unapplied members counted
+  as dropped: never a manufactured success, and admission continues.
+  Mid-flight eviction inside the application loop keeps the deferral (the
+  audit buffer may drain and resume). Regression tests:
+  `test_missing_linked_memory_resolves_as_dropped_never_success`,
+  `test_runtime_evicted_target_resolves_without_fencing`.
+
 The published tag points to `aba960b88fa2e4e51d34e5f6d1bd618d913a4285`.
 Five production-fatal defects found by deploying this candidate are fixed
 below; every original safety invariant remains test-pinned and the suite
