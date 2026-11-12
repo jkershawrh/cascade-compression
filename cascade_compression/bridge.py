@@ -2793,6 +2793,15 @@ class CascadeBridge(LifecycleControls):
             memory_data = state.get("memory_archive")
             if memory_data and self.memory_archive is not None:
                 self.memory_archive = MemoryArchive.from_dict(memory_data, audit_backpressure=True)
+                # The operator's CASCADE_MEMORY_MAX raises capacity across a
+                # restore: the persisted value must not pin an instance to a
+                # size the operator has outgrown (observed 2026-11-12 — an
+                # at-capacity archive churned fast enough to evict retained
+                # classification targets before application).
+                self.memory_archive._max_capacity = max(
+                    self.memory_archive._max_capacity, self._memory_max)
+                self.memory_archive._rejection_max = (
+                    self.memory_archive._max_capacity * 2)
 
             self._promote_orphaned_noise_types()
             # Complete the spool restore before persisting interrupted-work

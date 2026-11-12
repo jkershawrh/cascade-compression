@@ -68,3 +68,37 @@ def test_audit_buffer_cap_is_configurable(monkeypatch):
     assert MemoryArchive()._event_max_pending == 1000  # floor
     monkeypatch.delenv("CASCADE_MEMORY_EVENT_MAX_PENDING", raising=False)
     assert MemoryArchive()._event_max_pending == 20000  # default
+
+
+def test_memory_max_env_raises_capacity_across_restore(tmp_path, monkeypatch):
+    """CASCADE_MEMORY_MAX must raise a restored archive's capacity.
+
+    Production finding (2026-11-12): an at-capacity archive (10K) churned
+    its entire capacity ~1,350 times; retained classification targets were
+    evicted before application and the discard flood consumed the
+    classification budget. The operator raised CASCADE_MEMORY_MAX but the
+    restore path read the persisted capacity and ignored it.
+    """
+    from cascade_compression.bridge import CascadeBridge
+    from tests.helpers import make_signal
+
+    monkeypatch.setenv("CASCADE_STATE_FILE", str(tmp_path / "state.json"))
+    monkeypatch.setenv("CASCADE_LLM_QUEUE_FILE", str(tmp_path / "work.sqlite3"))
+    monkeypatch.setenv("CASCADE_LEDGER_URL", "")
+
+    first = CascadeBridge(llm_url="http://fixture.invalid")
+    try:
+        for i in range(20):
+            first.memory_archive.store(make_signal(content={"message": f"m{i}"}))
+        assert first.memory_archive._max_capacity == 10000
+        assert first._save_state()
+    finally:
+        first.close()
+
+    monkeypatch.setenv("CASCADE_MEMORY_MAX", "50000")
+    restored = CascadeBridge(llm_url="http://fixture.invalid")
+    try:
+        assert restored.memory_archive._max_capacity == 50000
+        assert restored.memory_archive.size == 20
+    finally:
+        restored.close()
