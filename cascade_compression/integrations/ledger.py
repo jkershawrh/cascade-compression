@@ -298,6 +298,16 @@ def post_entry(ledger_url: str, ledger_token: str, entry: Dict) -> bool:
 def _post_to_ledger(ledger_url: str, ledger_token: str, entry: Dict) -> bool:
     import httpx
 
+    serialized = json.dumps(entry).encode()
+    if len(serialized) > MAX_ENTRY_BYTES:
+        # The gateway answers oversized content with a generic HTTP 500
+        # (its gRPC INVALID_ARGUMENT is not mapped to a 4xx status), so the
+        # only reliable signal is the size itself: the entry can never be
+        # delivered.
+        raise LedgerPermanentRejection(
+            f"ledger entry exceeds the gateway content limit: "
+            f"{len(serialized)} > {MAX_ENTRY_BYTES} bytes")
+
     try:
         headers = {"Content-Type": "application/json"}
         if ledger_token:

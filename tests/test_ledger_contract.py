@@ -364,3 +364,23 @@ class TestByteBoundedEnvelopes:
         monkeypatch.setattr(httpx, "Client", FakeClient)
         with pytest.raises(LedgerPermanentRejection):
             _post_to_ledger("http://ledger.invalid", "", {"entry_type": "x"})
+
+    def test_oversized_entry_rejected_before_posting(self, monkeypatch):
+        """Entries over the gateway limit raise before any network I/O.
+
+        The gateway maps its gRPC INVALID_ARGUMENT to a generic HTTP 500,
+        so status codes cannot distinguish permanent rejection — the size
+        check is the only reliable signal.
+        """
+        from cascade_compression.integrations.ledger import (
+            LedgerPermanentRejection, MAX_ENTRY_BYTES, _post_to_ledger,
+        )
+
+        def no_network(*a, **k):
+            raise AssertionError("must not touch the network")
+
+        import httpx
+        monkeypatch.setattr(httpx, "Client", no_network)
+        entry = {"entry_type": "x", "content": "y" * (MAX_ENTRY_BYTES + 1)}
+        with pytest.raises(LedgerPermanentRejection):
+            _post_to_ledger("http://ledger.invalid", "", entry)
