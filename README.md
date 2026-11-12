@@ -159,9 +159,14 @@ in the GCL repository.
 
 ## Status
 
-The published `v0.2.0` release has no verified, candidate-bound staging
-qualification. The local working candidate is `0.2.1rc1` with the
-`incubating_oss` profile. Python 3.9–3.13.
+The `v0.2.1rc1` tag is a production-hardened release candidate: it carries six
+fixes for defects found by deploying the candidate on a production cluster
+(2026-11-12), every one regression-tested — the stats federated-sources race,
+restore-time and runtime handling of capacity-evicted classification targets,
+cross-build journal binding, the audit-backpressure health death spiral, the
+admission deadlock on unapplicable retained work, and ledger receipt
+envelopes above the gateway's content limit. All four production instances
+run it. Python 3.9–3.13.
 
 On 160 tuning cases, the platform-context classifier had 78.1% agreement
 and four dangerous errors. On the held-out 100 it got 84/84 needs_attention
