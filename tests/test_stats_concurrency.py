@@ -1,6 +1,6 @@
 """Regression: MemoryArchive.stats() must not race concurrent store() calls.
 
-Observed in production (infra01, cascade-aap, 2026-11-11): the /memories/stats
+Observed in production (2026-11-11): the /memories/stats
 and /stats endpoints intermittently returned HTTP 500 with
 `RuntimeError: dictionary changed size during iteration`, raised from
 
