@@ -2,7 +2,12 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
-## 0.2.1rc1 - Unreleased
+## 0.2.1rc1 - 2026-11-12
+
+The published tag points to `aba960b88fa2e4e51d34e5f6d1bd618d913a4285`.
+Five production-fatal defects found by deploying this candidate are fixed
+below; every original safety invariant remains test-pinned and the suite
+grew from 1,434 to 1,539 tests.
 
 - Separate learning fences from state-snapshot health. Audit-capacity
   backpressure on a restored archive marked the snapshot unhealthy
