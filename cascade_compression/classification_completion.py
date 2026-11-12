@@ -117,13 +117,26 @@ def restore(bridge, state):
         validate_result(value)
         unsigned = {k: v for k, v in value.items() if k != "event_id"}
         if (digest(dict(work_id=work_id, result=unsigned)) != value["event_id"]
-                or value["classifier_identity"] != bridge._classifier_identity()
                 or type(record["next_member"]) is not int
                 or not 0 <= record["next_member"] < len(record["members"])):
             raise ValueError("retained classification binding mismatch")
+        if value["classifier_identity"] != bridge._classifier_identity():
+            # The result was retained by a different build or configuration
+            # (the identity binds the package implementation). It cannot be
+            # trusted by this one, but that is a durable fact, not ambiguity:
+            # discard the entry rather than fencing the restore. Tamper
+            # evidence (the event_id digest above) stays fatal.
+            log.warning(
+                "Discarding retained classification %s: bound to a different "
+                "classifier identity (build or configuration change)",
+                work_id)
+            continue
         bridge._classifier_inflight[work_id] = dict(record["context"], _work_id=work_id,
                                                     _signal_ids=[sid for sid, _ in record["members"]])
-    bridge._completion_pending = pending
+    bridge._completion_pending = {
+        work_id: record for work_id, record in pending.items()
+        if record["result"]["classifier_identity"] == bridge._classifier_identity()
+    }
     bridge._completion_ack = ack
     owned = pending.keys() | ack
     bridge._durable_staged_entries = [

@@ -541,3 +541,44 @@ def test_runtime_evicted_target_keeps_work_pending_without_fencing(files):
                                                content={"message": "after eviction"})])
     finally:
         b.close()
+
+
+def test_retained_work_from_a_different_identity_is_discarded_not_fatal(files, monkeypatch):
+    """Retained results bound to another build are discarded, not fatal.
+
+    Production incident (2026-11-12, third phase): the classifier identity
+    binds the package implementation, so any code change invalidates
+    retained classification journals from previous builds. Restarts after an
+    upgrade raised "retained classification binding mismatch" and fenced the
+    whole instance. A different build is a durable fact, not ambiguity: the
+    entry is discarded (its results are not trusted by this build) while
+    tamper evidence (the event_id digest) stays fatal.
+    """
+    from cascade_compression.cascade.memory import MemoryArchive
+
+    b = CascadeBridge(llm_url="http://fixture.invalid")
+    try:
+        entry, links = admitted(b)
+
+        def stall(*args, **kwargs):
+            raise MemoryEventBackpressure("fixture stall")
+        monkeypatch.setattr(MemoryArchive, "update_classification", stall)
+        b.classifier.classify = Mock(return_value=ClassificationResult(
+            label="real_incident", backend="fixture", model_revision="r1"))
+        b._dispatch_llm_batches()
+        assert not b.wait_for_llm(3)
+        state = json.loads(files.read_text())
+        assert entry["_work_id"] in state["classification_completion"]["pending"]
+    finally:
+        b.close()
+
+    # A different activation TTL changes the classifier identity, standing in
+    # for "journal written by a different build or configuration".
+    monkeypatch.setenv("CASCADE_ACTIVATION_TTL_HOURS", "48")
+    restored = CascadeBridge(llm_url="http://fixture.invalid")
+    try:
+        assert restored._state_healthy is True
+        assert restored._classifier_recovery_error == ""
+        assert not restored._completion_pending
+    finally:
+        restored.close()

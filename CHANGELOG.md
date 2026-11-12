@@ -4,6 +4,16 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## 0.2.1rc1 - Unreleased
 
+- Discard retained classification work bound to a different classifier
+  identity instead of failing the restore. The identity binds the package
+  implementation, so any code change invalidates retained journals from
+  previous builds; restarts after an upgrade raised "retained classification
+  binding mismatch" and fenced the instance (observed on a production
+  deployment, 2026-11-12). A different build is a durable fact, not
+  ambiguity: those entries are discarded with a warning — their results are
+  not trusted by this build — while tamper evidence (the event_id digest)
+  remains fatal. Regression test:
+  `tests/test_final_memory_audit.py::test_retained_work_from_a_different_identity_is_discarded_not_fatal`.
 - Stop fencing the live bridge when a classification member's linked memory
   was capacity-evicted before application. On archives running at capacity,
   routine eviction between retention and application raised "classification
