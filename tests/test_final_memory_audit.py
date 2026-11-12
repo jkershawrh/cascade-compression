@@ -1,7 +1,7 @@
 """Synthetic crash boundaries for final classification and its audit trail."""
 import json
 from unittest.mock import Mock
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -453,3 +453,61 @@ def test_optional_telemetry_failure_cannot_consume_authoritative_work(files):
         check_committed(json.loads(files.read_text()), entry, links)
     finally:
         b.close()
+
+
+def test_evicted_classification_target_abandons_member_without_fencing(files, monkeypatch):
+    """A capacity-evicted destination is discarded at restore, not fenced.
+
+    Production incident (2026-11-12): a restart found retained classification
+    work whose linked memory had been evicted between checkpoint and
+    completion. The restore fenced the whole bridge ("classification
+    application uncertain") and the instance could not start. An evicted
+    memory cannot be mislabeled, and the snapshot itself testifies the
+    destination is gone, so the record is discarded as dropped; live
+    application keeps the stricter uncertainty fence
+    (test_missing_linked_memory_never_manufactures_a_success).
+    """
+    from cascade_compression.cascade.memory import MemoryArchive
+
+    b = CascadeBridge(llm_url="http://fixture.invalid")
+    try:
+        entry, links = admitted(b)
+
+        # Stall application so the completion journal is saved with pending
+        # work (the audit buffer is exhausted at checkpoint time).
+        def stall(*args, **kwargs):
+            raise MemoryEventBackpressure("fixture stall")
+        monkeypatch.setattr(MemoryArchive, "update_classification", stall)
+        b.classifier.classify = Mock(return_value=ClassificationResult(
+            label="real_incident", backend="fixture", model_revision="r1"))
+        b._dispatch_llm_batches()
+        # The stalled application leaves the work retained-but-pending, with
+        # the completion journal checkpointed.
+        assert not b.wait_for_llm(3)
+        state = json.loads(files.read_text())
+        assert entry["_work_id"] in state["classification_completion"]["pending"]
+    finally:
+        b.close()
+
+    # Construct the production snapshot condition: the journal references a
+    # memory the same snapshot no longer contains (capacity eviction happened
+    # between checkpoint and completion; the next save persisted both facts).
+    state = json.loads(files.read_text())
+    victim_mid = str(links[entry["_signal_ids"][0]])
+    before = len(state["memory_archive"]["memories"])
+    state["memory_archive"]["memories"] = [
+        m for m in state["memory_archive"]["memories"]
+        if str(m["memory_id"]) != victim_mid]
+    assert len(state["memory_archive"]["memories"]) == before - 1
+    files.write_text(json.dumps(state))
+
+    restored = CascadeBridge(llm_url="http://fixture.invalid")
+    try:
+        assert restored._state_healthy is True
+        assert restored._classifier_recovery_error == ""
+        # The discarded record's destination is still gone and no fence was
+        # raised; the surviving memories keep their state.
+        assert restored.memory_archive.get(UUID(victim_mid)) is None
+        assert restored.memory_archive.size == before - 1
+    finally:
+        restored.close()

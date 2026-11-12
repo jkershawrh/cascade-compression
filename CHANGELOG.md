@@ -4,6 +4,16 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## 0.2.1rc1 - Unreleased
 
+- Discard retained classification work whose member targets are absent from
+  the restored archive, instead of fencing the restore. Capacity eviction
+  between checkpoint and completion leaves the completion journal
+  referencing memories the same snapshot no longer contains; the previous
+  behavior raised "classification application uncertain" on restart and the
+  instance could not start (observed on a production deployment, 2026-11-12).
+  The snapshot itself testifies the destination is gone, so those records are
+  dropped with a warning and counted as dropped work. Live application keeps
+  the stricter uncertainty fence. Regression test:
+  `tests/test_final_memory_audit.py::test_evicted_classification_target_abandons_member_without_fencing`.
 - Fix `MemoryArchive.stats()` reading `federated_sources` outside the archive
   lock. The unlocked set comprehension over the live `_memories` dict raised
   `RuntimeError: dictionary changed size during iteration` under concurrent

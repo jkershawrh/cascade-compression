@@ -8,10 +8,13 @@ from uuid import UUID, uuid4
 from copy import deepcopy
 from datetime import datetime, timezone
 import json
+import logging
 
 from .cascade.memory import MemoryEventBackpressure
 from .classifier import CASCADE_LABELS, SUPPRESSIVE_LABELS
 from .lifecycle import digest, valid_time
+
+log = logging.getLogger(__name__)
 
 MAX_RESULT_BYTES = 16384
 TEXT_FIELDS = ('authoritative_backend', 'model_revision', 'prompt_revision',

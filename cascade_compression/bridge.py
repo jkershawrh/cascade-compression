@@ -2777,6 +2777,31 @@ class CascadeBridge(LifecycleControls):
             # spool — not the snapshot — is the authority for recovered work.
             if self._durable_queue is not None:
                 self._complete_durable_restore()
+            # A persisted journal whose not-yet-applied members reference
+            # memories the same snapshot does not contain is unrecoverable by
+            # the snapshot's own testimony: the destination is durably gone
+            # (capacity eviction between checkpoint and completion). Discard
+            # those records as dropped instead of fencing the restore; live
+            # application keeps the stricter uncertainty fence.
+            if self._completion_pending and self.memory_archive is not None:
+                for work_id in list(self._completion_pending):
+                    record = self._completion_pending[work_id]
+                    unapplied = record["members"][record["next_member"]:]
+                    missing = [target for _, target in unapplied
+                               if target and self.memory_archive.get(UUID(target)) is None]
+                    if missing:
+                        log.warning(
+                            "Discarding retained classification %s: %d/%d unapplied "
+                            "member target(s) absent from the restored archive "
+                            "(evicted before completion)",
+                            work_id, len(missing), len(unapplied))
+                        del self._completion_pending[work_id]
+                        with self._llm_queue_lock:
+                            self._classifier_inflight.pop(work_id, None)
+                        work = state.get("classifier_work")
+                        if isinstance(work, dict) and isinstance(work.get("accounting"), dict):
+                            work["accounting"]["dropped"] = (
+                                work["accounting"].get("dropped", 0) + len(unapplied))
             completion.resume(self)
             if state.get('classifier_work', {}).get('outstanding'):
                 if not self._save_state():
