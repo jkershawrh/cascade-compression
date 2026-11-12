@@ -4,6 +4,14 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## 0.2.1rc1 - Unreleased
 
+- Fix `MemoryArchive.stats()` reading `federated_sources` outside the archive
+  lock. The unlocked set comprehension over the live `_memories` dict raised
+  `RuntimeError: dictionary changed size during iteration` under concurrent
+  `store()` traffic, surfacing as intermittent HTTP 500s on `/stats` and
+  `/memories/stats` (observed on infra01 cascade-aap, ~1% of reads with a
+  1s dashboard poll). The whole stats read now holds `self._lock`, matching
+  the strengths comprehension. Regression test:
+  `tests/test_stats_concurrency.py`.
 - Checkpoint final memory labels with their linked classification-update audit
   events. Recover retained results without treating a failed write as completed.
 - Consume delayed governance verdicts from a bounded, persisted cursor. In

@@ -886,7 +886,7 @@ class MemoryArchive:
     def stats(self) -> Dict[str, Any]:
         with self._lock:
             strengths = [m.strength for m in self._memories.values()]
-        sources = {m.source_instance for m in self._memories.values() if m.source_instance}
+            sources = {m.source_instance for m in self._memories.values() if m.source_instance}
         return {
             "size": self.size,
             "max_capacity": self._max_capacity,
