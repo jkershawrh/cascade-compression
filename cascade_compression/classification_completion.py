@@ -258,7 +258,13 @@ def apply(bridge, work_id):
                     # A negative qualification may checkpoint immediately. All
                     # memory, audit, and accounting fields are already staged.
                     if bridge._record_qualification(record["context"], noise) is False:
-                        raise OSError("qualification checkpoint failed")
+                        # The qualification count is unavailable (learning
+                        # fenced or the snapshot is unhealthy). The
+                        # classification itself is complete and staged; a
+                        # skipped count must not fence the bridge.
+                        log.warning(
+                            "qualification checkpoint skipped for %s: "
+                            "learning fenced or snapshot unhealthy", work_id)
             else:
                 record["next_member"] = cursor
                 if not noise:

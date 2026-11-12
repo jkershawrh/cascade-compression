@@ -4,6 +4,20 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## 0.2.1rc1 - Unreleased
 
+- Separate learning fences from state-snapshot health. Audit-capacity
+  backpressure on a restored archive marked the snapshot unhealthy
+  (/health 503), the liveness probe killed the pod, and the restart cycle
+  could never drain the backlog — instances with large archives
+  crash-looped on every restart (observed on a production deployment,
+  2026-11-12). `fence_learning` now withdraws adaptive authority only and
+  records a reason; only repeated snapshot write failures mark the snapshot
+  itself unhealthy. /health reports a learning fence as HTTP 200
+  "degraded" with a `learning_fenced` field, so the instance keeps serving
+  while it drains. A classification whose qualification count cannot be
+  recorded (learning fenced) now completes with a warning instead of
+  raising and fencing the bridge. Regression tests:
+  `test_audit_backpressure_withdraws_learning_not_state_health`,
+  `test_health_reports_learning_fence_as_degraded_200`.
 - Discard retained classification work bound to a different classifier
   identity instead of failing the restore. The identity binds the package
   implementation, so any code change invalidates retained journals from

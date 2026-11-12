@@ -227,6 +227,7 @@ def health():
     queue_health["memory_checkpoint_healthy"] = getattr(
         _bridge, "_durable_memory_checkpoint_healthy", True,
     ) if _bridge else True
+    learning_fence = getattr(_bridge, "_learning_fence_reason", "") if _bridge else ""
     if _bridge is None:
         status, code = "not_ready", 503
     elif snapshot_healthy is False:
@@ -235,6 +236,10 @@ def health():
         status, code = "unknown", 503
     elif not queue_health["healthy"] or not queue_health["memory_checkpoint_healthy"]:
         status, code = "degraded", 503
+    elif learning_fence:
+        # Adaptive learning is withdrawn (e.g. audit-capacity backpressure)
+        # but the state snapshot is intact and the instance keeps serving.
+        status, code = "degraded", 200
     else:
         status, code = ("ok" if enabled else "paused"), 200
     body = {
@@ -243,6 +248,7 @@ def health():
         "enabled": enabled,
         "ready": status == "ok",
         "state_snapshot_healthy": snapshot_healthy,
+        "learning_fenced": learning_fence or None,
         "nano_profile": _bridge.nano_profile if _bridge else "",
         "classification_queue": queue_health,
     }

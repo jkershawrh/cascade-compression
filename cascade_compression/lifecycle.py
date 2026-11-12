@@ -96,9 +96,19 @@ class LifecycleControls:
             return None
         return record
 
-    def _fence_learning(self, reason):
-        """Withdraw only adaptive authority; deterministic bounded policy remains."""
-        self._state_healthy = False
+    def _fence_learning(self, reason, *, state=False):
+        """Withdraw only adaptive authority; deterministic bounded policy remains.
+
+        Audit-capacity backpressure, qualification availability, and enqueue
+        checkpoint problems withdraw learning without marking the state
+        snapshot unhealthy: the instance keeps serving and accepting durable
+        work while it recovers. Only a state-integrity failure (repeated
+        snapshot write failures) passes state=True and marks the snapshot
+        itself unhealthy.
+        """
+        self._learning_fence_reason = reason
+        if state:
+            self._state_healthy = False
         for kind in list(self._activated_types):
             self._deactivate_agent(kind)
         for kind, contexts in self._activated_contexts.items():

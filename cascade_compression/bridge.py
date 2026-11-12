@@ -464,6 +464,7 @@ class CascadeBridge(LifecycleControls):
         self._classifier_terminal_evicted = 0
         self._classifier_terminal_max = max(1, int(os.getenv('CASCADE_CLASSIFIER_TERMINAL_RECEIPTS_MAX', '10000')))
         self._state_healthy = True
+        self._learning_fence_reason = ""
 
         self.baseline = Baseline(normal_ranges={})
         self._observed_ranges: Dict[str, Dict[str, list]] = defaultdict(lambda: defaultdict(list))
@@ -2636,7 +2637,7 @@ class CascadeBridge(LifecycleControls):
             # the next save; only fence after repeated failures.
             self._save_failures = getattr(self, '_save_failures', 0) + 1
             if self._save_failures >= 5:
-                self._fence_learning('repeated snapshot write failures')
+                self._fence_learning('repeated snapshot write failures', state=True)
                 log.warning("Failed to save state %d times, fencing: %s",
                             self._save_failures, e)
             else:
@@ -2932,6 +2933,7 @@ class CascadeBridge(LifecycleControls):
             stats['verdict_window_total'] = cursor.get('total') if isinstance(cursor, dict) else None
         stats['verdict_mode'] = self._verdict_mode
         stats['state_snapshot_healthy'] = self._state_healthy
+        stats['learning_fence_reason'] = self._learning_fence_reason
         if self._value_rule_agent is not None:
             stats['value_rule_revision'] = self._value_rule_agent.revision
             stats['value_rule_fires'] = dict(

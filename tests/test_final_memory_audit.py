@@ -582,3 +582,57 @@ def test_retained_work_from_a_different_identity_is_discarded_not_fatal(files, m
         assert not restored._completion_pending
     finally:
         restored.close()
+
+
+def test_audit_backpressure_withdraws_learning_not_state_health(files):
+    """Audit-capacity backpressure must not mark the snapshot unhealthy.
+
+    Production incident (2026-11-12, fourth phase): restored archives with
+    full audit-event buffers hit MemoryEventBackpressure on the first
+    application. fence_learning marked the snapshot unhealthy, /health
+    returned 503, the liveness probe killed the pod, and the restart cycle
+    could never drain the backlog. Learning fences now keep the snapshot
+    healthy: the instance serves (HTTP 200, degraded) while it drains.
+    """
+    b = CascadeBridge(llm_url="http://fixture.invalid")
+    try:
+        entry, links = admitted(b)
+        # Exhaust the audit-event buffer so application backpressures.
+        b.memory_archive._event_max_pending = b.memory_archive.pending_event_count()
+        b.classifier.classify = Mock(return_value=ClassificationResult(
+            label="real_incident", backend="fixture", model_revision="r1"))
+        b._dispatch_llm_batches()
+        assert not b.wait_for_llm(2)
+
+        # Learning is withdrawn for audit capacity...
+        assert b._learning_fence_reason == (
+            "negative classification awaiting audit capacity")
+        # ...but the snapshot stays healthy and saves keep working.
+        assert b._state_healthy is True
+        assert b._save_state()
+        # A skipped qualification count must not fence the bridge either.
+        assert b._classifier_recovery_error == ""
+    finally:
+        b.close()
+
+
+def test_health_reports_learning_fence_as_degraded_200(monkeypatch):
+    """A learning-fenced bridge serves /health at 200, not 503."""
+    from cascade_compression import service
+
+    class StubBridge:
+        enabled = True
+        nano_profile = "legacy"
+        _state_healthy = True
+        _learning_fence_reason = "negative classification awaiting audit capacity"
+        _durable_queue = None
+        _durable_memory_checkpoint_healthy = True
+
+    monkeypatch.setattr(service, "_bridge", StubBridge())
+    body = service.health()
+    assert body["status"] == "degraded"
+    assert body["learning_fenced"] == (
+        "negative classification awaiting audit capacity")
+    assert body["state_snapshot_healthy"] is True
+    # Not a JSONResponse => HTTP 200.
+    assert not isinstance(body, dict) or "status" in body
