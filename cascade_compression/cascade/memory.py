@@ -404,7 +404,12 @@ class MemoryArchive:
         self._events: List[MemoryEvent] = []
         self._event_bytes = 0
         self._audit_backpressure = audit_backpressure
-        self._event_max_pending = 20000
+        # Operators may raise audit headroom on instances whose memory-event
+        # production chronically exceeds the ledger drain throughput; the
+        # buffer only absorbs bursts — the spool and gateway bound the drain.
+        import os as _os
+        self._event_max_pending = max(
+            1000, int(_os.getenv("CASCADE_MEMORY_EVENT_MAX_PENDING", "20000")))
         self._event_max_bytes = 16 * 1024 * 1024
         self._formed_total = 0
         self._evictions_total = 0
