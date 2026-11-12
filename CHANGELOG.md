@@ -4,6 +4,16 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## 0.2.1rc1 - Unreleased
 
+- Stop fencing the live bridge when a classification member's linked memory
+  was capacity-evicted before application. On archives running at capacity,
+  routine eviction between retention and application raised "classification
+  application uncertain", degraded /health to 503, and crash-looped the
+  instance (observed on a production deployment, 2026-11-12). Application now
+  pre-checks destinations all-or-nothing: the work stays pending and the
+  caller reports classification_completion_pending backpressure — never a
+  manufactured success — while mid-flight eviction inside the application
+  loop keeps the uncertainty fence. Regression test:
+  `tests/test_final_memory_audit.py::test_runtime_evicted_target_keeps_work_pending_without_fencing`.
 - Discard retained classification work whose member targets are absent from
   the restored archive, instead of fencing the restore. Capacity eviction
   between checkpoint and completion leaves the completion journal

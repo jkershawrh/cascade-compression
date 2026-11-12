@@ -511,3 +511,33 @@ def test_evicted_classification_target_abandons_member_without_fencing(files, mo
         assert restored.memory_archive.size == before - 1
     finally:
         restored.close()
+
+
+def test_runtime_evicted_target_keeps_work_pending_without_fencing(files):
+    """Capacity eviction must not fence the live bridge.
+
+    Production incident (2026-11-12): instances whose archives run at
+    capacity fenced with "classification application uncertain" when a
+    linked memory was evicted between retention and application, degrading
+    /health to 503 and crash-looping the instance. The work must stay
+    pending (never manufactured as success) but the bridge must keep
+    serving: eviction is routine capacity behavior, not commit uncertainty.
+    """
+    b = CascadeBridge(llm_url="http://fixture.invalid")
+    try:
+        entry, links = admitted(b)
+        # Simulate a capacity eviction after durable work admission.
+        b.memory_archive._max_capacity = 1
+        b.memory_archive.store(Signal(signal_type="pressure"))
+        b.classifier.classify = Mock(return_value=ClassificationResult(label="real_incident", backend="fixture"))
+        b._dispatch_llm_batches()
+        assert not b.wait_for_llm(2)
+        state = json.loads(files.read_text())
+        assert entry["_work_id"] in state["classification_completion"]["pending"]
+        assert state["classifier_work"]["accounting"]["succeeded"] == 0
+        # No fence: the bridge keeps accepting and classifying work.
+        assert b._classifier_recovery_error == ""
+        assert b._enqueue_llm_signals([Signal(signal_type="fixture2", severity="medium",
+                                               content={"message": "after eviction"})])
+    finally:
+        b.close()
