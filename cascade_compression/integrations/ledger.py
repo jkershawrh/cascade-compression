@@ -14,6 +14,18 @@ from uuid import uuid4
 log = logging.getLogger(__name__)
 
 
+MAX_ENTRY_BYTES = 1_048_576  # the gateway rejects content above this
+BUILD_ENTRY_BYTES = 768 * 1024  # build chunks with headroom below the limit
+
+
+class LedgerPermanentRejection(RuntimeError):
+    """The gateway rejected the entry permanently (e.g. oversized content).
+
+    Retrying can never succeed; the caller must drop the entry with
+    accounting rather than requeue it.
+    """
+
+
 def build_decision_record(
     cascade_result: Any,
     cascade_signals: list,
@@ -67,10 +79,8 @@ def write_decisions(
         log.debug("httpx not installed — ledger writes disabled")
         return
 
-    entry = build_decision_entry(cascade_result, cascade_signals, domain)
-    if entry is None:
-        return
-    _post_to_ledger(ledger_url, ledger_token, entry)
+    for entry in build_decision_entries(cascade_result, cascade_signals, domain):
+        _post_to_ledger(ledger_url, ledger_token, entry)
 
 
 def build_decision_entry(
@@ -78,30 +88,63 @@ def build_decision_entry(
     cascade_signals: list,
     domain: str,
 ) -> Optional[Dict]:
-    """Build the idempotent ledger envelope without performing network I/O."""
+    """Build the first (or only) chunk of the decision record envelope."""
+    entries = build_decision_entries(cascade_result, cascade_signals, domain)
+    return entries[0] if entries else None
+
+
+def build_decision_entries(
+    cascade_result: Any,
+    cascade_signals: list,
+    domain: str,
+) -> list:
+    """Build byte-bounded decision record envelopes.
+
+    The ledger gateway permanently rejects content above MAX_ENTRY_BYTES,
+    so large batches are chunked with headroom. Each chunk carries a
+    distinct correlation id and idempotency key.
+    """
     record = build_decision_record(
         cascade_result, cascade_signals,
         system_id=f"cascade-{domain}", domain=domain,
     )
     if not record["decisions"]:
-        return None
+        return []
 
-    content = json.dumps(record, sort_keys=True, separators=(",", ":"))
-    input_hash = hashlib.sha256(content.encode()).hexdigest()
-    correlation_id = record["batch_id"]
+    batch_id = record["batch_id"]
+    entries = []
+    chunk: list = []
 
-    return {
-        "entry_type": "decision.record",
-        "agent_id": record["system_id"],
-        "content": content,
-        "content_type": "application/json",
-        "source_id": record["system_id"],
-        "correlation_id": correlation_id,
-        "idempotency_key": hashlib.sha256(
-            f"decision.record\0{correlation_id}".encode()
-        ).hexdigest(),
-        "input_hash": input_hash,
-    }
+    def emit(chunk_decisions, correlation_id):
+        chunk_record = dict(record, decisions=chunk_decisions)
+        content = json.dumps(chunk_record, sort_keys=True, separators=(",", ":"))
+        input_hash = hashlib.sha256(content.encode()).hexdigest()
+        entries.append({
+            "entry_type": "decision.record",
+            "agent_id": record["system_id"],
+            "content": content,
+            "content_type": "application/json",
+            "source_id": record["system_id"],
+            "correlation_id": correlation_id,
+            "idempotency_key": hashlib.sha256(
+                f"decision.record\0{correlation_id}".encode()
+            ).hexdigest(),
+            "input_hash": input_hash,
+        })
+
+    for decision in record["decisions"]:
+        trial = chunk + [decision]
+        trial_bytes = len(
+            json.dumps(dict(record, decisions=trial),
+                       sort_keys=True, separators=(",", ":")).encode())
+        if chunk and trial_bytes > BUILD_ENTRY_BYTES:
+            emit(chunk, f"{batch_id}:{len(entries)}")
+            chunk = [decision]
+        else:
+            chunk = trial
+    if chunk:
+        emit(chunk, f"{batch_id}:{len(entries)}" if entries else batch_id)
+    return entries
 
 
 def write_promotion_event(
@@ -191,35 +234,60 @@ def write_memory_events(
     events: list,
     domain: str,
 ) -> bool:
-    """Write a batch of memory lifecycle events as one ledger receipt."""
+    """Write a batch of memory lifecycle events as byte-bounded receipts."""
     if not ledger_url or not events:
         return True
-    return _post_to_ledger(
-        ledger_url, ledger_token, build_memory_events_entry(events, domain),
-    )
+    ok = True
+    for entry in build_memory_events_entries(events, domain):
+        ok = _post_to_ledger(ledger_url, ledger_token, entry) and ok
+    return ok
+
+
+def build_memory_events_entries(events: list, domain: str) -> list:
+    """Build one or more byte-bounded envelopes for a memory-event batch."""
+    if not events:
+        return []
+    entries = []
+
+    def emit(chunk):
+        content = json.dumps(
+            {"events": chunk}, sort_keys=True, separators=(",", ":"),
+        )
+        input_hash = hashlib.sha256(content.encode()).hexdigest()
+        entries.append({
+            "entry_type": "memory.batch",
+            "agent_id": f"cascade-{domain}",
+            "content": content,
+            "content_type": "application/json",
+            "source_id": f"cascade-{domain}",
+            "correlation_id": f"memory-batch-{input_hash[:24]}",
+            "idempotency_key": hashlib.sha256(
+                f"memory.batch\0{input_hash}".encode()
+            ).hexdigest(),
+            "input_hash": input_hash,
+        })
+
+    chunk = []
+    chunk_bytes = 2  # {}
+    for event in events:
+        event_bytes = len(json.dumps(event, sort_keys=True,
+                                     separators=(",", ":")).encode()) + 1
+        if chunk and chunk_bytes + event_bytes > BUILD_ENTRY_BYTES:
+            emit(chunk)
+            chunk = []
+            chunk_bytes = 2
+        chunk.append(event)
+        chunk_bytes += event_bytes
+    if chunk:
+        emit(chunk)
+    return entries
 
 
 def build_memory_events_entry(events: list, domain: str) -> Dict:
     """Build one idempotent envelope for a memory-event batch."""
     if not events:
         raise ValueError("memory event batch cannot be empty")
-    content = json.dumps(
-        {"events": events}, sort_keys=True, separators=(",", ":"),
-    )
-    input_hash = hashlib.sha256(content.encode()).hexdigest()
-    correlation_id = f"memory-batch-{input_hash[:24]}"
-    return {
-        "entry_type": "memory.batch",
-        "agent_id": f"cascade-{domain}",
-        "content": content,
-        "content_type": "application/json",
-        "source_id": f"cascade-{domain}",
-        "correlation_id": correlation_id,
-        "idempotency_key": hashlib.sha256(
-            f"memory.batch\0{input_hash}".encode()
-        ).hexdigest(),
-        "input_hash": input_hash,
-    }
+    return build_memory_events_entries(events, domain)[0]
 
 
 def post_entry(ledger_url: str, ledger_token: str, entry: Dict) -> bool:
@@ -241,8 +309,17 @@ def _post_to_ledger(ledger_url: str, ledger_token: str, entry: Dict) -> bool:
                 json=entry,
                 headers=headers,
             )
+            if response.status_code in (400, 413):
+                # Permanent rejection: the gateway will never accept this
+                # entry (oversized content, malformed envelope). Retrying
+                # poisons durable spools — surface it to the caller.
+                raise LedgerPermanentRejection(
+                    f"ledger rejected entry permanently: HTTP "
+                    f"{response.status_code} {response.text[:120]}")
             response.raise_for_status()
         return True
+    except LedgerPermanentRejection:
+        raise
     except Exception as e:
         log.debug("Ledger write failed: %s", str(e)[:60])
         return False

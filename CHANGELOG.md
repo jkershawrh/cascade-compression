@@ -4,6 +4,20 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## 0.2.1rc1 - 2026-11-12
 
+- Chunk ledger receipt envelopes below the gateway's 1 MiB content limit
+  and drop permanently rejected receipts instead of retrying them forever.
+  The ledger gateway answers oversized content with a permanent HTTP 400;
+  decision batches with thousands of members built single oversized
+  envelopes that poisoned the durable receipt spool — undeliverable under
+  the preserve-queued-reject-new policy, pinning the spool at its byte
+  bound for two weeks and severing decision-receipt delivery (observed on
+  a production deployment since 2026-10-29). Decision and memory-event
+  envelopes now chunk with headroom (768 KiB) under distinct idempotency
+  keys, and a gateway 400/413 raises `LedgerPermanentRejection`: the drain
+  drops the entry with a `ledger_receipts_poisoned` counter and a meta
+  signal instead of requeueing it. Regression tests:
+  `tests/test_ledger_contract.py::TestByteBoundedEnvelopes`.
+
 - Resolve classification work with evicted member targets as dropped at
   application time, mirroring the restore-time discard. A retained record
   whose destination was capacity-evicted previously stayed pending forever,

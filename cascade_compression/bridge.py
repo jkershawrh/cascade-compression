@@ -230,6 +230,7 @@ class CascadeBridge(LifecycleControls):
         self._ledger_receipt_failures = 0
         self._ledger_receipt_consecutive_failures = 0
         self._ledger_receipts_written = 0
+        self._ledger_receipts_poisoned = 0
         self._ledger_receipt_last_success = ""
         self._ledger_memory_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="cascade-memory-ledger",
@@ -2198,11 +2199,10 @@ class CascadeBridge(LifecycleControls):
             log.debug("Ledger write failed: %s", str(e)[:60])
 
     def _enqueue_decisions_to_ledger(self, cascade_result, cascade_signals):
-        from .integrations.ledger import build_decision_entry
-        entry = build_decision_entry(
+        from .integrations.ledger import build_decision_entries
+        for entry in build_decision_entries(
             cascade_result, cascade_signals, self.domain,
-        )
-        if entry:
+        ):
             self._enqueue_ledger_entry(entry)
 
     def _enqueue_ledger_entry(self, entry: dict) -> bool:
@@ -2271,6 +2271,7 @@ class CascadeBridge(LifecycleControls):
         self._start_ledger_receipt_drain()
 
     def _drain_ledger_receipt_queue(self):
+        item = None
         try:
             from .integrations.ledger import post_entry
             while True:
@@ -2297,6 +2298,23 @@ class CascadeBridge(LifecycleControls):
                         timezone.utc
                     ).isoformat()
         except Exception as e:
+            from .integrations.ledger import LedgerPermanentRejection
+            if isinstance(e, LedgerPermanentRejection) and item is not None:
+                # The gateway will never accept this entry (e.g. oversized
+                # content from a pre-chunking build). Drop it with
+                # accounting instead of poisoning the spool forever.
+                with self._ledger_receipt_lock:
+                    self._ledger_receipt_store.acknowledge([item.sequence])
+                    self._ledger_receipts_poisoned += 1
+                    self._ledger_receipt_flush_running = False
+                self._emit_meta(
+                    "meta_ledger_receipt_poisoned", "high",
+                    "Ledger gateway permanently rejected a spooled receipt; "
+                    "dropped with accounting",
+                    poisoned_total=self._ledger_receipts_poisoned,
+                )
+                self._start_ledger_receipt_drain()
+                return
             log.debug("Ledger receipt delivery failed: %s", str(e)[:60])
             with self._ledger_receipt_lock:
                 self._ledger_receipt_flush_running = False
@@ -2615,6 +2633,7 @@ class CascadeBridge(LifecycleControls):
                 "ledger_writes_dropped": self._ledger_writes_dropped,
                 "ledger_receipt_failures": self._ledger_receipt_failures,
                 "ledger_receipts_written": self._ledger_receipts_written,
+                "ledger_receipts_poisoned": self._ledger_receipts_poisoned,
                 "ledger_receipt_last_success": self._ledger_receipt_last_success,
                 "ledger_memory_events_dropped": self._ledger_memory_events_dropped,
                 "ledger_memory_batches_written": self._ledger_memory_batches_written,
@@ -2689,6 +2708,9 @@ class CascadeBridge(LifecycleControls):
             )
             self._ledger_receipts_written = state.get(
                 "ledger_receipts_written", 0,
+            )
+            self._ledger_receipts_poisoned = state.get(
+                "ledger_receipts_poisoned", 0,
             )
             self._ledger_receipt_last_success = state.get(
                 "ledger_receipt_last_success", "",

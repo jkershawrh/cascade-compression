@@ -257,3 +257,110 @@ class TestLedgerEntryBuilders:
     def test_empty_memory_batch_fails_closed(self):
         with pytest.raises(ValueError, match="cannot be empty"):
             build_memory_events_entry([], "example")
+
+
+class TestByteBoundedEnvelopes:
+    """Large batches must chunk below the gateway's content limit.
+
+    Production incident (2026-11-12): the ledger gateway permanently
+    rejects content above 1 MiB (HTTP 400 INVALID_ARGUMENT). Decision
+    batches with thousands of members built single oversized envelopes
+    that poisoned the durable receipt spool — undeliverable forever
+    under the preserve-queued-reject-new policy, blocking the spool at
+    its byte bound for two weeks.
+    """
+
+    def _big_result(self, count):
+        from cascade_compression.cascade.protocol import Signal, CascadeDecision, Outcome
+
+        signals = [
+            Signal(signal_type=f"type_{i}", severity="medium",
+                   namespace=f"ns-{i}-{'x' * 60}",
+                   content={"message": "m" * 500})
+            for i in range(count)
+        ]
+
+        class Result:
+            decisions = [
+                CascadeDecision(
+                    signal_id=s.signal_id, agent_name="deduplicate",
+                    outcome=Outcome.DEDUPE, confidence=0.9,
+                    evidence="e" * 500,
+                )
+                for s in signals
+            ]
+
+        return Result(), signals
+
+    def test_large_decision_batch_chunks_below_limit(self):
+        from cascade_compression.integrations.ledger import (
+            BUILD_ENTRY_BYTES, build_decision_entries,
+        )
+
+        result, signals = self._big_result(2000)
+        entries = build_decision_entries(result, signals, "kubernetes")
+
+        assert len(entries) > 1
+        for entry in entries:
+            assert len(entry["content"].encode()) <= BUILD_ENTRY_BYTES
+        # Distinct idempotency keys: chunks are independently deliverable.
+        keys = [e["idempotency_key"] for e in entries]
+        assert len(set(keys)) == len(keys)
+        # Every decision is covered exactly once.
+        total = sum(
+            len(json.loads(e["content"])["decisions"]) for e in entries)
+        assert total == 2000
+
+    def test_small_decision_batch_stays_single_entry(self):
+        from cascade_compression.integrations.ledger import (
+            build_decision_entries,
+        )
+
+        result, signals = self._big_result(3)
+        entries = build_decision_entries(result, signals, "kubernetes")
+        assert len(entries) == 1
+
+    def test_memory_events_chunk_below_limit(self):
+        from cascade_compression.integrations.ledger import (
+            BUILD_ENTRY_BYTES, build_memory_events_entries,
+        )
+
+        events = [
+            {"memory_id": str(uuid4()), "event_type": "formed",
+             "details": {"note": "n" * 400}}
+            for _ in range(2000)
+        ]
+        entries = build_memory_events_entries(events, "aap")
+        assert len(entries) > 1
+        for entry in entries:
+            assert len(entry["content"].encode()) <= BUILD_ENTRY_BYTES
+        total = sum(len(json.loads(e["content"])["events"]) for e in entries)
+        assert total == 2000
+
+    def test_permanent_rejection_is_distinguished(self, monkeypatch):
+        """A gateway 400 raises LedgerPermanentRejection, not False."""
+        import httpx
+        from cascade_compression.integrations.ledger import (
+            LedgerPermanentRejection, _post_to_ledger,
+        )
+
+        class FakeResponse:
+            status_code = 413
+            text = "content exceeds max 1048576 bytes"
+
+        class FakeClient:
+            def __init__(self, *a, **k):
+                pass
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+            def post(self, *a, **k):
+                return FakeResponse()
+
+        monkeypatch.setattr(httpx, "Client", FakeClient)
+        with pytest.raises(LedgerPermanentRejection):
+            _post_to_ledger("http://ledger.invalid", "", {"entry_type": "x"})
