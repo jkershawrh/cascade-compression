@@ -32,6 +32,12 @@ SEVERITY_WEIGHTS = {
 
 _DEFAULT_MAX_CAPACITY = 10_000
 _EVICTION_FRACTION = 0.1
+# Upper bound on victims per admission. The fraction amortizes eviction work
+# across admissions, but at large capacities (50K+) an unbounded batch makes
+# every admission sort the whole archive and queue thousands of eviction
+# events under the archive lock — observed to starve the service loop
+# (production, 2026-11-12: /health latency 0.1s -> 10s+, liveness kills).
+_EVICTION_MAX_BATCH = 1024
 
 
 @dataclass
@@ -842,7 +848,9 @@ class MemoryArchive:
     def _admit_memory(self, memory, event):
         victims = []
         if self.size >= self._max_capacity:
-            count = max(1, int(self._max_capacity * _EVICTION_FRACTION))
+            count = max(1, min(
+                int(self._max_capacity * _EVICTION_FRACTION),
+                _EVICTION_MAX_BATCH))
             victims = sorted(self._memories.values(), key=lambda m: m.strength)[:count]
         # Reserve both eviction and formation events before changing the archive.
         self._queue_events([MemoryEvent(m.memory_id, "evicted", details={

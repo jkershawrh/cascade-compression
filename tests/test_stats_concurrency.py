@@ -102,3 +102,24 @@ def test_memory_max_env_raises_capacity_across_restore(tmp_path, monkeypatch):
         assert restored.memory_archive.size == 20
     finally:
         restored.close()
+
+
+def test_eviction_batch_is_bounded_at_large_capacities():
+    """Admission at a 50K archive evicts at most 1024 victims.
+
+    Production incident (2026-11-12): with capacity raised to 50K, every
+    admission evicted 5,000 memories (10% fraction) — a full-archive sort
+    plus thousands of queued eviction events under the archive lock starved
+    the service loop (/health 0.1s -> 10s+, liveness kills). The eviction
+    batch is now bounded regardless of capacity.
+    """
+    archive = MemoryArchive(max_capacity=50000)
+    for i in range(50000):
+        archive.store(make_signal(content={"message": f"m{i}"}))
+    assert archive.size == 50000
+    archive.store(make_signal(content={"message": "one more"}))
+    # One admission evicts a bounded batch (1,024), not 10% of 50K (5,000):
+    # size goes 50,000 + 1 admitted - 1,024 evicted = 48,977.
+    assert archive.size == 50000 + 1 - 1024
+    assert archive._evictions_total == 1024
+    assert len(archive._rejection_set) == 1024
