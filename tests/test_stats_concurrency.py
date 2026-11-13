@@ -123,3 +123,28 @@ def test_eviction_batch_is_bounded_at_large_capacities():
     assert archive.size == 50000 + 1 - 1024
     assert archive._evictions_total == 1024
     assert len(archive._rejection_set) == 1024
+
+
+def test_rejection_set_membership_is_constant_time():
+    """The rejection set must not degrade to O(n) membership.
+
+    Production incident (2026-11-12, final phase): the rejection set was a
+    plain list — membership scanned up to 2x-capacity entries per check,
+    once per eviction victim and once per store dedup. At 50K capacity that
+    was ~100M comparisons per admission under the archive lock. The
+    structure is now an insertion-ordered dict with O(1) membership and
+    identical serialization.
+    """
+    archive = MemoryArchive(max_capacity=100)
+    for i in range(200):
+        archive._add_to_rejection_set(f"hash-{i}")
+    # Capped at 2x capacity, oldest dropped, order preserved.
+    assert len(archive._rejection_set) == 200
+    assert "hash-0" in archive._rejection_set
+    assert "hash-199" in archive._rejection_set
+    # Round-trip serialization keeps the list shape.
+    d = archive.to_dict()
+    assert isinstance(d["rejection_set"], list)
+    restored = MemoryArchive.from_dict(d)
+    assert len(restored._rejection_set) == 200
+    assert "hash-199" in restored._rejection_set

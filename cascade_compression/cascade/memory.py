@@ -420,7 +420,11 @@ class MemoryArchive:
         self._event_max_bytes = 16 * 1024 * 1024
         self._formed_total = 0
         self._evictions_total = 0
-        self._rejection_set: List[str] = []
+        # Insertion-ordered dict: O(1) membership for the hot eviction and
+        # store dedup paths. A plain list made membership O(n) with n up to
+        # 2x capacity — ~100M comparisons per admission at 50K capacity
+        # (production incident, 2026-11-12).
+        self._rejection_set: Dict[str, None] = {}
         self._rejection_max = max_capacity * 2
         self._federated_listeners: List[Callable[["Memory"], None]] = []
         self._handoff_id = str(uuid4())
@@ -583,9 +587,10 @@ class MemoryArchive:
 
     def _add_to_rejection_set(self, content_hash: str) -> None:
         if content_hash and content_hash not in self._rejection_set:
-            self._rejection_set.append(content_hash)
+            self._rejection_set[content_hash] = None
             if len(self._rejection_set) > self._rejection_max:
-                self._rejection_set = self._rejection_set[-self._rejection_max:]
+                kept = list(self._rejection_set)[-self._rejection_max:]
+                self._rejection_set = dict.fromkeys(kept)
 
     @_archive_locked
     def consolidate(self, pipeline_or_factory, strength_decay: float = 0.3,
@@ -944,7 +949,7 @@ class MemoryArchive:
         )
         archive._formed_total = stats.get("formed_total", 0)
         archive._evictions_total = stats.get("evictions_total", 0)
-        archive._rejection_set = list(data.get("rejection_set", []))
+        archive._rejection_set = dict.fromkeys(data.get("rejection_set", []))
         if "handoff_id" in data:
             archive._handoff_id = str(UUID(data["handoff_id"]))
         archive._handoff_offset = data.get("handoff_offset", 0)
