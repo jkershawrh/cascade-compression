@@ -148,3 +148,31 @@ def test_rejection_set_membership_is_constant_time():
     restored = MemoryArchive.from_dict(d)
     assert len(restored._rejection_set) == 200
     assert "hash-199" in restored._rejection_set
+
+
+def test_storage_bytes_survives_sqlite_sidecar_removal(tmp_path, monkeypatch):
+    """A stat racing sqlite's -wal/-shm cleanup must not raise.
+
+    Production finding (2026-11-12): /stats intermittently timed out with
+    FileNotFoundError on '<spool>-shm' — the exists()-then-stat() pair raced
+    sqlite removing the sidecar when the last connection closed.
+    """
+    from pathlib import Path
+
+    from cascade_compression.durable_queue import DurableLedgerQueue
+
+    spool = tmp_path / "spool.sqlite3"
+    q = DurableLedgerQueue(str(spool), max_pending=10)
+    q.enqueue([{"entry_type": "probe"}])
+    sidecar = Path(str(spool) + "-shm")
+    sidecar.write_bytes(b"x" * 10)
+
+    real_stat = Path.stat
+
+    def racing_stat(self, *a, **k):
+        if self.name.endswith("-shm"):
+            sidecar.unlink()  # sqlite wins the race mid-stat
+        return real_stat(self, *a, **k)
+
+    monkeypatch.setattr(Path, "stat", racing_stat)
+    assert q.storage_bytes() >= 0  # no raise, sidecar counted as absent

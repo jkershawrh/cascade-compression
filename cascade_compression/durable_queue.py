@@ -287,11 +287,16 @@ class DurableLedgerQueue:
             ).fetchone()[0])
 
     def storage_bytes(self) -> int:
-        return sum(
-            path.stat().st_size
-            for path in (Path(self.path), Path(self.path + "-wal"), Path(self.path + "-shm"))
-            if path.exists()
-        )
+        total = 0
+        for path in (Path(self.path), Path(self.path + "-wal"), Path(self.path + "-shm")):
+            try:
+                total += path.stat().st_size
+            except FileNotFoundError:
+                # SQLite removes -wal/-shm sidecars when the last connection
+                # closes; a stat racing that removal must not fail /stats
+                # (observed as intermittent stats timeouts in production).
+                continue
+        return total
 
     def filesystem_capacity(self) -> dict:
         """Return path-free capacity telemetry for the filesystem holding the spool."""
