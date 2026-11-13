@@ -9,6 +9,7 @@ Capacity-bounded, in-memory, with optional file persistence via to_dict/from_dic
 
 from __future__ import annotations
 
+import heapq
 import hashlib
 import json
 import math
@@ -851,7 +852,11 @@ class MemoryArchive:
             count = max(1, min(
                 int(self._max_capacity * _EVICTION_FRACTION),
                 _EVICTION_MAX_BATCH))
-            victims = sorted(self._memories.values(), key=lambda m: m.strength)[:count]
+            # Bounded selection, not a full-archive sort: heapq.nsmallest is
+            # O(n log k) and avoids the O(n log n) sort that starved the
+            # service loop at large capacities (production, 2026-11-12).
+            victims = heapq.nsmallest(
+                count, self._memories.values(), key=lambda m: m.strength)
         # Reserve both eviction and formation events before changing the archive.
         self._queue_events([MemoryEvent(m.memory_id, "evicted", details={
             "final_strength": m.strength, "reason": "capacity"}) for m in victims] + [event])
