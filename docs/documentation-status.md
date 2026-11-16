@@ -1,8 +1,10 @@
 # Documentation status and authority
 
-Release status reviewed 2026-11-05. The published `v0.2.0` wheel has an
-identifiable digest. Its formal staging handoff is missing. The working
-candidate is the unpublished `0.2.1rc1` incubating prerelease. [Evidence register](evidence-register.md) · [Release policy](../RELEASING.md)
+Release status reviewed 2026-11-15. The published `v0.2.0` wheel has an
+identifiable digest but no verified staging handoff. The `v0.2.1rc2` tag
+(2026-11-15) is the production-soaked candidate: its engine code runs on
+all four production instances, soaked ~2.5 days unattended, release pipeline
+green with an attested candidate manifest. `v0.2.1rc1` is superseded. [Evidence register](evidence-register.md) · [Release policy](../RELEASING.md)
 
 The case study separates rc7 replay counts, reported live estimates and
 classifier evaluation. The proof handoff defines what can transfer to a

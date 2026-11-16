@@ -89,7 +89,13 @@ The opt-in proof runner verifies a supplied OSS wheel's digest and package versi
 
 Focused verification passed 22 tests and exercised a two-case synthetic static arm against a locally built OSS 0.2.0rc5 wheel. The arm made no model calls and had no execution failures. This verifies the bounded integration path and artifact identity. It does not measure classification quality, operational prevalence, production safety, or customer savings.
 
-The proof service and replay paths still use the local engine, and full package-dependency migration remains pending. Historical proof results cannot automatically qualify the public engine, because the implementations differ. Candidate source, image, configuration, contracts, models, and observation window still need to reconcile to a frozen manifest before qualification.
+The `v0.2.1rc2` tag (2026-11-15) closes the deployment half of this gap:
+its engine code is what all four a production cluster's instances run
+(digest-pinned, soaked ~2.5 days unattended, thirteen production-found
+defects fixed and regression-tested along the way). Historical proof
+results against earlier candidates still cannot automatically qualify
+this tag; the observation window and adjudication requirements for
+staging qualification are unchanged.
 
 ### Historical results
 

@@ -27,7 +27,7 @@ kubectl exec deploy/cascade-aap -- curl -s localhost:8090/stats | jq .stats.comp
 | Key | Default | Description |
 |---|---|---|
 | `image.repository` | empty | supply the repository containing your candidate image |
-| `image.tag` | `0.2.1rc1` | local candidate image tag |
+| `image.tag` | `0.2.1rc2` | local candidate image tag |
 | `llm.url` | **required** | OpenAI-compatible LLM endpoint |
 | `llm.key` | **required** | API key |
 | `llm.model` | **required** | model name for classification |

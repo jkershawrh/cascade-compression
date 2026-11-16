@@ -159,14 +159,17 @@ in the GCL repository.
 
 ## Status
 
-The `v0.2.1rc1` tag is a production-hardened release candidate: it carries six
-fixes for defects found by deploying the candidate on a production cluster
-(2026-11-12), every one regression-tested — the stats federated-sources race,
-restore-time and runtime handling of capacity-evicted classification targets,
-cross-build journal binding, the audit-backpressure health death spiral, the
-admission deadlock on unapplicable retained work, and ledger receipt
-envelopes above the gateway's content limit. All four production instances
-run it. Python 3.9–3.13.
+The `v0.2.1rc2` tag is the production-soaked candidate: thirteen fixes for
+defects found by deploying and soaking it on a production cluster
+(2026-11-12 through 2026-11-15), every one regression-tested — the stats
+federated-sources race, restore-time and runtime handling of
+capacity-evicted classification targets, cross-build journal binding, the
+audit-backpressure health death spiral, the admission deadlock on
+unapplicable retained work, ledger receipt envelopes above the gateway's
+content limit, the capacity-raise-on-restore, and the archive saturation
+trilogy. All four production instances run its engine code, soaked ~2.5
+days unattended with no data loss. `v0.2.1rc1` is superseded — do not
+deploy it. Python 3.9–3.13.
 
 On 160 tuning cases, the platform-context classifier had 78.1% agreement
 and four dangerous errors. On the held-out 100 it got 84/84 needs_attention

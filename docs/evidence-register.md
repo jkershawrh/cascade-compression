@@ -18,10 +18,13 @@ published wheel, source archive, image, SBOM and evaluated run to that commit.
 [Tag CI](https://github.com/jkershawrh/cascade-compression/actions/runs/41545535769)
 · [Release workflow run](https://github.com/jkershawrh/cascade-compression/actions/runs/41545535005)
 
-The local working candidate is `0.2.1rc1` with the `incubating_oss`
-claim level. Incubating publication requires a frozen commit, green CI
-and the attested candidate package and image. Staging qualification requires independent adjudication,
-the exact tested artifacts and the complete attested handoff.
+The tagged candidate is `v0.2.1rc2` (`37ac406`; engine code identical to
+the deployed `f8bba91`) with the `incubating_oss` claim level: frozen
+commit, green CI, attested candidate package and image — the release
+pipeline ran end-to-end on 2026-11-15. Its engine code runs on all four
+a production cluster's instances, soaked ~2.5 days unattended. Staging
+qualification still requires independent adjudication, the exact tested
+artifacts and the complete attested handoff. `v0.2.1rc1` is superseded.
 [Release policy](../RELEASING.md) · [Proof handoff](proof-handoff.md)
 
 ## What the historical evidence supports
