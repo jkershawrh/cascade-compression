@@ -4,6 +4,18 @@ All notable changes are documented here. This project follows Semantic Versionin
 
 ## 0.2.1rc1 - 2026-11-12
 
+The rc1 tag is superseded: deploying it reintroduces the admission
+deadlock, the ledger receipt poisoning, and the archive saturation
+defects fixed in rc2 below. Do not deploy rc1.
+
+## 0.2.1rc2 - 2026-11-15
+
+The rc1 tag points to `efa0c9c`. This candidate is the commit
+`f8bba91` — exactly what all four production instances have run and
+soaked since 2026-11-13 (~2.5 days unattended through queue flush
+cycles, a resumed event firehose, an external source outage, and a
+weekend, with no data loss). Suite: 1,549 passed / 7 skipped.
+
 - Chunk ledger receipt envelopes below the gateway's 1 MiB content limit
   and drop permanently rejected receipts instead of retrying them forever.
   The ledger gateway answers oversized content with a permanent HTTP 400;
@@ -202,3 +214,4 @@ The measurements below describe the historical experiments cited with the tag.
   in the engine (`CASCADE_TEMPLATE_CACHE=1`). The first occurrence of a
   template pays the generative backend's cost; repeats within the TTL
   are served from cache with full provenance.
+
