@@ -11,8 +11,8 @@ defects fixed in rc2 below. Do not deploy rc1.
 ## 0.2.1rc2 - 2026-11-15
 
 The rc1 tag points to `efa0c9c`. This candidate is the commit
-`f8bba91` — exactly what all four production instances have run and
-soaked since 2026-11-13 (~2.5 days unattended through queue flush
+`f8bba91` plus this version bump — byte-identical engine code to what
+all four production instances have run and soaked since 2026-11-13 (~2.5 days unattended through queue flush
 cycles, a resumed event firehose, an external source outage, and a
 weekend, with no data loss). Suite: 1,549 passed / 7 skipped.
 
