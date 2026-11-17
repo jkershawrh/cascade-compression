@@ -67,3 +67,38 @@ Until that exists, loop records should state plainly where the issue was found.
 - Include generated-artifact volumes in the digest scope.
 - Consider the same retention question for `cascade-*-state` snapshots, which
   now serialize to ~17.5 MiB compressed at 50k memories.
+
+## Detection half (follow-up, same day)
+
+The gap above was closed far enough to test: the Prometheus collector now emits
+`metric_pvc_projected_full` on a projected days-to-full instead of only a fill
+percentage.
+
+- 24 h trend (`deriv`) with a 1 KiB/s growth floor and a 50 % occupancy gate.
+  Both filters were chosen from live data: a 6 h window is all burst on
+  rewrite-heavy volumes (every PVC looked days from full), and flat volumes with
+  sub-KiB/s noise project thousands of days out.
+- Exclusive 7-day (high) and 7-30-day (medium) bands, so one volume yields one
+  severity.
+- The claim, not the node, is the identity. Kubelet volume series carry
+  `persistentvolumeclaim`, `node` and `instance` together, and `node` previously
+  won — the first version reported which node was involved rather than which
+  volume was filling.
+- Validated against infra01's Thanos: 118 volume series visible, four signals
+  emitted. `deepfield-postgres-data` at 5.0 days (high),
+  `local-registry-clair-postgres-15` at 20.6 days (medium), one ocpv06 guest
+  disk at 23.3 days, and `cascade-aap-state` at 0.2 days (high).
+
+Two honest limits:
+
+1. **The projection is a linear 24 h extrapolation, so a one-off write inflates
+   it.** `cascade-aap-state` reads 0.2 days largely because that volume absorbed
+   today's state migration and a 123 MiB pre-change backup. The signal is a
+   tripwire ("something is writing hard"), not a forecast. The next iteration
+   should require sustained growth across two consecutive windows.
+2. **Deployment is split from the engine.** The collector runs from a separate
+   image (`cascade-collector`), built from the private tree; there is no
+   BuildConfig for it, so this went out as a one-off binary build
+   (`cascade-collector-projection`, digest `sha256:adf5e512…`) pointed at
+   `collector-prometheus` only. Folding the collector into the release process is
+   a prerequisite for citing these signals as part of a release.

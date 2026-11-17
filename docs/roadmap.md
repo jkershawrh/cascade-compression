@@ -17,7 +17,7 @@ the candidate-bound staging handoff. [Release policy](../RELEASING.md)
 | 1.2 | Publish the Red Hat Developer blog post | 1 review | draft for review (`docs/pr-drafts/redhat-developer-blog-post.md`) |
 | 1.3 | List MCP in registries (Smithery, PulseMCP, official MCP registry) | 30 min | needs account setup |
 | 1.4 | Get the first external contributor | ongoing | the "PR #1 from someone else" milestone |
-| 1.5 | Close one outcome loop on the production platform | 1 session | first loop closed: [anchor proposal retention](outcome-loops/2026-11-17-anchor-proposal-retention.md) — detection came from review, not from memory |
+| 1.5 | Close one outcome loop on the production platform | 1 session | first loop closed: [anchor proposal retention](outcome-loops/2026-11-17-anchor-proposal-retention.md), with the detection half added same day (`metric_pvc_projected_full`, validated on 118 live volumes) |
 
 **1.5 is the one that matters most** — one chronic issue from the memory, remediated, with the effect visible on the dashboard. That's the lighthouse-user story. The first loop (2026-11-17) bounded a volume that was nine days from exhaustion and measured the before/after, but it was found by review: the engine has no capacity rule and the digest does not report growth trends. Closing the detection half is what turns this into the story.
 
