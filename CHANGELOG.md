@@ -2,6 +2,27 @@
 
 All notable changes are documented here. This project follows Semantic Versioning.
 
+## Unreleased
+
+Found by a 2026-11-17 review of the deployed instances. None of these are in
+`v0.2.1rc2`; the deployment carrying them is not attributable to a release.
+
+- Settle concurrent state snapshots and compress them
+  (`CASCADE_STATE_COMPRESSION=gzip`). A 50k-memory archive produced a ~123 MB
+  snapshot, and every `/cascade` request serialized and wrote it: a
+  single-signal POST exceeded 120 s against a 30 s collector client while
+  requests queued behind each other. Concurrent callers now share a write
+  that already covers their state generation, and the framed snapshot stays
+  readable both ways. Suite: 1,559 passed / 7 skipped.
+- Run the periodic promotion sweep off the request path, one sweep at a time.
+- Scan the corpus before taking the lifecycle lock. `_discover_and_promote`
+  held it across the whole analysis, which stalled unrelated requests
+  (`/stats` measured 21 s).
+- Keep `build/`, `dist/` and `*.egg-info/` out of the image build context.
+  A binary build from a working tree holding them installed the previous
+  wheel's code and metadata: the image reported `0.2.1rc1` while the tree was
+  `0.2.1rc2`, and none of the source changes were present.
+
 ## 0.2.1rc1 - 2026-11-12
 
 The rc1 tag is superseded: deploying it reintroduces the admission
@@ -11,10 +32,15 @@ defects fixed in rc2 below. Do not deploy rc1.
 ## 0.2.1rc2 - 2026-11-15
 
 The rc1 tag points to `efa0c9c`. This candidate is the commit
-`f8bba91` plus this version bump — byte-identical engine code to what
-all four production instances have run and soaked since 2026-11-13 (~2.5 days unattended through queue flush
-cycles, a resumed event firehose, an external source outage, and a
-weekend, with no data loss). Suite: 1,549 passed / 7 skipped.
+`f8bba91` plus this version bump — byte-identical engine code to what the
+production instances were deployed with from 2026-11-13. Suite: 1,549 passed / 7 skipped.
+
+The 2026-11-13→11-15 window is not a validated soak. A review on
+2026-11-17 found one instance rejecting every batch since 2026-11-12, a
+27-hour ledger backlog, unmonitored status reporting, and one un-delivered
+collector batch lost when its collector restarted. The deployed instances
+have since moved onto an unreleased build. See the
+[evidence register corrections](docs/evidence-register.md#corrections-to-the-attributed-production-soak-2026-11-17).
 
 - Chunk ledger receipt envelopes below the gateway's 1 MiB content limit
   and drop permanently rejected receipts instead of retrying them forever.

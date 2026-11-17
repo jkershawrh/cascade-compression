@@ -21,11 +21,53 @@ published wheel, source archive, image, SBOM and evaluated run to that commit.
 The tagged candidate is `v0.2.1rc2` (`37ac406`; engine code identical to
 the deployed `f8bba91`) with the `incubating_oss` claim level: frozen
 commit, green CI, attested candidate package and image — the release
-pipeline ran end-to-end on 2026-11-15. Its engine code runs on all four
-a production cluster's instances, soaked ~2.5 days unattended. Staging
-qualification still requires independent adjudication, the exact tested
-artifacts and the complete attested handoff. `v0.2.1rc1` is superseded.
+pipeline ran end-to-end on 2026-11-15. Its engine code ran on a
+production cluster's instances from 2026-11-13. **That run was not a
+validated soak: see the corrections below.** Staging qualification still
+requires independent adjudication, the exact tested artifacts and the
+complete attested handoff. `v0.2.1rc1` is superseded.
 [Release policy](../RELEASING.md) · [Proof handoff](proof-handoff.md)
+
+### Corrections to the attributed production soak (2026-11-17)
+
+Reviewing the deployment on 2026-11-17 found the 2026-11-13→11-15 run does
+not support the "soaked unattended, no data loss" attribution previously
+recorded here and in the changelog. Three corrections apply:
+
+1. **The instances were not healthy for the whole window.** One instance
+   (`cascade-aap`) had been refusing every `/cascade` batch since
+   2026-11-12 with HTTP 503 (a retained classification completion blocked
+   admission), held a 27-hour-old ledger-memory head at discovery, and was
+   compressing 0% while a collector re-sent the same 2,008-signal batch on
+   roughly 12,000 attempts. The other instance had restarted at 13:00 that
+   day and refilled its 50,000-event ledger spool within hours.
+2. **The window was unobserved.** The status feed had been dead since
+   macOS reclaimed `/tmp/cascade_status_v3.py`; the script then exited
+   without notifying anyone, and the `/health` endpoint it read reported
+   `200 degraded` throughout. "Unattended" was therefore also "unmonitored",
+   and no evidence in this window should be read as a demonstration of
+   unattended reliability.
+3. **A collector batch was lost.** Restarting the AAP collector
+   re-initialised its source watermarks at the live database edge, dropping
+   the 2,008 retained signals it had been retrying. No ledger or memory
+   records were lost; the loss is confined to that un-delivered batch.
+
+**Engine code no longer matches the released candidate.** On 2026-11-17 the
+`aap` instance was moved onto an in-cluster binary build that carries four
+unreleased fixes on top of `f8bba91` (`feb21d7`, `df284e0`, `0f5142d`,
+`1fdc7c5`: compressed and settled state snapshots, promotion off the request
+path, and build-context hygiene). Behaviour observed after that point cannot
+be attributed to `37ac406`, `f8bba91` or the attested image digest.
+
+**Verdict continuity was reset.** Verdict catch-up had never completed on
+either instance (one watermark never advanced from zero; the other was
+several days stale), so learned suppression authority could not be earned.
+Both watermarks were seeded to fifteen minutes before the fix on
+2026-11-17, deliberately skipping the historical verdict backlog. These
+instances can no longer be cited as evidence of continuous governed
+authority; an evidence run must start from a caught-up, unmodified
+deployment of an attested artifact.
+
 
 ## What the historical evidence supports
 
