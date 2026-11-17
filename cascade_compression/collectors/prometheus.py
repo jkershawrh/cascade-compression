@@ -54,13 +54,14 @@ HEALTH_QUERIES = {
     # Shape matters: 6h is all burst on rewrite-heavy volumes (snapshot-style
     # writers made every PVC look days from full), and flat volumes with a
     # byte-per-second of noise project thousands of days out. So: a 24h trend,
-    # a 1 KiB/s growth floor, and a 50% occupancy gate. The days-to-full
+    # a 1 KiB/s growth floor, growth in both 24h windows (a one-off
+    # write is not a trend), and a 50% occupancy gate. The days-to-full
     # expression leads so the emitted value is the projection, not the slope.
     # Bands are exclusive so one volume yields exactly one severity.
     "pvc_projected_full_7d": {
         "query": "((kubelet_volume_stats_available_bytes"
                  " / deriv(kubelet_volume_stats_used_bytes[24h]) / 86400) < 7)"
-                 " and deriv(kubelet_volume_stats_used_bytes[24h]) > 1024"
+                 " and deriv(kubelet_volume_stats_used_bytes[24h]) > 1024"                 " and deriv(kubelet_volume_stats_used_bytes[24h] offset 1d) > 1024"
                  " and (kubelet_volume_stats_used_bytes"
                  " / kubelet_volume_stats_capacity_bytes) >= 0.5",
         "signal_type": "metric_pvc_projected_full",
@@ -71,7 +72,7 @@ HEALTH_QUERIES = {
                  " / deriv(kubelet_volume_stats_used_bytes[24h]) / 86400) < 30)"
                  " and ((kubelet_volume_stats_available_bytes"
                  " / deriv(kubelet_volume_stats_used_bytes[24h]) / 86400) >= 7)"
-                 " and deriv(kubelet_volume_stats_used_bytes[24h]) > 1024"
+                 " and deriv(kubelet_volume_stats_used_bytes[24h]) > 1024"                 " and deriv(kubelet_volume_stats_used_bytes[24h] offset 1d) > 1024"
                  " and (kubelet_volume_stats_used_bytes"
                  " / kubelet_volume_stats_capacity_bytes) >= 0.5",
         "signal_type": "metric_pvc_projected_full",

@@ -84,10 +84,10 @@ percentage.
   `persistentvolumeclaim`, `node` and `instance` together, and `node` previously
   won — the first version reported which node was involved rather than which
   volume was filling.
-- Validated against infra01's Thanos: 118 volume series visible, four signals
+- Validated against the production cluster's Thanos: 118 volume series visible, four signals
   emitted. `deepfield-postgres-data` at 5.0 days (high),
   `local-registry-clair-postgres-15` at 20.6 days (medium), one ocpv06 guest
-  disk at 23.3 days, and `cascade-aap-state` at 0.2 days (high).
+  disk at 23.3 days, and and the local Cascade state volume at 0.2 days (high).
 
 Two honest limits:
 

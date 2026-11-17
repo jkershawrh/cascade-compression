@@ -93,6 +93,8 @@ class TestProjectedVolumeExhaustion:
         assert rules["pvc_projected_full_30d"]["severity"] == "medium"
         for rule in rules.values():
             assert "deriv(kubelet_volume_stats_used_bytes[24h]) > 1024" in rule["query"]
+            # Growth in the previous window too: a one-off write is not a trend.
+            assert "deriv(kubelet_volume_stats_used_bytes[24h] offset 1d) > 1024" in rule["query"]
             assert "kubelet_volume_stats_available_bytes" in rule["query"]
             assert "kubelet_volume_stats_capacity_bytes) >= 0.5" in rule["query"]
         assert "< 7" in rules["pvc_projected_full_7d"]["query"]
