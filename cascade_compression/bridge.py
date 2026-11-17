@@ -38,7 +38,7 @@ from .durable_queue import (
     DURABLE_QUEUE_OVERFLOW_POLICY, DurableLedgerQueue, DurableQueue,
     sanitize_payload,
 )
-from .lifecycle import LifecycleControls, REVISION, atomic_snapshot, valid_time
+from .lifecycle import LifecycleControls, REVISION, atomic_snapshot, read_snapshot, valid_time
 
 log = logging.getLogger(__name__)
 
@@ -466,6 +466,16 @@ class CascadeBridge(LifecycleControls):
         self._classifier_terminal_max = max(1, int(os.getenv('CASCADE_CLASSIFIER_TERMINAL_RECEIPTS_MAX', '10000')))
         self._state_healthy = True
         self._learning_fence_reason = ""
+        # Snapshot settling: ``_state_gen`` advances whenever in-memory state
+        # changes; ``_saved_gen`` records the generation that a completed
+        # snapshot actually covers. Concurrent requests then share one write
+        # instead of each paying a full serialization of the archive.
+        self._state_gen = 0
+        self._saved_gen = 0
+        self._state_compression = os.getenv(
+            "CASCADE_STATE_COMPRESSION", "none").strip().lower()
+        if self._state_compression not in {"none", "gzip"}:
+            raise ValueError("unknown CASCADE_STATE_COMPRESSION")
 
         self.baseline = Baseline(normal_ranges={})
         self._observed_ranges: Dict[str, Dict[str, list]] = defaultdict(lambda: defaultdict(list))
@@ -644,6 +654,7 @@ class CascadeBridge(LifecycleControls):
                 if self._classification_dispatch_enabled() or self._durable_queue is not None:
                     with self._pending_memory_lock:
                         self._pending_memory_ids[str(sig.signal_id)] = memory.memory_id
+            self._mark_state_dirty()
 
         # Meta: detect memory pressure (above 80% capacity)
         if self.memory_archive is not None:
@@ -728,6 +739,7 @@ class CascadeBridge(LifecycleControls):
         if now - self._last_promotion_time > self._promotion_interval:
             self._last_promotion_time = now
             self._discover_and_promote()
+            self._mark_state_dirty()
             self._flush_memory_events()
             self._save_state()
             if self._ledger_url and not self._verdict_poll_running:
@@ -861,7 +873,8 @@ class CascadeBridge(LifecycleControls):
             self._enforce_llm_priority_limit_locked()
             spooled = self._flush_durable_locked()
         if self._state_file:
-            accepted = self._save_state()
+            self._mark_state_dirty()
+            accepted = self._save_state(settle=True)
             if not accepted:
                 with self._lifecycle_lock:
                     self._fence_learning('enqueue checkpoint failed')
@@ -933,7 +946,8 @@ class CascadeBridge(LifecycleControls):
                 self._llm_accounting_dispatched += dispatched_signals
                 for entry in batch:
                     self._classifier_inflight[entry['_work_id']] = entry
-            if self._state_file and not self._save_state():
+            self._mark_state_dirty()
+            if self._state_file and not self._save_state(settle=True):
                 with self._llm_queue_lock:
                     for entry in batch:
                         self._classifier_inflight.pop(entry['_work_id'], None)
@@ -966,6 +980,7 @@ class CascadeBridge(LifecycleControls):
                 with self._llm_lock:
                     self._llm_active_threads -= 1
                 log.error("Could not start classifier worker: %s", str(exc)[:80])
+                self._mark_state_dirty()
                 self._save_state()
 
     def _classification_dispatch_enabled(self) -> bool:
@@ -1029,6 +1044,7 @@ class CascadeBridge(LifecycleControls):
         """
         if self._durable_queue is None or not self._state_file:
             return True
+        self._mark_state_dirty()
         healthy = self._save_state()
         self._durable_memory_checkpoint_healthy = bool(healthy)
         if not healthy:
@@ -2028,6 +2044,7 @@ class CascadeBridge(LifecycleControls):
                 failed(entry, exc)
         finally:
             try:
+                self._mark_state_dirty()
                 self._save_state()
                 self._flush_memory_events()
             finally:
@@ -2375,6 +2392,8 @@ class CascadeBridge(LifecycleControls):
             if not self._memory_source_pending():
                 return True
             try:
+                if self._state_file:
+                    self._mark_state_dirty()
                 if self._state_file and not self._save_state():
                     raise RuntimeError("memory event checkpoint failed")
                 def accept(events):
@@ -2393,6 +2412,8 @@ class CascadeBridge(LifecycleControls):
                     self._ledger_memory_pending.extend(events[:count])
                     return count
                 moved = self.memory_archive.transfer_events(accept, limit=self._ledger_memory_batch_size)
+                if moved and self._state_file:
+                    self._mark_state_dirty()
                 if moved and self._state_file and not self._save_state():
                     raise OSError("memory handoff checkpoint failed")
                 self._ledger_memory_handoff_healthy = True
@@ -2560,13 +2581,32 @@ class CascadeBridge(LifecycleControls):
         finally:
             self._verdict_poll_lock.release()
 
-    def _save_state(self):
+    def _mark_state_dirty(self):
+        """Record that in-memory state advanced and must reach the snapshot."""
+        self._state_gen += 1
+        return self._state_gen
+
+    def _save_state(self, *, settle=False):
+        """Write a snapshot.
+
+        ``settle`` lets high-frequency callers share a concurrent write: when a
+        snapshot that started after their change completed, their bytes are
+        already durable and no second serialization is needed. Callers whose
+        control flow depends on *attempting* a write (fault handling, fencing,
+        recovery) keep the default strict behaviour.
+        """
         if not self._state_file:
             return True
         with self._lifecycle_lock, self._snapshot_lock:
             if self._classifier_recovery_error:
                 return False
-            return self._save_state_locked()
+            target = self._state_gen
+            if settle and target and self._saved_gen >= target:
+                return True
+            saved = self._save_state_locked()
+            if saved:
+                self._saved_gen = max(self._saved_gen, target)
+            return saved
 
     def _save_state_locked(self):
         try:
@@ -2646,7 +2686,11 @@ class CascadeBridge(LifecycleControls):
                 },
                 "memory_archive": self.memory_archive.to_dict() if self.memory_archive else None,
             }
-            atomic_snapshot(self._state_file, state)
+            if self._state_compression == "none":
+                atomic_snapshot(self._state_file, state)
+            else:
+                atomic_snapshot(self._state_file, state,
+                                compression=self._state_compression)
             self._state_healthy = True
             self._save_failures = 0
             return True
@@ -2672,8 +2716,7 @@ class CascadeBridge(LifecycleControls):
                 self._complete_durable_restore()
             return
         try:
-            with open(self._state_file) as f:
-                state = json.load(f)
+            state = read_snapshot(self._state_file)
             uncertain_completion = bool(state.get("classification_completion", {}).get("pending"))
             completion.restore(self, state)
             self._restore_classifier_work(state.get('classifier_work'))
@@ -2836,6 +2879,7 @@ class CascadeBridge(LifecycleControls):
                                 work["accounting"].get("dropped", 0) + len(unapplied))
             completion.resume(self)
             if state.get('classifier_work', {}).get('outstanding'):
+                self._mark_state_dirty()
                 if not self._save_state():
                     raise OSError('could not persist interrupted classifier-work receipts')
 
@@ -2906,6 +2950,7 @@ class CascadeBridge(LifecycleControls):
 
     def save_state(self):
         """Persist current bridge state after out-of-band mutations such as federation."""
+        self._mark_state_dirty()
         self._save_state()
 
     def get_stats(self) -> Dict:
@@ -3377,6 +3422,7 @@ class CascadeBridge(LifecycleControls):
                     reason="fn_confirmed",
                 )
             if not self._defer_verdict_feedback_save:
+                self._mark_state_dirty()
                 self._save_state()
 
     def get_llm_results(self, limit: int = 20) -> list:

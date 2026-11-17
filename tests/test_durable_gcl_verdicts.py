@@ -170,7 +170,7 @@ def test_checkpoint_failure_replays_negative_before_authority(start, ledger, mon
     assert b._save_state()
     ledger.rows = [verdict("one", ts)]
     b._activated_types.add("routine")
-    monkeypatch.setattr(b, "_save_state", lambda: False)
+    monkeypatch.setattr(b, "_save_state", lambda **_kw: False)
     assert not b._poll_gcl_verdicts()
     assert "routine" not in b._activated_types
     assert not b._verdict_seen_ids and b._verdict_watermark == ts - 1
@@ -481,10 +481,10 @@ def test_receipt_never_precedes_durable_effect_and_survives_cursor_failure(start
     b = start()
     ledger.rows = [verdict("one", now_ms() - 60000)]
     real = b._save_state
-    monkeypatch.setattr(b, "_save_state", lambda: False)
+    monkeypatch.setattr(b, "_save_state", lambda **_kw: False)
     assert not b._poll_gcl_verdicts()
     assert b.get_verdict_receipt("one") is None and b._verdict_watermark == 0
-    monkeypatch.setattr(b, "_save_state", lambda: False if b._verdict_watermark else real())
+    monkeypatch.setattr(b, "_save_state", lambda **_kw: False if b._verdict_watermark else real())
     assert not b._poll_gcl_verdicts()
     assert b._verdict_watermark == 0 and b.get_verdict_receipt("one")["verdict"] == "FAILS"
     b.close()

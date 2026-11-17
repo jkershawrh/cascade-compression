@@ -1,4 +1,5 @@
 """Local lifecycle controls; digests bind policy bytes, not evidence authenticity."""
+import gzip
 import hashlib
 import json
 import os
@@ -25,13 +26,42 @@ def valid_time(value, ttl=None):
         return False
 
 
-def atomic_snapshot(path, state):
+STATE_SNAPSHOT_MAGIC = b'\x1f\x8b'
+
+
+def encode_snapshot(state, compression='none'):
+    """Serialize a snapshot; gzip output is identifiable by its magic bytes."""
+    payload = json.dumps(state, allow_nan=False).encode('utf-8')
+    if compression == 'gzip':
+        return gzip.compress(payload, compresslevel=1, mtime=0)
+    return payload
+
+
+def decode_snapshot(raw):
+    """Read either a compressed snapshot or a legacy JSON snapshot."""
+    if raw[:2] == STATE_SNAPSHOT_MAGIC:
+        raw = gzip.decompress(raw)
+    return json.loads(raw)
+
+
+def read_snapshot(path):
+    """Load a snapshot, keeping the plain-JSON read path byte-compatible."""
+    with open(path, 'rb') as probe:
+        compressed = probe.read(2) == STATE_SNAPSHOT_MAGIC
+    if compressed:
+        with open(path, 'rb') as stream:
+            return decode_snapshot(stream.read())
+    with open(path) as stream:
+        return json.load(stream)
+
+
+def atomic_snapshot(path, state, compression='none'):
     """Replace only after a complete owner-only write and fsync."""
     parent = os.path.dirname(os.path.abspath(path))
     fd, temporary = tempfile.mkstemp(prefix='.cascade-state-', dir=parent)
     try:
-        with os.fdopen(fd, 'w') as stream:
-            json.dump(state, stream, allow_nan=False)
+        with os.fdopen(fd, 'wb') as stream:
+            stream.write(encode_snapshot(state, compression))
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)

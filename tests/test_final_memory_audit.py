@@ -353,7 +353,7 @@ def test_spool_ahead_of_snapshot_preserves_extra_coalesced_members(files, monkey
         b._pending_memory_ids[sid] = links[sid] = memory.memory_id
         assert b._checkpoint_classification_memories()
         with monkeypatch.context() as m:
-            m.setattr(b, "_save_state", lambda: False)
+            m.setattr(b, "_save_state", lambda **_kw: False)
             assert not b._enqueue_llm_signals(signals)
         assert len(entry["_signal_ids"]) == 4
     finally:
