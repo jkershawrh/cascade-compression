@@ -68,3 +68,85 @@ def test_k8s_api_never_retries_with_tls_verification_disabled(monkeypatch):
     assert k8s_api_get("https://api.example", "/health") is None
     assert len(calls) == 1
     assert calls[0].check_hostname is True
+
+
+class TestProjectedVolumeExhaustion:
+    """A percentage threshold cannot tell fast-growing from parked-full.
+
+    The anchor-proposals volume sat at 73% while gaining ~2.6 MiB/day and
+    would have failed permanently in about nine days; the 85% rule would not
+    have fired in time. These rules project days-to-full from 6h of history
+    and split the urgency bands so one volume yields exactly one severity.
+    """
+
+    def _rules(self):
+        from cascade_compression.collectors.prometheus import HEALTH_QUERIES
+        return {
+            name: rule for name, rule in HEALTH_QUERIES.items()
+            if rule["signal_type"] == "metric_pvc_projected_full"
+        }
+
+    def test_rules_exist_with_exclusive_bands(self):
+        rules = self._rules()
+        assert set(rules) == {"pvc_projected_full_7d", "pvc_projected_full_30d"}
+        assert rules["pvc_projected_full_7d"]["severity"] == "high"
+        assert rules["pvc_projected_full_30d"]["severity"] == "medium"
+        for rule in rules.values():
+            assert "deriv(kubelet_volume_stats_used_bytes[24h]) > 1024" in rule["query"]
+            assert "kubelet_volume_stats_available_bytes" in rule["query"]
+            assert "kubelet_volume_stats_capacity_bytes) >= 0.5" in rule["query"]
+        assert "< 7" in rules["pvc_projected_full_7d"]["query"]
+        assert ">= 7" in rules["pvc_projected_full_30d"]["query"]
+
+    def test_signal_carries_volume_identity(self, monkeypatch):
+        collector = PrometheusCollector()
+        collector._thanos_url = "https://thanos.invalid"
+        collector._clusters = {}
+        collector._token = ""
+
+        def fake_query(url, query, token=""):
+            if "deriv(kubelet_volume_stats_used_bytes" not in query:
+                return None
+            return [{
+                "metric": {
+                    "persistentvolumeclaim": "build-artifacts",
+                    "namespace": "cascade-compression",
+                },
+                "value": [0, "4.2"],
+            }]
+
+        monkeypatch.setattr(collector, "_query", fake_query)
+        signals = [s for s in collector._collect_metrics()
+                   if s.signal_type == "metric_pvc_projected_full"]
+
+        assert {s.severity for s in signals} == {"high", "medium"}
+        assert all(s.namespace == "cascade-compression" for s in signals)
+        assert all("build-artifacts" in s.evidence["message"] for s in signals)
+
+    def test_volume_series_identify_the_claim_not_the_node(self, monkeypatch):
+        collector = PrometheusCollector()
+        collector._thanos_url = "https://thanos.invalid"
+        collector._clusters = {}
+        collector._token = ""
+
+        def fake_query(url, query, token=""):
+            if "deriv(kubelet_volume_stats_used_bytes" not in query:
+                return None
+            return [{
+                "metric": {
+                    "persistentvolumeclaim": "postgres-data",
+                    "namespace": "production",
+                    # Kubelet volume series carry all three labels; the node
+                    # label must not outrank the claim.
+                    "node": "worker-00",
+                    "instance": "10.0.0.1:10250",
+                },
+                "value": [0, "5.0"],
+            }]
+
+        monkeypatch.setattr(collector, "_query", fake_query)
+        signals = [s for s in collector._collect_metrics()
+                   if s.signal_type == "metric_pvc_projected_full"]
+        assert signals
+        assert all("postgres-data" in s.evidence["message"] for s in signals)
+        assert all("worker-00" not in s.evidence["message"] for s in signals)

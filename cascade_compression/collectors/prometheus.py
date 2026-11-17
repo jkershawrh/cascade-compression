@@ -46,6 +46,37 @@ HEALTH_QUERIES = {
         "signal_type": "metric_pvc_nearly_full",
         "severity": "medium",
     },
+    # A percentage threshold answers "is it full", not "when will it be full".
+    # A volume at 40% growing fast is more urgent than one parked at 90%.
+    # The anchor-proposals volume reached 73% at ~2.6 MiB/day and would have
+    # failed permanently in about nine days while never crossing 85%.
+    #
+    # Shape matters: 6h is all burst on rewrite-heavy volumes (snapshot-style
+    # writers made every PVC look days from full), and flat volumes with a
+    # byte-per-second of noise project thousands of days out. So: a 24h trend,
+    # a 1 KiB/s growth floor, and a 50% occupancy gate. The days-to-full
+    # expression leads so the emitted value is the projection, not the slope.
+    # Bands are exclusive so one volume yields exactly one severity.
+    "pvc_projected_full_7d": {
+        "query": "((kubelet_volume_stats_available_bytes"
+                 " / deriv(kubelet_volume_stats_used_bytes[24h]) / 86400) < 7)"
+                 " and deriv(kubelet_volume_stats_used_bytes[24h]) > 1024"
+                 " and (kubelet_volume_stats_used_bytes"
+                 " / kubelet_volume_stats_capacity_bytes) >= 0.5",
+        "signal_type": "metric_pvc_projected_full",
+        "severity": "high",
+    },
+    "pvc_projected_full_30d": {
+        "query": "((kubelet_volume_stats_available_bytes"
+                 " / deriv(kubelet_volume_stats_used_bytes[24h]) / 86400) < 30)"
+                 " and ((kubelet_volume_stats_available_bytes"
+                 " / deriv(kubelet_volume_stats_used_bytes[24h]) / 86400) >= 7)"
+                 " and deriv(kubelet_volume_stats_used_bytes[24h]) > 1024"
+                 " and (kubelet_volume_stats_used_bytes"
+                 " / kubelet_volume_stats_capacity_bytes) >= 0.5",
+        "signal_type": "metric_pvc_projected_full",
+        "severity": "medium",
+    },
     "node_memory": {
         "query": "(1-node_memory_MemAvailable_bytes/node_memory_MemTotal_bytes)>0.9",
         "signal_type": "metric_node_memory_exhausted",
@@ -243,9 +274,13 @@ class PrometheusCollector(BaseCollector):
                     ns = metric.get("namespace", "")
                     name = (
                         metric.get("pod", "")
+                        # Volume series carry persistentvolumeclaim, node and
+                        # instance together (kubelet relabels the node). The
+                        # claim is the actionable identity; the node is already
+                        # in the signal's labels.
+                        or metric.get("persistentvolumeclaim", "")
                         or metric.get("node", "")
                         or metric.get("instance", "")
-                        or metric.get("persistentvolumeclaim", "")
                         or qname
                     )
                     signals.append(PrometheusSignal({
