@@ -257,3 +257,73 @@ class TestStaleSnapshotTemps:
         monkeypatch.delenv("CASCADE_STATE_FILE", raising=False)
         bridge = CascadeBridge(domain="test")
         assert bridge._sweep_stale_snapshot_temps() == 0
+
+
+class TestVerdictBootstrapWindow:
+    """A brand-new instance must not ask the ledger for verdicts from epoch.
+
+    A zero watermark means "no verdict has been applied", not "read every
+    entry". The epoch query makes the gateway scan its whole history and the
+    15 s client times out, so a fresh deployment never finishes catch-up and
+    never opens suppression authority — observed twice on a rebuilt instance.
+    """
+
+    def test_fresh_cursor_is_bounded(self, monkeypatch):
+        import time
+
+        from cascade_compression.verdict_catchup import _cursor
+
+        class Bridge:
+            _verdict_watermark = 0
+            _verdict_cursor = None
+            domain = "test"
+            _ledger_url = "https://ledger.test"
+            _verdict_mode = "strict"
+
+        monkeypatch.setenv("CASCADE_VERDICT_BOOTSTRAP_HOURS", "2")
+        cursor = _cursor(Bridge())
+        now_ms = int(time.time() * 1000)
+        assert cursor["from_ts"] > 0, "must not start at the epoch"
+        assert now_ms - 3 * 3600 * 1000 < cursor["from_ts"] <= now_ms
+
+    def test_default_keeps_historical_epoch_floor(self, monkeypatch):
+        from cascade_compression.verdict_catchup import _cursor
+
+        class Bridge:
+            _verdict_watermark = 0
+            _verdict_cursor = None
+            domain = "test"
+            _ledger_url = "https://ledger.test"
+            _verdict_mode = "strict"
+
+        monkeypatch.delenv("CASCADE_VERDICT_BOOTSTRAP_HOURS", raising=False)
+        assert _cursor(Bridge())["from_ts"] == 0
+
+    def test_recorded_watermark_still_wins(self, monkeypatch):
+        from cascade_compression.verdict_catchup import _cursor
+
+        class Bridge:
+            _verdict_watermark = 1794928575880
+            _verdict_cursor = None
+            domain = "test"
+            _ledger_url = "https://ledger.test"
+            _verdict_mode = "strict"
+
+        monkeypatch.setenv("CASCADE_VERDICT_BOOTSTRAP_HOURS", "2")
+        assert _cursor(Bridge())["from_ts"] == 1794928575880
+
+    def test_invalid_window_is_rejected(self, monkeypatch):
+        import pytest
+
+        from cascade_compression.verdict_catchup import _cursor
+
+        class Bridge:
+            _verdict_watermark = ""
+            _verdict_cursor = None
+            domain = "test"
+            _ledger_url = "https://ledger.test"
+            _verdict_mode = "strict"
+
+        monkeypatch.setenv("CASCADE_VERDICT_BOOTSTRAP_HOURS", "not-a-number")
+        with pytest.raises(ValueError):
+            _cursor(Bridge())

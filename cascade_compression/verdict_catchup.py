@@ -3,6 +3,7 @@ from datetime import datetime
 import hashlib
 import json
 import logging
+import math
 import os
 import ssl
 import time
@@ -61,9 +62,28 @@ def _scope(bridge):
     return hashlib.sha256(json.dumps(identity).encode()).hexdigest()
 
 
+def _bootstrap_floor():
+    """Lower bound for a first poll with no watermark.
+
+    A watermark of zero means "never applied a verdict", not "read the whole
+    ledger". Asking for the epoch makes the gateway scan its entire history and
+    the 15 s client times out, so a freshly created instance never completes
+    catch-up and never opens suppression authority. Start from a bounded
+    window instead; history older than the window is skipped deliberately.
+    """
+    hours = float(os.getenv("CASCADE_VERDICT_BOOTSTRAP_HOURS", "0") or "0")
+    if not math.isfinite(hours) or hours < 0:
+        raise ValueError("invalid CASCADE_VERDICT_BOOTSTRAP_HOURS")
+    if hours == 0:
+        return 0  # Historical behaviour: a first poll may start at the epoch.
+    return int((time.time() - hours * 3600) * 1000)
+
+
 def _cursor(bridge):
     floor = bridge._verdict_watermark
     floor = _ms(0 if floor is None or floor == "" else floor)
+    if floor == 0:
+        floor = _bootstrap_floor()
     saved = bridge._verdict_cursor
     if saved is None:
         return dict(version=1, from_ts=floor, to_ts=int(time.time() * 1000),
