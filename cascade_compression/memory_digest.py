@@ -61,12 +61,19 @@ class FederatedMemoryDigest:
             self._buffer_dirty = True
 
     def _pending(self) -> list[dict[str, Any]]:
-        """Spool plus buffered arrivals, without double counting."""
+        """Spool plus buffered arrivals, bounded by the configured cap.
+
+        The cap applies to the merged view: capping each container separately
+        let a busy instance report twice ``max_records``.
+        """
         records = self._read()
         if self._buffer:
             seen = {record.get("memory_id") for record in records}
             records.extend(record for record in self._buffer
                            if record.get("memory_id") not in seen)
+        if len(records) > self.max_records:
+            records = sorted(records, key=lambda r: r.get("aggregated_at", ""),
+                             reverse=True)[:self.max_records]
         return records
 
     def persist(self) -> int:

@@ -230,6 +230,19 @@ def test_arrivals_buffer_until_persist(tmp_path):
     assert digest.pending_count() == 5, "persist must not double count"
 
 
+def test_cap_applies_to_the_merged_view(tmp_path):
+    digest = FederatedMemoryDigest(
+        spool_path=str(tmp_path / "spool.json"), recipient="", smtp_host="",
+        max_records=3,
+    )
+    for i in range(3):
+        digest.enqueue(memory(f"spool{i}"))
+    digest.persist()
+    for i in range(3):
+        digest.enqueue(memory(f"buffer{i}"))
+    assert digest.pending_count() == 3, "spool and buffer must not each hold a full cap"
+
+
 def test_local_formations_reach_the_summary(tmp_path):
     """A single-instance deployment never federates, so a federated-only
     listener leaves the hourly summary permanently empty."""
