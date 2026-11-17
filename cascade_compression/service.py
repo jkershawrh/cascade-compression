@@ -102,6 +102,9 @@ async def lifespan(app: FastAPI):
     if _memory_archive:
         # Newly federated memories spool durably for the hourly digest.
         _memory_archive.add_federated_listener(_memory_digest.enqueue)
+        # Local formations feed the same digest; without this a single-instance
+        # deployment's hourly summary is always empty.
+        _memory_archive.add_formation_listener(_memory_digest.enqueue)
     _memory_digest.start()
     _memory_intel = MemoryIntelligence()
     try:

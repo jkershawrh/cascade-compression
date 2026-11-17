@@ -199,6 +199,7 @@ def test_temp_file_cleanup_on_write_failure(tmp_path, monkeypatch):
         spool_path=str(tmp_path / "spool.json"), recipient="", smtp_host="",
     )
     digest.enqueue(memory("existing"))
+    digest.persist()
     original = digest.spool_path.read_text()
 
     def fail_replace(_source, _target):
@@ -206,11 +207,49 @@ def test_temp_file_cleanup_on_write_failure(tmp_path, monkeypatch):
 
     monkeypatch.setattr(type(digest.spool_path), "replace", fail_replace)
 
+    digest.enqueue(memory("new"))
     with pytest.raises(OSError, match="injected replace failure"):
-        digest.enqueue(memory("new"))
+        digest.persist()
 
     assert digest.spool_path.read_text() == original
     assert not digest.spool_path.with_suffix(".json.tmp").exists()
+
+
+def test_arrivals_buffer_until_persist(tmp_path):
+    digest = FederatedMemoryDigest(
+        spool_path=str(tmp_path / "spool.json"), recipient="", smtp_host="",
+    )
+    for i in range(5):
+        digest.enqueue(memory(f"m{i}"))
+
+    assert not digest.spool_path.exists(), "arrivals must not rewrite the spool"
+    assert digest.pending_count() == 5
+    assert digest.persist() == 5
+    assert digest.spool_path.exists()
+    assert digest.persist() == 0, "an unchanged buffer must not write again"
+    assert digest.pending_count() == 5, "persist must not double count"
+
+
+def test_local_formations_reach_the_summary(tmp_path):
+    """A single-instance deployment never federates, so a federated-only
+    listener leaves the hourly summary permanently empty."""
+    from cascade_compression.cascade.memory import MemoryArchive
+
+    archive = MemoryArchive(max_capacity=10)
+    digest = FederatedMemoryDigest(
+        spool_path=str(tmp_path / "spool.json"), recipient="", smtp_host="",
+    )
+    archive.add_formation_listener(digest.enqueue)
+
+    from tests.helpers import make_signal
+
+    signal = make_signal(signal_type="pod_crashloop")
+    archive.store(signal)
+    assert digest.pending_count() == 1
+
+    # Reinforcing the same observation is not a new formation.
+    archive.store(signal)
+    assert digest.pending_count() == 1
 
 
 def test_federated_import_persists_aggregate_state(monkeypatch):

@@ -427,6 +427,10 @@ class MemoryArchive:
         self._rejection_set: Dict[str, None] = {}
         self._rejection_max = max_capacity * 2
         self._federated_listeners: List[Callable[["Memory"], None]] = []
+        # Newly formed memories (not dedup reinforcements). The value digest
+        # reads these: a single-instance deployment never federates, so a
+        # federated-only listener leaves its hourly summary permanently empty.
+        self._formation_listeners: List[Callable[["Memory"], None]] = []
         self._handoff_id = str(uuid4())
         self._handoff_offset = 0
         self._decay_config = None
@@ -482,6 +486,13 @@ class MemoryArchive:
             details={"initial_strength": initial_strength,
                      "classification": classification},
         ))
+
+        for listener in self._formation_listeners:
+            try:
+                # Observability consumers must never block admission.
+                listener(memory)
+            except Exception:
+                pass
 
         return memory
 
@@ -794,6 +805,10 @@ class MemoryArchive:
     def add_federated_listener(self, listener: Callable[["Memory"], None]) -> None:
         """Observe newly accepted federated memories (not dedup reinforcements)."""
         self._federated_listeners.append(listener)
+
+    def add_formation_listener(self, listener: Callable[["Memory"], None]) -> None:
+        """Observe memories formed locally (not dedup reinforcements)."""
+        self._formation_listeners.append(listener)
 
     def add_priming_window(self, window: PrimingWindow,
                            max_windows: int = 10) -> None:

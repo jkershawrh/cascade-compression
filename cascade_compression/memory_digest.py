@@ -39,6 +39,12 @@ class FederatedMemoryDigest:
         self._thread: threading.Thread | None = None
         self.retention_hours = retention_hours if retention_hours is not None else 168  # 7 days
         self.max_records = max_records if max_records is not None else 10000
+        # Records arrive once per newly formed memory (~100/min on a busy
+        # instance). Writing the whole spool per arrival amplified that to ~18 MB
+        # of I/O per memory, so arrivals buffer in memory and fold into the spool
+        # on a timer.
+        self._buffer: list[dict[str, Any]] = []
+        self._buffer_dirty = False
 
     @property
     def enabled(self) -> bool:
@@ -48,12 +54,36 @@ class FederatedMemoryDigest:
         record = memory.to_dict()
         record["aggregated_at"] = datetime.now(timezone.utc).isoformat()
         with self._lock:
-            pending = self._read()
-            pending.append(record)
-            self._write(pending)
+            self._buffer.append(record)
+            overflow = len(self._buffer) - self.max_records
+            if overflow > 0:
+                del self._buffer[:overflow]
+            self._buffer_dirty = True
+
+    def _pending(self) -> list[dict[str, Any]]:
+        """Spool plus buffered arrivals, without double counting."""
+        records = self._read()
+        if self._buffer:
+            seen = {record.get("memory_id") for record in records}
+            records.extend(record for record in self._buffer
+                           if record.get("memory_id") not in seen)
+        return records
+
+    def persist(self) -> int:
+        """Fold buffered arrivals into the spool. Called on a timer, not per memory."""
+        with self._lock:
+            if not self._buffer_dirty:
+                return 0
+            self._write(self._pending())
+            folded = len(self._buffer)
+            self._buffer.clear()
+            self._buffer_dirty = False
+            return folded
 
     def start(self) -> None:
-        if not self.enabled or self._thread:
+        # Collection is useful without a mailer: the hourly summary endpoint
+        # reads the same spool. Only delivery depends on ``enabled``.
+        if self._thread:
             return
         self._thread = threading.Thread(target=self._run, daemon=True,
                                         name="federated-memory-digest")
@@ -63,10 +93,14 @@ class FederatedMemoryDigest:
         self._stop.set()
         if self._thread:
             self._thread.join(timeout=2)
+        try:
+            self.persist()
+        except Exception:
+            pass
 
     def flush(self) -> int:
         with self._lock:
-            pending = self._read()
+            pending = self._pending()
         if not pending:
             return 0
         if self._send_override:
@@ -74,21 +108,23 @@ class FederatedMemoryDigest:
         else:
             self._send_email(pending)
         with self._lock:
-            current = self._read()
+            current = self._pending()
             sent_ids = {m.get("memory_id") for m in pending}
             self._write([m for m in current if m.get("memory_id") not in sent_ids])
+            self._buffer.clear()
+            self._buffer_dirty = False
         return len(pending)
 
     def pending_count(self) -> int:
         with self._lock:
-            return len(self._read())
+            return len(self._pending())
 
     def summary(self, hours: float | None = None, *,
                 start: datetime | None = None,
                 end: datetime | None = None) -> dict[str, Any]:
         """Return a compact, stable summary of the unacknowledged hourly window."""
         with self._lock:
-            records = self._read()
+            records = self._pending()
         if hours is not None:
             cutoff = datetime.now(timezone.utc) - timedelta(hours=max(0, hours))
             records = [r for r in records if _parse_time(r.get("aggregated_at")) >= cutoff]
@@ -109,16 +145,24 @@ class FederatedMemoryDigest:
 
     def acknowledge(self, digest_id: str) -> bool:
         with self._lock:
-            records = self._read()
+            records = self._pending()
             ids = [str(r.get("memory_id", "")) for r in records]
             current_id = hashlib.sha256("\n".join(sorted(ids)).encode()).hexdigest()[:16]
             if digest_id != current_id:
                 return False
             self._write([])
+            self._buffer.clear()
+            self._buffer_dirty = False
             return True
 
     def _run(self) -> None:
         while not self._stop.wait(self.interval_seconds):
+            try:
+                self.persist()
+            except Exception as exc:
+                log.warning("Memory digest spool write failed: %s", exc)
+            if not self.enabled:
+                continue
             try:
                 self.flush()
             except Exception as exc:
