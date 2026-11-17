@@ -43,9 +43,16 @@ challenge and a separate prevalence sample serve different purposes.
 
 *The memory is write-only (recall_count ≈ 0). Value exists but is unread.*
 
+The digest now collects local formations (not just federated imports), buffers
+arrivals instead of rewriting the spool per memory, and runs without a mailer —
+`/memories/hourly-summary` returns counts by severity, classification and
+pattern over a rolling hour. Observed on the first live run: 562 formations in
+three minutes, 500 `needs_attention`, with 25 `disk_pressure`, 20
+`auth_failure` and 16 `network_failure` among them.
+
 | # | Item | What it does | Effort |
 |---|---|---|---|
-| 3.1 | Turn on the digest | hourly summaries of what cascade caught → the team SEES the value | config only |
+| 3.1 | Turn on the digest | hourly summaries of what cascade caught → the team SEES the value | shipped 2026-11-17 — **not** config only: local formations never reached the digest and it rewrote the whole spool per memory |
 | 3.2 | Economics panel on the live view | $/day avoided vs the naive baseline | frontend extension |
 | 3.3 | Agent workflow integration | "why did cell 3 stop?" answered from memory via MCP | consumer-side work |
 
