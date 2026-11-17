@@ -17,6 +17,13 @@ from cascade_compression.cascade.repeat_integrity import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _kubernetes_identity():
+    """Repeat handling requires a pack-declared identity; no engine default."""
+    from cascade_compression.domain_plugins import load_domain_plugin
+    load_domain_plugin("kubernetes")
+
+
 def signal(count, message="probe failed", severity="medium",
            event_uid="10000000-0000-4000-8000-0000000000up",
            namespace="app", source="collector", cluster="prod"):
@@ -141,15 +148,18 @@ class TestDomainAgnosticAdmission:
     and count requirements are met. The domain and signal_type participate
     in the key material so cross-domain observations never merge."""
 
-    def test_domain_without_declared_identity_uses_the_default(self):
-        """A pack that declares no REPEAT_IDENTITY keeps shape-based admission.
+    def test_undeclared_domain_fails_closed(self):
+        """No pack-declared identity means no repeat path at all.
 
-        Admission must not be gated on a pack being installed, so domains that
-        never declared an identity policy still use the compatibility default.
+        There is deliberately no engine-side default shape: the old one was
+        Kubernetes shape in code documented as domain-agnostic, which no other
+        domain could satisfy. An undeclared domain delivers every observation.
         """
         s = signal(5)
         s.labels = {"domain": "telecom"}
-        assert verified_repeat_update_key(s) is not None
+        assert verified_repeat_update_key(s) is None
+        s.labels = {}
+        assert verified_repeat_update_key(s) is None
 
     def test_aap_declares_its_own_identity(self):
         """AAP's pack admits task-shaped repeats, not involved-object shape.
@@ -188,10 +198,10 @@ class TestDomainAgnosticAdmission:
         s.labels = {"domain": "kubernetes"}
         assert verified_repeat_update_key(s) is not None
 
-    def test_no_domain_admitted(self):
+    def test_missing_domain_label_fails_closed(self):
         s = signal(5)
         s.labels = {}
-        assert verified_repeat_update_key(s) is not None
+        assert verified_repeat_update_key(s) is None
 
     def test_task_signal_type_admitted(self):
         s = signal(5)

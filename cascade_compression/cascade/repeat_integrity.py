@@ -7,10 +7,13 @@ Missing/excerpt-only evidence without a matching complete message fails open.
 The engine owns the *mechanism*: severity/identity/label gates, message digest
 binding, key serialization and the dedup windows. A domain pack owns the
 *policy*: which content fields identify a repeat, whether a kind discriminator is
-required, whether a count must be present, and which content fields are volatile
-for that domain. Packs register a :class:`RepeatIdentity`; a domain with no
-registered policy fails open (no repeat handling), which is the conservative
-default.
+required, whether a count must be present, which content fields are volatile for
+that domain, and which severities the profile is qualified for.
+
+Packs register a :class:`RepeatIdentity` when they load. A domain with no
+registered policy takes no repeat path at all: every observation is delivered.
+There is deliberately no engine-side default shape, because the previous one was
+Kubernetes shape wearing a domain-agnostic comment.
 
 This split exists because the previous implementation hardcoded Kubernetes
 shape — ``kind``, ``uid``, ``event_uid``, ``reason`` — in code documented as
@@ -66,20 +69,6 @@ class RepeatIdentity:
             raise ValueError("exact_kind must be a non-empty string")
 
 
-# Compatibility default. This is the shape the verified-repeat profiles were
-# qualified on: an involved-object ``kind``, event identity in
-# ``uid``/``event_uid``/``reason``, and a monotonically increasing ``count``.
-# It is applied to signals whose domain pack declares no ``REPEAT_IDENTITY``, so
-# that admission stays domain-agnostic rather than gated on a pack being
-# installed. Packs override it to describe their own observations.
-DEFAULT_IDENTITY = RepeatIdentity(
-    identity_fields=("uid", "event_uid", "reason"),
-    require_kind=True,
-    exact_kind="Pod",
-    require_count=True,
-    severities=("medium",),
-)
-
 _POLICIES: Dict[str, RepeatIdentity] = {}
 
 
@@ -102,8 +91,8 @@ def _policy_for(signal) -> RepeatIdentity | None:
         return None
     domain = labels.get("domain", "")
     if not isinstance(domain, str):
-        return DEFAULT_IDENTITY
-    return _POLICIES.get(domain.strip().lower(), DEFAULT_IDENTITY)
+        return None  # No declared identity: fail closed, deliver everything.
+    return _POLICIES.get(domain.strip().lower())
 
 
 def _verified_repeat_admission(signal, *, exact: bool, policy: RepeatIdentity):

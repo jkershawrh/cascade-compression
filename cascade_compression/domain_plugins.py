@@ -48,11 +48,7 @@ def _validate(entry_point: EntryPoint) -> DomainPlugin:
         raise DomainPluginError(
             f"domain {entry_point.name!r} SYSTEM_PROMPT must be a string"
         )
-    policy = getattr(module, "REPEAT_IDENTITY", None)
-    if policy is not None:
-        # The engine owns the mechanism; the pack owns the identity policy.
-        from .cascade.repeat_integrity import register_repeat_identity
-        register_repeat_identity(entry_point.name, policy)
+    _register_repeat_identities(entry_point.name, module)
     return DomainPlugin(
         name=entry_point.name,
         module=module,
@@ -61,6 +57,45 @@ def _validate(entry_point: EntryPoint) -> DomainPlugin:
         few_shot_exemplars=getattr(module, "FEW_SHOT_EXEMPLARS", None),
         value_rules=getattr(module, "VALUE_RULES", None),
     )
+
+
+def _register_repeat_identities(name: str, module: ModuleType) -> None:
+    """Register a pack's identity policy under every domain label it covers.
+
+    One pack can emit several domain labels (the robotic pack emits robotic,
+    plc and vision), and the policy is keyed by the signal's label. The engine
+    owns the mechanism; the pack owns the policy and the labels it applies to.
+    """
+    from .cascade.repeat_integrity import RepeatIdentity, register_repeat_identity
+
+    policy = getattr(module, "REPEAT_IDENTITY", None)
+    if not isinstance(policy, RepeatIdentity):
+        return
+    register_repeat_identity(name, policy)
+    extra = getattr(module, "REPEAT_IDENTITY_DOMAINS", ())
+    if isinstance(extra, str):
+        extra = (extra,)
+    for label in extra:
+        if isinstance(label, str) and label.strip() and label != name:
+            register_repeat_identity(label, policy)
+
+
+def register_all_repeat_identities() -> dict[str, str]:
+    """Register every installed pack's repeat identity policy.
+
+    A process can see more than one domain (the federated memory aggregator
+    receives several), so registration cannot depend on which pack the local
+    instance declares. Idempotent; a pack that declares nothing is skipped and
+    its domain therefore takes no repeat path.
+    """
+    from .cascade.repeat_integrity import RepeatIdentity, register_repeat_identity
+
+    registered: dict[str, str] = {}
+    for name, plugin in discover_domain_plugins().items():
+        _register_repeat_identities(name, plugin.module)
+        if isinstance(getattr(plugin.module, "REPEAT_IDENTITY", None), RepeatIdentity):
+            registered[name] = "declared"
+    return registered
 
 
 def discover_domain_plugins(

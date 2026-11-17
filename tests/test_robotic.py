@@ -16,6 +16,15 @@ from cascade_compression.collectors.robotic import (
 )
 
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _robotic_identity():
+    """Repeat handling requires a pack-declared identity."""
+    from cascade_compression.domain_plugins import load_domain_plugin
+    load_domain_plugin("robotic")
+
 def robot_signal(cell="cell-1", robot="robot-1", cycle_count=1,
                  fault="", severity="medium", signal_type="robot_cycle_complete"):
     # Stable identity: same message and event_uid across observations,

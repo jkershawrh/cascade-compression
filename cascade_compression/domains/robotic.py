@@ -21,6 +21,9 @@ Classify as exactly one of: routine_noise, known_pattern, needs_attention, real_
 
 # Repeat identity: robot/PLC/vision telemetry repeats by device, event identity
 # and a monotonic count. Declared here rather than assumed by the engine.
+# This pack emits three domain labels; all three share the identity policy.
+REPEAT_IDENTITY_DOMAINS = ("plc", "vision")
+
 REPEAT_IDENTITY = RepeatIdentity(
     identity_fields=("uid", "event_uid", "reason"),
     require_kind=True,

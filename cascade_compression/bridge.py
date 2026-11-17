@@ -176,8 +176,12 @@ class CascadeBridge(LifecycleControls):
         # Truth-informed few-shot exemplars from the domain plugin, if present.
         # These teach the generative model the platform's operating rhythm
         # (the noise/pattern/attention boundaries that generic prompts miss).
-        from .domain_plugins import load_domain_plugin
+        from .domain_plugins import load_domain_plugin, register_all_repeat_identities
         try:
+            # Every installed pack declares its own repeat identity; the
+            # engine has no default shape, so an unregistered domain delivers
+            # every observation.
+            register_all_repeat_identities()
             plugin = load_domain_plugin(self.domain)
             self._few_shot = plugin.few_shot_exemplars
             self._value_rules = plugin.value_rules

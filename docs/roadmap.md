@@ -56,11 +56,15 @@ protected gates, message digest binding, key serialization, windows) stays in
 the engine and packs declare a `RepeatIdentity` policy — identity fields,
 optional kind discriminator, count requirement, volatile fields to exclude from
 the key, and the severities the profile is qualified for. Kubernetes and robotic
-declare exactly the rules the engine previously assumed; AAP declares
-`event`/`play` identity and ignores `event_id`/`observed_at`/
-`original_event_time` in the key while keeping them in the stored evidence. A
-domain with no declared policy falls back to the compatibility default, so
-admission stays domain-agnostic.
+declare exactly the rules the engine previously assumed (robotic covers three
+domain labels: robotic, plc, vision); AAP declares `event`/`play` identity and
+ignores `event_id`/`observed_at`/`original_event_time` in the key while keeping
+them in the stored evidence.
+
+There is **no engine-side default**. A domain with no declared policy takes no
+repeat path and delivers every observation. Every installed pack registers at
+startup, so a process that sees several domains (the federated aggregator) still
+has all declared policies — but nothing inherits Kubernetes shape implicitly.
 
 Measured on the AAP instance with the policy declared and
 `CASCADE_DEDUP_WINDOW_AAP=3600`: compression went from **0.0% to 20.5%**
