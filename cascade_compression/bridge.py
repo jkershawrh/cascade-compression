@@ -409,6 +409,11 @@ class CascadeBridge(LifecycleControls):
         self._last_promotion_time: float = 0
         self._promotion_interval: float = float(
             os.getenv("CASCADE_PROMOTION_INTERVAL_SECONDS", "300"))
+        # Promotion scans the whole archive. It must never run on a request
+        # thread: at 50k memories the sweep is long enough to stall every
+        # concurrent /cascade call behind it (observed 2026-11-17).
+        self._promotion_lock = threading.Lock()
+        self._promotion_running = False
 
         self._fn_count = 0
         self._fn_evaluated = 0
@@ -738,14 +743,7 @@ class CascadeBridge(LifecycleControls):
         now = time.monotonic()
         if now - self._last_promotion_time > self._promotion_interval:
             self._last_promotion_time = now
-            self._discover_and_promote()
-            self._mark_state_dirty()
-            self._flush_memory_events()
-            self._save_state()
-            if self._ledger_url and not self._verdict_poll_running:
-                threading.Thread(
-                    target=self._poll_gcl_verdicts, daemon=True,
-                ).start()
+            self._start_promotion_cycle()
 
         if self._ledger_url:
             self._enqueue_decisions_to_ledger(cascade_result, cascade_signals)
@@ -2525,6 +2523,34 @@ class CascadeBridge(LifecycleControls):
                 self._ledger_memory_failures += 1
                 self._ledger_memory_consecutive_failures += 1
             self._schedule_memory_ledger_retry()
+
+    def _start_promotion_cycle(self):
+        """Run the periodic promotion sweep off the request path."""
+        with self._promotion_lock:
+            if self._promotion_running or self._closed:
+                return
+            self._promotion_running = True
+        try:
+            threading.Thread(target=self._run_promotion_cycle, daemon=True).start()
+        except Exception:
+            with self._promotion_lock:
+                self._promotion_running = False
+
+    def _run_promotion_cycle(self):
+        try:
+            self._discover_and_promote()
+            self._mark_state_dirty()
+            self._flush_memory_events()
+            self._save_state(settle=True)
+            if self._ledger_url and not self._verdict_poll_running:
+                threading.Thread(
+                    target=self._poll_gcl_verdicts, daemon=True,
+                ).start()
+        except Exception as exc:
+            log.warning("Promotion cycle failed: %s", str(exc)[:120])
+        finally:
+            with self._promotion_lock:
+                self._promotion_running = False
 
     def _deactivate_agent(self, signal_type: str):
         pattern_type = self._activated_patterns.pop(signal_type, None)

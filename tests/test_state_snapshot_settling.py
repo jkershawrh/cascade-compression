@@ -18,6 +18,7 @@ Two changes are pinned here:
 import gzip
 import json
 import threading
+import time
 
 import pytest
 
@@ -162,3 +163,60 @@ class TestSnapshotSettling:
         )
         assert bridge._save_state() is True
         assert len(writes) == 1
+
+
+class TestPromotionOffTheRequestPath:
+    """The periodic sweep scans the archive; it must not run inside a request.
+
+    Production incident (cascade-aap, 2026-11-17): the sweep ran on whichever
+    request crossed the 300 s boundary. With 49k memories a single-signal POST
+    took 18-52 s, so the collector's 30 s client timeout never succeeded even
+    though the ledger spool was empty.
+    """
+
+    def test_promotion_sweep_does_not_block_process(self, bridge, monkeypatch):
+        from tests.helpers import make_signal
+
+        started = threading.Event()
+        release = threading.Event()
+        observed = {}
+
+        def slow_sweep():
+            observed["thread"] = threading.current_thread().name
+            started.set()
+            release.wait(5)
+
+        bridge._promotion_interval = 0
+        bridge._last_promotion_time = 0
+        monkeypatch.setattr(bridge, "_discover_and_promote", slow_sweep)
+
+        began = time.monotonic()
+        result = bridge.process([make_signal()])
+        elapsed = time.monotonic() - began
+
+        assert result.get("accepted") is True
+        assert started.wait(5), "promotion never started"
+        assert elapsed < 5, f"request waited {elapsed:.1f}s for the sweep"
+        assert observed["thread"] != threading.current_thread().name
+        release.set()
+
+    def test_one_sweep_runs_at_a_time(self, bridge, monkeypatch):
+        started = threading.Event()
+        release = threading.Event()
+        calls = []
+
+        def slow_sweep():
+            calls.append(1)
+            started.set()
+            release.wait(5)
+
+        bridge._promotion_interval = 0
+        bridge._last_promotion_time = 0
+        monkeypatch.setattr(bridge, "_discover_and_promote", slow_sweep)
+
+        bridge._start_promotion_cycle()
+        assert started.wait(5)
+        bridge._start_promotion_cycle()  # must not stack a second sweep
+        release.set()
+        time.sleep(0.1)
+        assert len(calls) == 1
