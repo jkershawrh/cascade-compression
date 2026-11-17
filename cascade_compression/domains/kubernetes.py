@@ -1,5 +1,6 @@
 """Kubernetes domain pack."""
 
+from ..cascade.repeat_integrity import RepeatIdentity
 from cascade_compression.collectors.kubernetes import KubernetesCollector
 
 DOMAIN = "kubernetes"
@@ -59,6 +60,18 @@ def _k8s_entity_extractor(sig):
         return f"ns:{sig.namespace}:{sig.cluster}"
     return None
 
+
+# Repeat identity policy. These were engine defaults before 2026-11-17, when
+# the repeat machinery hardcoded Kubernetes shape (kind/uid/event_uid/reason)
+# in code documented as domain-agnostic. Exact repeats stay Pod-only, the
+# update profile admits any involved object with complete identity, and a
+# count must be present for monotonic growth to be folded in.
+REPEAT_IDENTITY = RepeatIdentity(
+    identity_fields=("uid", "event_uid", "reason"),
+    require_kind=True,
+    exact_kind="Pod",
+    require_count=True,
+)
 
 MEMORY_CONFIG = {
     "entity_extractor": _k8s_entity_extractor,

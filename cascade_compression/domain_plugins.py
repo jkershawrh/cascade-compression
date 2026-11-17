@@ -48,6 +48,11 @@ def _validate(entry_point: EntryPoint) -> DomainPlugin:
         raise DomainPluginError(
             f"domain {entry_point.name!r} SYSTEM_PROMPT must be a string"
         )
+    policy = getattr(module, "REPEAT_IDENTITY", None)
+    if policy is not None:
+        # The engine owns the mechanism; the pack owns the identity policy.
+        from .cascade.repeat_integrity import register_repeat_identity
+        register_repeat_identity(entry_point.name, policy)
     return DomainPlugin(
         name=entry_point.name,
         module=module,

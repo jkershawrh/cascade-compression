@@ -12,6 +12,8 @@ the signals that need attention — but only when they're unexpected
 (a destroy playbook expects some failures during cleanup).
 """
 
+from ..cascade.repeat_integrity import RepeatIdentity
+
 DOMAIN = "aap"
 
 SYSTEM_PROMPT = """You are classifying automation task signals from an Ansible Automation Platform. Signal sources include playbook task results (ok, changed, skipped, failed), verbose task output, job lifecycle events, and configuration changes.
@@ -51,6 +53,18 @@ FEW_SHOT_EXEMPLARS = {
         "Credential exposed in task output: private key visible in verbose logging (security event)",
     ],
 }
+
+# Repeat identity for automation task output. A playbook run emits hundreds of
+# task results; the same task on the same host in the same job produces an
+# identical observation each time, and 95% of this domain's memories are info
+# severity. What varies between two observations of the same step is only the
+# observation identity (event_id) and its timestamps, so those are excluded from
+# the key material while remaining in the stored evidence.
+REPEAT_IDENTITY = RepeatIdentity(
+    identity_fields=("event", "play"),
+    ignore_fields=("event_id", "observed_at", "original_event_time"),
+    severities=("info", "low", "medium"),
+)
 
 MEMORY_CONFIG = {
     "decay": {

@@ -10,12 +10,23 @@ based suppression with count-update folding eliminates ~96% of signal
 volume. Only anomalies, faults, and deviations reach the classifier.
 """
 
+from ..cascade.repeat_integrity import RepeatIdentity
+
 DOMAIN = "robotic"
 SYSTEM_PROMPT = """You are classifying industrial robotic cell signals from a manufacturing workcell. Signal sources include robot controllers, PLCs, vision systems, safety systems, and environmental sensors.
 
 Context: A robotic workcell in a production line performing repetitive operations (welding, assembly, pick-and-place, inspection). Normal operation produces highly repetitive signals. Anomalies indicate equipment degradation, quality issues, or process drift.
 
 Classify as exactly one of: routine_noise, known_pattern, needs_attention, real_incident. Answer with one word only."""
+
+# Repeat identity: robot/PLC/vision telemetry repeats by device, event identity
+# and a monotonic count. Declared here rather than assumed by the engine.
+REPEAT_IDENTITY = RepeatIdentity(
+    identity_fields=("uid", "event_uid", "reason"),
+    require_kind=True,
+    require_count=True,
+    severities=("medium",),
+)
 
 MEMORY_CONFIG = {
     "decay": {

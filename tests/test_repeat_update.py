@@ -141,10 +141,47 @@ class TestDomainAgnosticAdmission:
     and count requirements are met. The domain and signal_type participate
     in the key material so cross-domain observations never merge."""
 
-    def test_aap_domain_admitted(self):
+    def test_domain_without_declared_identity_uses_the_default(self):
+        """A pack that declares no REPEAT_IDENTITY keeps shape-based admission.
+
+        Admission must not be gated on a pack being installed, so domains that
+        never declared an identity policy still use the compatibility default.
+        """
         s = signal(5)
-        s.labels = {"domain": "aap"}
+        s.labels = {"domain": "telecom"}
         assert verified_repeat_update_key(s) is not None
+
+    def test_aap_declares_its_own_identity(self):
+        """AAP's pack admits task-shaped repeats, not involved-object shape.
+
+        Before the policy seam the engine hardcoded kind/uid/event_uid/reason,
+        so automation task output could never take the repeat path. The pack now
+        declares its own identity, and volatile observation fields are excluded
+        from the key while staying in the evidence.
+        """
+        import hashlib
+
+        def aap_signal(event_id=1, observed="2026-11-17T00:00:01Z", play="Deploy"):
+            message = "task ok: Deploy"
+            return Signal(
+                signal_id=uuid4(), signal_type="task_runner_on_ok", severity="info",
+                source="aap", namespace="automation", cluster="aap",
+                labels={"domain": "aap", "source": "task"},
+                content={"event": "runner_on_ok", "play": play, "host": "localhost",
+                         "job_id": 7, "event_id": event_id, "observed_at": observed,
+                         "original_event_time": observed, "message": message,
+                         "message_sha256": hashlib.sha256(message.encode()).hexdigest()})
+
+        first = verified_repeat_update_key(aap_signal(event_id=1))
+        second = verified_repeat_update_key(aap_signal(event_id=2,
+                                                       observed="2026-11-17T00:10:00Z"))
+        assert first is not None
+        assert first == second, "observation identity must not change the key"
+        assert verified_repeat_update_key(aap_signal(play="Cleanup")) != first
+
+        sample = aap_signal()
+        verified_repeat_update_key(sample)
+        assert sample.content["event_id"] == 1, "evidence keeps the observation id"
 
     def test_kubernetes_domain_admitted(self):
         s = signal(5)
