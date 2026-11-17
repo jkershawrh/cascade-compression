@@ -1360,15 +1360,22 @@ class CascadeBridge(LifecycleControls):
             buffer_max_bytes=self._llm_priority_max_bytes,
         )
 
-    def _discover_and_promote(self):
+    def _discover_and_promote(self, *, new_agents=None):
+        # The corpus scan is the expensive half of a sweep. Run it before
+        # taking the lifecycle lock, otherwise a sweep stalls every request
+        # for its whole duration (measured as 20 s of /stats latency and
+        # 58 s for a one-signal /cascade POST on cascade-aap, 2026-11-17).
+        if new_agents is None:
+            new_agents = self.corpus_analyzer.maybe_analyze()
         with self._lifecycle_lock:
-            return self._discover_and_promote_locked()
+            return self._discover_and_promote_locked(new_agents=new_agents)
 
-    def _discover_and_promote_locked(self):
+    def _discover_and_promote_locked(self, *, new_agents=None):
         self._check_activation_ttl()
         if self._state_file and not self._state_healthy:
             return
-        new_agents = self.corpus_analyzer.maybe_analyze()
+        if new_agents is None:
+            new_agents = self.corpus_analyzer.maybe_analyze()
         for agent_metrics, rule in new_agents:
             sig_type = agent_metrics.config.get("signal_type", "")
             pattern_type = agent_metrics.config.get("pattern_type", "")
