@@ -39,24 +39,34 @@ challenge and a separate prevalence sample serve different purposes.
 
 ---
 
-### AAP volume is structurally un-dedupable (2026-11-17)
+### AAP volume: resolved via a pack-declared repeat identity (2026-11-17)
 
-Enabling domain deduplication for AAP (`CASCADE_DEDUP_WINDOW_AAP` 0 → 3600 s)
-changed nothing measurable: `cascade_handled` stayed 0, compression stayed 0.0,
-and memory formation continued at ~4,000/minute (158,312 → 174,340 formed,
-149,000 → 165,000 evictions). The digest is 100% task chatter:
-`task_verbose` 3,642, `task_runner_on_ok` 2,283,
-`task_runner_item_on_skipped` 1,592.
+Enabling domain deduplication alone did nothing: `cascade_handled` stayed 0.
+Two causes, both architectural rather than configurability:
 
-Cause: the repeat identity key includes the whole content object, and AAP task
-content carries `event_id`, `observed_at` and `original_event_time`. No two
-observations of the same task are ever equal, so the window has nothing to
-match. The setting was reverted rather than left in place implying a
-suppression that cannot happen.
+1. The engine's repeat admission hardcoded Kubernetes shape — `content.kind`,
+   `uid`/`event_uid`/`reason`, an int `count`, and medium severity only. AAP task
+   output carries `event`/`play`/`host`/`job_id` at info severity, so it could
+   never be admitted.
+2. The AAP dedup window was 0, so a repeat expired immediately even when it was
+   admitted.
 
-The fix is a per-domain identity projection: exclude volatile observation
-fields from the repeat key while keeping them in the stored evidence. That is
-domain-pack work, not a configuration change.
+The fix keeps the engine domain-agnostic: the *mechanism* (severity and
+protected gates, message digest binding, key serialization, windows) stays in
+the engine and packs declare a `RepeatIdentity` policy — identity fields,
+optional kind discriminator, count requirement, volatile fields to exclude from
+the key, and the severities the profile is qualified for. Kubernetes and robotic
+declare exactly the rules the engine previously assumed; AAP declares
+`event`/`play` identity and ignores `event_id`/`observed_at`/
+`original_event_time` in the key while keeping them in the stored evidence. A
+domain with no declared policy falls back to the compatibility default, so
+admission stays domain-agnostic.
+
+Measured on the AAP instance with the policy declared and
+`CASCADE_DEDUP_WINDOW_AAP=3600`: compression went from **0.0% to 20.5%**
+(5,499 of 26,809 signals folded), where the same window alone had produced
+nothing. Volatile observation fields remain in evidence, so the fold is
+auditable.
 
 ## Track 3: Memory and consumer activation
 
