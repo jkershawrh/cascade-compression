@@ -195,6 +195,7 @@ class CascadeBridge(LifecycleControls):
         self._ledger_url = ledger_url or os.getenv("CASCADE_LEDGER_URL", "")
         self._ledger_token = ledger_token or os.getenv("CASCADE_LEDGER_TOKEN", "")
         self._state_file = os.getenv("CASCADE_STATE_FILE", "")
+        self._sweep_stale_snapshot_temps()
         self._ledger_max_pending = max(
             1, int(os.getenv("CASCADE_LEDGER_MAX_PENDING", "8"))
         )
@@ -2613,6 +2614,43 @@ class CascadeBridge(LifecycleControls):
             return poll(self)
         finally:
             self._verdict_poll_lock.release()
+
+    def _sweep_stale_snapshot_temps(self,
+                                   max_age_seconds: float = 3600.0) -> int:
+        """Remove temp snapshots left behind by a killed process.
+
+        ``atomic_snapshot`` unlinks its temporary file in a ``finally`` block,
+        which never runs when the kernel kills the process (exit 137, a liveness
+        failure after a slow write). Each kill leaked one full-size snapshot. One
+        instance accumulated 30 of them at 766 MB on a 2 Gi volume, which then
+        slowed every write to the point that requests could not finish.
+
+        Only files older than ``max_age_seconds`` are removed so a concurrent
+        writer's in-progress snapshot is never touched.
+        """
+        if not self._state_file:
+            return 0
+        directory = os.path.dirname(os.path.abspath(self._state_file))
+        cutoff = time.time() - max_age_seconds
+        removed = 0
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            return 0
+        for name in names:
+            if not name.startswith(".cascade-state-"):
+                continue
+            path = os.path.join(directory, name)
+            try:
+                if os.path.getmtime(path) < cutoff:
+                    os.unlink(path)
+                    removed += 1
+            except OSError:
+                continue
+        if removed:
+            log.warning("Removed %d stale snapshot temp file(s) from %s",
+                        removed, directory)
+        return removed
 
     def _mark_state_dirty(self):
         """Record that in-memory state advanced and must reach the snapshot."""

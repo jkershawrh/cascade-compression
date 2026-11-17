@@ -220,3 +220,40 @@ class TestPromotionOffTheRequestPath:
         release.set()
         time.sleep(0.1)
         assert len(calls) == 1
+
+
+class TestStaleSnapshotTemps:
+    """A killed snapshot write leaves its temp file behind.
+
+    ``atomic_snapshot`` unlinks in a ``finally``, which does not run on SIGKILL
+    (exit 137 after a slow write). One instance leaked 30 temp snapshots at
+    766 MB on a 2 Gi volume, which then slowed every write until requests could
+    not finish.
+    """
+
+    def test_old_temps_are_swept_and_fresh_ones_kept(self, tmp_path, monkeypatch):
+        import os
+        import time
+
+        state = tmp_path / "cascade_state.json"
+        state.write_bytes(b"{}")
+        stale = tmp_path / ".cascade-state-stale"
+        fresh = tmp_path / ".cascade-state-live"
+        unrelated = tmp_path / "notes.txt"
+        for path in (stale, fresh, unrelated):
+            path.write_bytes(b"x")
+        old = time.time() - 7200
+        os.utime(stale, (old, old))
+        os.utime(unrelated, (old, old))
+
+        monkeypatch.setenv("CASCADE_STATE_FILE", str(state))
+        bridge = CascadeBridge(domain="test")
+
+        assert not stale.exists(), "stale temp snapshot must be removed"
+        assert fresh.exists(), "an in-progress snapshot must not be touched"
+        assert unrelated.exists(), "only snapshot temps are swept"
+
+    def test_no_state_file_is_a_noop(self, monkeypatch):
+        monkeypatch.delenv("CASCADE_STATE_FILE", raising=False)
+        bridge = CascadeBridge(domain="test")
+        assert bridge._sweep_stale_snapshot_temps() == 0
