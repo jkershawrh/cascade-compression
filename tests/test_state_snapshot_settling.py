@@ -327,3 +327,44 @@ class TestVerdictBootstrapWindow:
         monkeypatch.setenv("CASCADE_VERDICT_BOOTSTRAP_HOURS", "not-a-number")
         with pytest.raises(ValueError):
             _cursor(Bridge())
+
+
+class TestGovernanceTrail:
+    """Earned authority must be auditable after the process that earned it is gone.
+
+    Activation, promotion and shadow withdrawal lived only in an in-memory list,
+    so a restart erased the evidence that authority had ever been earned or
+    withdrawn — the trail a reviewer would ask for.
+    """
+
+    def test_events_are_appended_to_a_durable_trail(self, tmp_path, monkeypatch):
+        state = tmp_path / "state.json"
+        monkeypatch.setenv("CASCADE_STATE_FILE", str(state))
+        bridge = CascadeBridge(domain="test")
+
+        bridge._record_governance({"event": "activated", "agent": "pod_running"})
+        bridge._record_governance({"event": "shadow_demotion", "agent": "shadow"})
+
+        trail = tmp_path / "state.json.governance.jsonl"
+        lines = trail.read_text().splitlines()
+        assert [json.loads(line)["event"] for line in lines] == [
+            "activated", "shadow_demotion"]
+
+        # A fresh process sees the same file; the record is not tied to memory.
+        reopened = CascadeBridge(domain="test")
+        reopened._record_governance({"event": "demoted", "agent": "pod_running"})
+        assert len(trail.read_text().splitlines()) == 3
+
+    def test_trail_rotates_instead_of_growing_without_bound(self, tmp_path, monkeypatch):
+        state = tmp_path / "state.json"
+        monkeypatch.setenv("CASCADE_STATE_FILE", str(state))
+        monkeypatch.setenv("CASCADE_GOVERNANCE_LOG_BYTES", "4096")
+        bridge = CascadeBridge(domain="test")
+
+        for i in range(200):
+            bridge._record_governance({"event": "activated", "agent": "a", "n": i})
+
+        trail = tmp_path / "state.json.governance.jsonl"
+        assert trail.exists()
+        assert (tmp_path / "state.json.governance.jsonl.1").exists()
+        assert trail.stat().st_size <= 4096 + 512

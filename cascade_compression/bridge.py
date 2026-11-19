@@ -200,6 +200,15 @@ class CascadeBridge(LifecycleControls):
         self._ledger_token = ledger_token or os.getenv("CASCADE_LEDGER_TOKEN", "")
         self._state_file = os.getenv("CASCADE_STATE_FILE", "")
         self._sweep_stale_snapshot_temps()
+        # Governance events (discovery, promotion, activation, demotion) are the
+        # audit trail for earned authority. They lived only in memory, so a
+        # restart erased the evidence that authority had ever been earned or
+        # withdrawn.
+        self._governance_log_path = (
+            self._state_file + ".governance.jsonl" if self._state_file else "")
+        self._governance_log_lock = threading.Lock()
+        self._governance_log_max_bytes = max(
+            4096, int(os.getenv("CASCADE_GOVERNANCE_LOG_BYTES", str(10 * 1024 * 1024))))
         self._ledger_max_pending = max(
             1, int(os.getenv("CASCADE_LEDGER_MAX_PENDING", "8"))
         )
@@ -1389,7 +1398,7 @@ class CascadeBridge(LifecycleControls):
 
             self._agent_metrics[agent_metrics.name] = agent_metrics
             self._agent_rules[agent_metrics.name] = rule
-            self._promotion_log.append({
+            self._record_governance({
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "event": "discovered",
                 "agent": agent_metrics.name,
@@ -1443,7 +1452,7 @@ class CascadeBridge(LifecycleControls):
                 if agent_metrics.tier == current_tier:
                     break
             if agent_metrics.tier != previous_tier:
-                self._promotion_log.append({
+                self._record_governance({
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "event": "promoted",
                     "agent": name,
@@ -1472,7 +1481,7 @@ class CascadeBridge(LifecycleControls):
             self._activated_types.add(sig_type)
             self._activated_patterns[sig_type] = pattern_type
             self._activation_timestamps[sig_type] = datetime.now(timezone.utc).isoformat()
-            self._promotion_log.append({
+            self._record_governance({
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "event": "activated",
                 "agent": name,
@@ -1622,7 +1631,7 @@ class CascadeBridge(LifecycleControls):
             self._context_activation_timestamps[identity] = datetime.now(
                 timezone.utc
             ).isoformat()
-            self._promotion_log.append({
+            self._record_governance({
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "event": "contextual_activated",
                 "agent": f"ctx_{sig_type}_{ctx_value}",
@@ -2128,6 +2137,16 @@ class CascadeBridge(LifecycleControls):
                         if not _is_noise_classification(ans):
                             self._shadow_demotions += 1
                             ns = sig.get("namespace", "")
+                            self._record_governance({
+                                "timestamp": datetime.now(timezone.utc).isoformat(),
+                                "event": "shadow_demotion",
+                                "agent": "shadow",
+                                "signal_type": sig.get("signal_type", ""),
+                                "namespace": ns,
+                                "reason": f"shadow disagreed ({str(ans)[:40]})",
+                                "shadow_checks": self._shadow_checks,
+                                "shadow_demotions": self._shadow_demotions,
+                            })
                             ctx_key = self._contextual_suppressors[0]._context_key
 
                             if (sig["signal_type"] in self._activated_contexts
@@ -2354,7 +2373,7 @@ class CascadeBridge(LifecycleControls):
         if not events:
             return
         for event in events:
-            self._promotion_log.append({
+            self._record_governance({
                 "timestamp": event.timestamp,
                 "event": event.event_type,
                 "agent": event.agent_name,
@@ -2655,6 +2674,22 @@ class CascadeBridge(LifecycleControls):
             log.warning("Removed %d stale snapshot temp file(s) from %s",
                         removed, directory)
         return removed
+
+    def _record_governance(self, entry: dict) -> None:
+        """Append a governance event to the in-memory log and the durable trail."""
+        self._promotion_log.append(entry)
+        if not self._governance_log_path:
+            return
+        try:
+            with self._governance_log_lock:
+                with open(self._governance_log_path, "a", encoding="utf-8") as stream:
+                    stream.write(json.dumps(entry, sort_keys=True,
+                                            separators=(",", ":")) + "\n")
+                if os.path.getsize(self._governance_log_path) > self._governance_log_max_bytes:
+                    os.replace(self._governance_log_path,
+                               self._governance_log_path + ".1")
+        except OSError:
+            return
 
     def _mark_state_dirty(self):
         """Record that in-memory state advanced and must reach the snapshot."""
@@ -2989,7 +3024,7 @@ class CascadeBridge(LifecycleControls):
             total = noise_count + important
             if total < _PROMOTION_MIN_SAMPLES:
                 continue
-            self._promotion_log.append({
+            self._record_governance({
                 "timestamp": datetime.now(timezone.utc).isoformat(),
                 "event": "historical_evidence_restored",
                 "agent": f"restored_{sig_type}",
