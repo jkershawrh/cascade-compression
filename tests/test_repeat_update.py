@@ -226,3 +226,30 @@ class TestDomainAgnosticAdmission:
         s = signal(5)
         s.labels = {"domain": "kubernetes", "label": "compliance"}
         assert verified_repeat_update_key(s) is None
+
+
+class TestRetainedBound:
+    """A high-cardinality domain must not grow the retained map without bound.
+
+    Enabling the AAP identity policy made the profile retain one full signal per
+    distinct observation for an hour. At ~4k observations/minute that reached
+    ~240k signals and OOM-killed the instance three times in four hours.
+    """
+
+    def test_coldest_keys_are_evicted(self, monkeypatch):
+        import time as _time
+
+        monkeypatch.setenv("CASCADE_REPEAT_RETAINED_MAX", "2")
+        agent = DeduplicateAgent(window_seconds=3600, update_on_growth=True)
+
+        for i in range(5):
+            s = signal(1, event_uid=f"10000000-0000-4000-8000-00000000000{i}")
+            s.labels = {"domain": "kubernetes"}
+            agent.process([s])
+            agent._seen  # touch for clarity
+            _time.sleep(0)
+
+        assert len(agent._retained) <= 2
+        # Folding still works for a key that is still retained.
+        keeper = next(iter(agent._retained))
+        assert keeper

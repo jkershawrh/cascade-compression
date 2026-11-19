@@ -11,6 +11,7 @@ import json
 import re
 import time
 import math
+import os
 from copy import deepcopy
 from collections import defaultdict
 from typing import Dict, List, Set
@@ -45,11 +46,18 @@ class DeduplicateAgent:
         self._update_on_growth = update_on_growth
         self._seen: Dict[str, float] = {}
         self._retained: Dict[str, Signal] = {}
+        # Verified-repeat profiles keep one retained observation per key for the
+        # whole window. A high-cardinality domain (automation task output) can
+        # produce hundreds of thousands of distinct keys in an hour, each holding
+        # a full signal, which is unbounded growth in practice. Cap the map and
+        # evict the coldest keys; a repeat of an evicted key simply delivers
+        # again, which is the fail-open direction.
+        self._retained_max = max(1, int(os.getenv(
+            "CASCADE_REPEAT_RETAINED_MAX", "10000")))
         # Per-domain dedup windows: signals from sources that re-observe the
         # same event (K8s polled snapshots) need long windows; signals from
         # streaming sources (AAP database rows) don't repeat and gain nothing.
         # Configured via CASCADE_DEDUP_WINDOW_<DOMAIN> env vars.
-        import os
         self._domain_windows: Dict[str, float] = {}
         for env_key in os.environ:
             if (env_key.startswith("CASCADE_DEDUP_WINDOW_")
@@ -175,6 +183,13 @@ class DeduplicateAgent:
             for key, retained in list(self._retained.items()):
                 if id(retained) in batch_objects:
                     self._retained[key] = deepcopy(retained)
+            if len(self._retained) > self._retained_max:
+                # Keep the hottest keys; the window's cold tail is evicted. A
+                # repeat of an evicted key delivers again (fail open).
+                hottest = sorted(self._seen.items(), key=lambda item: item[1],
+                                 reverse=True)[:self._retained_max]
+                keep = {key for key, _ in hottest}
+                self._retained = {k: s for k, s in self._retained.items() if k in keep}
         return decisions
 
     def _is_compliance(self, s: Signal) -> bool:
