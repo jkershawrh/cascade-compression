@@ -21,6 +21,14 @@ the candidate-bound staging handoff. [Release policy](../RELEASING.md)
 
 **1.5 is the one that matters most** — one chronic issue from the memory, remediated, with the effect visible on the dashboard. That's the lighthouse-user story. The first loop (2026-11-17) bounded a volume that was nine days from exhaustion and measured the before/after, but it was found by review: the engine has no capacity rule and the digest does not report growth trends. Closing the detection half is what turns this into the story.
 
+### Governed-authority window (in progress)
+
+Authority is deliberately re-earned after a restart, so the only durable record
+of an activation or a withdrawal is the governance trail. A window is now open
+against a pinned image digest with the capture tooling and invalidation rules
+defined in [governance evidence](governance-evidence.md). The trail is the
+artifact a claim about earned or withdrawn authority should quote.
+
 ---
 
 ## Track 2: Classification refinement
