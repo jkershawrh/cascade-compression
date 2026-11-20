@@ -1437,6 +1437,10 @@ class CascadeBridge(LifecycleControls):
             agent_metrics.accuracy = noise / total
             agent_metrics.false_positive_rate = unsafe_rate
             agent_metrics.false_negative_rate = unsafe_rate
+            # The rate divides by samples_tested, so the count has to be the
+            # same population. Leaving it at its default wrote 0 next to a
+            # 0.0175 rate in the live trail on 2026-11-19.
+            agent_metrics.false_negative_count = important
             agent_metrics.coverage = 1.0
             agent_metrics.rubric_status = (
                 "green"
@@ -1446,18 +1450,32 @@ class CascadeBridge(LifecycleControls):
             )
 
             previous_tier = agent_metrics.tier
+            transitions = 0
             while agent_metrics.tier in {"draft", "candidate", "pending_approval"}:
                 current_tier = agent_metrics.tier
                 self.promotion.check_promotion(agent_metrics)
                 if agent_metrics.tier == current_tier:
                     break
+                transitions += 1
             if agent_metrics.tier != previous_tier:
+                # This is a per-agent summary of a climb. The per-transition
+                # record is the "promotion" event that _flush_promotion_events
+                # writes with the full evidence chain, so the two counts differ
+                # whenever one sweep crosses more than one tier.
                 self._record_governance({
                     "timestamp": datetime.now(timezone.utc).isoformat(),
                     "event": "promoted",
+                    "mirror_of": "promotion",
                     "agent": name,
+                    "from_tier": previous_tier,
                     "tier": agent_metrics.tier,
+                    "transitions": transitions,
                     "status": agent_metrics.rubric_status,
+                    # rubric_status is the nano activation gate (200 samples,
+                    # zero important). A candidate promoted on 57 samples is
+                    # honestly "red" against that gate, which is not a
+                    # contradiction but reads like one without this label.
+                    "status_scope": "nano_activation_gate",
                     "samples": total,
                     "important": important,
                 })
@@ -1615,6 +1633,7 @@ class CascadeBridge(LifecycleControls):
             metrics.accuracy = noise_count / total
             metrics.false_positive_rate = important_rate
             metrics.false_negative_rate = important_rate
+            metrics.false_negative_count = important
             metrics.coverage = 1.0
             metrics.rubric_status = "green"
             while metrics.tier in {"draft", "candidate"}:

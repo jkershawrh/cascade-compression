@@ -54,6 +54,11 @@ class PromotionEvent:
     human_approved: bool = False
     human_approved_by: Optional[str] = None
     human_approved_at: Optional[str] = None
+    # false_negative_count is cumulative, so it divides by samples_tested to
+    # reproduce false_negative_rate. The batch counter is a separate signal:
+    # it is what instant-demotion acts on, and it reads 0 whenever the latest
+    # batch was clean even though the lifetime rate is non-zero.
+    false_negative_count_last_batch: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -68,6 +73,7 @@ class PromotionEvent:
                 "false_positive_rate": round(self.false_positive_rate, 4),
                 "false_negative_rate": round(self.false_negative_rate, 4),
                 "false_negative_count": self.false_negative_count,
+                "false_negative_count_last_batch": self.false_negative_count_last_batch,
                 "human_approved": self.human_approved,
                 "human_approved_by": self.human_approved_by,
                 "human_approved_at": self.human_approved_at,
@@ -276,7 +282,8 @@ class PromotionEngine:
             accuracy=agent.accuracy,
             false_positive_rate=agent.false_positive_rate,
             false_negative_rate=agent.false_negative_rate,
-            false_negative_count=agent.last_batch_fn_count,
+            false_negative_count=agent.false_negative_count,
+            false_negative_count_last_batch=agent.last_batch_fn_count,
             reason=reason,
             batch_id=batch_id,
         )
@@ -395,7 +402,8 @@ class PromotionEngine:
             accuracy=agent.accuracy,
             false_positive_rate=agent.false_positive_rate,
             false_negative_rate=agent.false_negative_rate,
-            false_negative_count=agent.last_batch_fn_count,
+            false_negative_count=agent.false_negative_count,
+            false_negative_count_last_batch=agent.last_batch_fn_count,
             reason=reason,
             human_approved=agent.human_approved,
             human_approved_by=agent.human_approved_by,
