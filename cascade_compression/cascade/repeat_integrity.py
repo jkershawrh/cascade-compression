@@ -19,6 +19,9 @@ This split exists because the previous implementation hardcoded Kubernetes
 shape — ``kind``, ``uid``, ``event_uid``, ``reason`` — in code documented as
 domain-agnostic, so no other domain could ever take the repeat path.
 """
+
+from __future__ import annotations
+
 import hashlib
 import json
 from dataclasses import dataclass, field
