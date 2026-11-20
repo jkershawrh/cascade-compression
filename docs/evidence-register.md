@@ -68,6 +68,23 @@ instances can no longer be cited as evidence of continuous governed
 authority; an evidence run must start from a caught-up, unmodified
 deployment of an attested artifact.
 
+### Correction: artifact drift on three of four services (2026-11-20)
+
+The `v0.2.1rc2` attribution below and elsewhere in this register does not
+describe what the cluster runs today. Hashing all 119
+`cascade_compression/*.py` files inside the running `cascade-k8s`,
+`cascade-aap`, and `cascade-memory` containers shows them byte-identical to
+commit `36c2566` (also matching `70e2789`) — 14 files newer than `f8bba91` —
+while only `cascade-knowledge` (`sha256:85704c97…`) still hash-verifies to
+`f8bba91`. The `0.2.1rc1` image tag was rebuilt twice on 2026-11-19 (04:52Z
+and 05:13:14Z builds) from a local directory with no git source, and three
+services were re-pinned to it, so the digest `85704c97…` no longer identifies
+what those pods execute. The current pods started at 2026-11-19T05:23:30Z
+(k8s) and 2026-11-20T09:40:43Z (aap), so the ~2.5 days of unattended soak
+belong to the previous deployment. Observations recorded against the running
+pods after 2026-11-19 are not attributable to `v0.2.1rc2`, `f8bba91`, or the
+attested image digest. Re-pinning to `85704c97…` restores attribution but
+restarts the pods and the observation window.
 
 ## What the historical evidence supports
 

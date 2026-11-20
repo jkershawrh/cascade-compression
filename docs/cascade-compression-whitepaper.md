@@ -89,13 +89,19 @@ The opt-in proof runner verifies a supplied OSS wheel's digest and package versi
 
 Focused verification passed 22 tests and exercised a two-case synthetic static arm against a locally built OSS 0.2.0rc5 wheel. The arm made no model calls and had no execution failures. This verifies the bounded integration path and artifact identity. It does not measure classification quality, operational prevalence, production safety, or customer savings.
 
-The `v0.2.1rc2` tag (2026-11-15) closes the deployment half of this gap:
-its engine code is what all four a production cluster's instances run
-(digest-pinned, soaked ~2.5 days unattended, thirteen production-found
-defects fixed and regression-tested along the way). Historical proof
-results against earlier candidates still cannot automatically qualify
-this tag; the observation window and adjudication requirements for
-staging qualification are unchanged.
+The `v0.2.1rc2` tag (2026-11-15) was intended to close the deployment half
+of this gap: from 2026-11-13 its engine code ran digest-pinned on all four
+instances of a production cluster, with thirteen production-found defects
+fixed and regression-tested along the way. **Correction (2026-11-20): the
+artifacts drifted.** Three of the four instances were re-pinned on 2026-11-19
+to an image rebuilt from a local directory rather than from the tag; their
+engine code hashes to an untagged commit 14 files newer than the candidate,
+and only one instance still matches the tagged digest. The ~2.5-day soak
+therefore belongs to the earlier deployment, and observations from the
+current instances cannot be attributed to this tag. Historical proof results
+against earlier candidates still cannot automatically qualify this tag; the
+observation window and adjudication requirements for staging qualification
+are unchanged.
 
 ### Historical results
 
