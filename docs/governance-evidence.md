@@ -52,6 +52,30 @@ capacity evicts as fast as it forms, so a large `formed_total` with almost equal
 `evictions_total` means the archive is a conveyor, not an accumulating memory.
 Any claim about durable memory has to account for that ratio.
 
+The archive is also the destination of every classification result, so a
+conveyor costs more than durable memory. A result is retained, then applied to
+the memory it is linked to; if that memory was evicted in between, the result is
+resolved as dropped work and the verdict is never applied — no suppression
+authority, no label, nothing counted as success. `llm_dropped_target_evicted`
+counts exactly those discards and is **per process**, so read it as a live loss
+rate next to `llm_classified` (observations) and
+`llm_signal_outcomes_since_start.classified` (applied successes).
+
+A conveyor outrunning the classifier looks like a healthy but idle lane from the
+outcome block alone: on 2026-11-20 `cascade-aap` held 9,929 of a 10,000 cap,
+evicted 10,334,000 of 10,343,929 formations, discarded 775 results in 40
+minutes, and reported `classified` unchanged across a 180 s sample while
+`llm_classified` rose 635 → 736. Size the archive against
+`admission rate × classifier latency` before calling a ratio a Cascade-tier
+result.
+
+`llm_signal_outcomes_since_start` is restored verbatim from the state snapshot
+at boot, despite its name and its `started_at`, which is per-process. Its
+`enqueued` and `in_flight` therefore span restarts and cannot be compared with
+per-process `signals_processed` or `cascade_forwarded`; `reconciled` and
+`terminal_complete` are the fields that tell you whether the restored ledger
+closes.
+
 ## Reading the promotion trail
 
 One climb writes two records, and their counts are not meant to match:

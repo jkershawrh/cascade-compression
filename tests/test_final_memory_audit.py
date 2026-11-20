@@ -562,6 +562,37 @@ def test_runtime_evicted_target_resolves_without_fencing(files):
         b.close()
 
 
+def test_runtime_evicted_target_counts_the_loss_separately_from_buffer_drops(files):
+    """A discarded result is visible as a loss rate, not as an idle lane.
+
+    Production incident (2026-11-20): cascade-aap ran at archive capacity and
+    discarded 775 classification results in 40 minutes, while
+    llm_signal_outcomes_since_start.classified stayed flat. Only the warning
+    log distinguished "the inference lane never applies anything" from "the
+    lane is idle", and llm_dropped counted byte-cap queue drops instead. The
+    eviction discard is now counted on its own, per process.
+    """
+    b = CascadeBridge(llm_url="http://fixture.invalid")
+    try:
+        entry, links = admitted(b)
+        b.memory_archive._max_capacity = 1
+        b.memory_archive.store(Signal(signal_type="pressure"))
+        b.classifier.classify = Mock(return_value=ClassificationResult(
+            label="real_incident", backend="fixture"))
+        b._dispatch_llm_batches()
+        assert b.wait_for_llm(2)
+        stats = b.get_stats()
+        members = len(entry.get("_signal_ids") or [entry["signal_id"]])
+        assert stats["llm_dropped_target_evicted"] == members
+        # Nothing was applied and nothing was manufactured as success.
+        assert stats["llm_signal_outcomes_since_start"]["classified"] == 0
+        # This counter is per-process: it is not part of the restored ledger.
+        state = json.loads(files.read_text())
+        assert "llm_dropped_target_evicted" not in state["classifier_work"]["accounting"]
+    finally:
+        b.close()
+
+
 def test_retained_work_from_a_different_identity_is_discarded_not_fatal(files, monkeypatch):
     """Retained results bound to another build are discarded, not fatal.
 

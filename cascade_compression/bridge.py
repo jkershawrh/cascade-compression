@@ -453,6 +453,9 @@ class CascadeBridge(LifecycleControls):
 
         self._llm_dropped = 0
         self._llm_dropped_by_severity: Dict[str, int] = defaultdict(int)
+        # Results whose linked memory was capacity-evicted before application.
+        # Per-process: this is a live loss rate, not a restored ledger.
+        self._llm_dropped_target_evicted = 0
         self._route_counts: Dict[str, int] = defaultdict(int)
         self._llm_calls_by_tier: Dict[str, int] = defaultdict(int)
         self._llm_seconds_by_tier: Dict[str, float] = defaultdict(float)
@@ -3100,6 +3103,7 @@ class CascadeBridge(LifecycleControls):
         stats["gcl_builtin_fails"] = self._gcl_builtin_fails
         stats["llm_dropped"] = self._llm_dropped
         stats["llm_dropped_by_severity"] = dict(self._llm_dropped_by_severity)
+        stats["llm_dropped_target_evicted"] = self._llm_dropped_target_evicted
         stats["llm_buffer_bytes"] = self._llm_buffer_bytes
         stats["llm_buffer_max_bytes"] = self._llm_max_buffer_bytes
         stats["llm_priority_buffer_bytes"] = self._llm_priority_buffer_bytes

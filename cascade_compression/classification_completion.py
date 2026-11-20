@@ -221,6 +221,7 @@ def apply(bridge, work_id):
                 with bridge._llm_queue_lock:
                     bridge._classifier_inflight.pop(work_id, None)
                     bridge._llm_accounting_dropped += unapplied
+                    bridge._llm_dropped_target_evicted += unapplied
                 if bridge._durable_queue is not None:
                     bridge._mark_durable_locked(
                         {"_work_id": work_id}, delete=True)
