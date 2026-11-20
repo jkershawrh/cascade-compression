@@ -52,6 +52,35 @@ capacity evicts as fast as it forms, so a large `formed_total` with almost equal
 `evictions_total` means the archive is a conveyor, not an accumulating memory.
 Any claim about durable memory has to account for that ratio.
 
+## Reading the promotion trail
+
+One climb writes two records, and their counts are not meant to match:
+
+- `promoted` is a **per-agent summary** of a sweep: `from_tier`, the tier
+  reached, and `transitions` (how many tiers were crossed in that sweep). Its
+  `mirror_of: promotion` says the authoritative per-transition record follows.
+- `promotion` (or `demotion`) is the **per-transition evidence chain** that goes
+  to the ledger. There is one per tier boundary, so a single sweep that crosses
+  two tiers writes one `promoted` summary and two `promotion` records.
+
+`status` on a `promoted` summary is the **nano activation gate** — 200 samples
+with zero important. A candidate promoted on 57 samples is correctly `red`
+against that gate while still meeting the candidate thresholds, so read
+`status_scope` before calling the pair contradictory.
+
+Inside `evidence`, the false-negative fields have different populations:
+
+- `false_negative_count` is cumulative and divides by `samples_tested` to
+  reproduce `false_negative_rate` and `1 - accuracy`.
+- `false_negative_count_last_batch` is the count that instant demotion acts on.
+  It reads 0 whenever the latest batch was clean, even while the lifetime rate
+  is non-zero.
+
+Records written before 2026-11-20 are not trustworthy on this point: the bridge
+never populated the count, so `false_negative_count: 0` appears next to a
+non-zero rate, and the batch counter was not recorded at all. Cite those by
+`false_negative_rate` and `samples_tested` only.
+
 ## Citing a window
 
 Quote the window identifier, the image digest, the pod start times, and the
