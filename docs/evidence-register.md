@@ -83,8 +83,21 @@ what those pods execute. The current pods started at 2026-11-19T05:23:30Z
 (k8s) and 2026-11-20T09:40:43Z (aap), so the ~2.5 days of unattended soak
 belong to the previous deployment. Observations recorded against the running
 pods after 2026-11-19 are not attributable to `v0.2.1rc2`, `f8bba91`, or the
-attested image digest. Re-pinning to `85704c97…` restores attribution but
-restarts the pods and the observation window.
+attested image digest. Re-pinning to `85704c97…` would restore attribution but
+restart the pods and the observation window.
+
+**Resolution (2026-11-20T21:20Z).** Re-pinning was rejected: `85704c97…`
+predates `2d5dfd4`, which made repeat identity a pack-declared policy instead
+of hardcoded Kubernetes object shape, so it would have taken AAP back toward
+zero compression along with 13 other reverted files. The three instances were
+rebuilt in-cluster from `https://github.com/jkershawrh/cascade-compression.git`
+at commit `b097f7e` (BuildConfig `cascade-oss-b097f7e`, digest
+`sha256:036319a6…`) and all 119 installed engine files hash-verify to that
+commit (`89e81173…`). The attribution is therefore to a **commit**, not to a
+release: nothing signs this digest, and the package version string still reads
+`0.2.1rc2` although the commit is 29 commits past the tagged `f8bba91`.
+`cascade-knowledge` remains on `85704c97…` and is outside the current window,
+which is `20261120T212740Z`.
 
 ## What the historical evidence supports
 

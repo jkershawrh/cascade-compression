@@ -98,7 +98,13 @@ to an image rebuilt from a local directory rather than from the tag; their
 engine code hashes to an untagged commit 14 files newer than the candidate,
 and only one instance still matches the tagged digest. The ~2.5-day soak
 therefore belongs to the earlier deployment, and observations from the
-current instances cannot be attributed to this tag. Historical proof results
+current instances cannot be attributed to this tag. **Resolution
+(2026-11-20T21:20Z):** re-pinning the tagged digest would have reverted 14
+files, including the pack-declared repeat identity that makes the AAP domain
+compress at all, so the three instances were instead rebuilt in-cluster from
+the public repository at commit `b097f7e` (digest `sha256:036319a6…`, engine
+code hash-verified). That artifact is attributed to a commit, not to a
+release: no tag, SBOM or CI attestation covers it. Historical proof results
 against earlier candidates still cannot automatically qualify this tag; the
 observation window and adjudication requirements for staging qualification
 are unchanged.
