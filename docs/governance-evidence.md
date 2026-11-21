@@ -65,8 +65,8 @@ A conveyor outrunning the classifier looks like a healthy but idle lane from the
 outcome block alone: on 2026-11-20 `cascade-aap` held 9,929 of a 10,000 cap,
 evicted 10,334,000 of 10,343,929 formations, discarded 775 results in 40
 minutes, and reported `classified` unchanged across a 180 s sample while
-`llm_classified` rose 635 → 736, and no verdict from the LLM lane was applied —
-so that ratio is deterministic-tier only.
+`llm_classified` rose 635 → 736. Over 7.5 h the lane applied **one** verdict
+against 7,212 observations, so that ratio is deterministic-tier only.
 
 The intuitive remedy for a conveyor is to raise `CASCADE_MEMORY_MAX`, and that
 is the wrong first step. The archive is part of the same state snapshot the
@@ -79,9 +79,12 @@ at 0.51 results/s against a measured 0.47. Sizing the archive for the ~74,000
 entries that would outlive an 890 s classifier raised that to ~4.8 s and lowered
 the ceiling to 0.10 results/s, below the admission rate, so the queue would grow
 faster than it drains. Make the per-result checkpoint cheap first — journal the
-completion, flush the archive on a timer — and only then size the archive to
-`admission rate × classifier latency`. A larger archive before that change is
-worse than no change at all.
+completion, flush the archive on a timer — and bound the queue by age while you
+do, because a delay that grows without bound cannot be sized for: on the same
+instance the classification delay reached 7.0 h within 7.5 h, which at 107
+signals/s would be ~2.7 M entries, and that instance had stopped forming
+memories entirely while still discarding every result that arrived. A larger
+archive before those changes is worse than no change at all.
 
 `llm_signal_outcomes_since_start` is restored verbatim from the state snapshot
 at boot, despite its name and its `started_at`, which is per-process. Its
