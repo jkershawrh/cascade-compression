@@ -53,7 +53,14 @@ The `/stats` response exposes those measurements independently as `ledger_receip
 policy, cumulative failures, consecutive failures, rejected/dropped events, successful writes or
 batches, and last successful delivery. It also reports path-free filesystem total/free bytes and
 used fraction for each spool, plus a boolean used to combine budgets when both queues share one
-volume; no local path, device identity, or payload is exposed.
+volume; no local path, device identity, or payload is exposed. Of those, `pending`, `oldest_age`,
+`spool_bytes`, cumulative `failures`, `events_dropped`/`rejected_total`, `batches_written` and
+`last_success` are persisted with the state, so they describe a queue across a restart. The two
+`consecutive_failures` counters are **per process**: after a restart the streak starts again while
+`last_success` still names the last delivery that ever succeeded. To measure an outage that spans a
+restart, read `last_success` with `oldest_age` (the age of the oldest undelivered record), not the
+consecutive count.
+
 Capacity rejections are counted transactionally in each SQLite spool and survive process restarts;
 the governed staging gate requires those counters in both audit snapshots with no increase. It
 also recomputes row and serialized-payload utilization from their raw counters and fails closed if

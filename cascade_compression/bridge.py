@@ -659,7 +659,7 @@ class CascadeBridge(LifecycleControls):
             "classification_ack_pending": len(self._completion_ack),
             "classifier_recovery_error": self._classifier_recovery_error or None,
             "memory_audit_source_pending": self._memory_source_pending(),
-            "ledger_memory_pending": len(self._ledger_memory_pending),
+            "ledger_memory_pending": self._reported_ledger_memory_pending(),
             "ledger_memory_pending_max": self._ledger_memory_pending_max,
             "ledger_memory_consecutive_failures": (
                 self._ledger_memory_consecutive_failures),
@@ -2542,6 +2542,21 @@ class CascadeBridge(LifecycleControls):
         if self._ledger_memory_store:
             return self._ledger_memory_store.count()
         return len(self._ledger_memory_pending)
+
+    def _reported_ledger_memory_pending(self):
+        """Pending memory events, counted where they actually live.
+
+        ``_ledger_memory_pending`` is the RAM-only fallback and stays empty
+        once a spool is configured, so reporting its length presents a
+        saturated 100,000-row spool as an empty one -- the opposite of what
+        the admission block exists to show. A spool read failure reports
+        unknown (``None``); under-reporting a backlog as zero is the failure
+        mode being fixed.
+        """
+        try:
+            return self._ledger_memory_pending_count()
+        except Exception:
+            return None
 
     def _start_memory_ledger_drain(self):
         with self._ledger_memory_lock:

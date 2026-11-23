@@ -80,6 +80,35 @@ def test_ready_recovers_without_an_ingest_request(harness, monkeypatch):
     assert client.get("/ready").status_code == 200
 
 
+def test_ready_reports_the_durable_spool_depth(harness):
+    """A saturated spool must not be reported as an empty one.
+
+    `_ledger_memory_pending` is the RAM-only fallback and is empty whenever a
+    spool is configured, so reporting its length showed all 100,000
+    undeliverable events on cascade-k8s as `ledger_memory_pending: 0` while
+    /stats reported the same spool as 100,000/100,000 full.
+    """
+    b, client = harness
+    assert b._ledger_memory_store is not None
+    b._ledger_memory_store.enqueue([
+        {"event_type": "formed", "memory_id": f"m-{i}"} for i in range(3)
+    ])
+    admission = client.get("/ready").json()["admission"]
+    assert admission["ledger_memory_pending"] == 3
+    assert admission["ledger_memory_pending_max"] == b._ledger_memory_pending_max
+
+
+def test_spool_read_failure_is_not_reported_as_empty(harness, monkeypatch):
+    """Unknown is honest; zero is the bug being fixed."""
+    b, client = harness
+
+    def broken():
+        raise OSError("spool unreadable")
+
+    monkeypatch.setattr(b._ledger_memory_store, "count", broken)
+    assert client.get("/ready").json()["admission"]["ledger_memory_pending"] is None
+
+
 def test_recovery_error_blocks_readiness(harness):
     b, client = harness
     b._classifier_recovery_error = "audit capacity exceeded"
