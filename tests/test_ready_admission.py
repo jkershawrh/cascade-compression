@@ -9,11 +9,13 @@ These tests pin the split: /ready asks the gate, /health only reports it.
 """
 import threading
 import time
+from uuid import UUID
 
 import pytest
 from fastapi.testclient import TestClient
 
 from cascade_compression.bridge import CascadeBridge
+from cascade_compression.cascade.memory import MemoryEvent
 import cascade_compression.classification_completion as completion
 import cascade_compression.service as service
 
@@ -125,16 +127,27 @@ def test_a_full_audit_byte_budget_is_not_ready(harness):
     archive held 86,919 of an advertised 200,000 entries, so the count looked
     healthy while the 16 MB byte budget was full. Readiness must ask the
     condition that process() actually enforces.
+
+    The geometry here is cascade-k8s measured live: 71,594 events occupying
+    all but 149 bytes of the 16 MB budget. Zero headroom is not the shape
+    that occurs: `_queue_events()` rejects the event that would *exceed* the
+    budget, so the buffer settles just below it and a `bytes >= bytes_max`
+    test never fires. That is why the first fix reported two refusing
+    instances as ready.
     """
     b, client = harness
     archive = b.memory_archive
-    archive._event_bytes = archive._event_max_bytes
+    # One object repeated: the count is what the gate reads, and any other
+    # path may introspect the event shape.
+    archive._events = [MemoryEvent(UUID(int=0), "formed")] * 71594
+    archive._event_max_pending = 100000   # cascade-k8s advertises this cap
+    archive._event_bytes = archive._event_max_bytes - 149
 
     admission = client.get("/ready").json()["admission"]
     assert admission["open"] is False
     assert "memory_audit_backpressure" in admission["blocked_by"]
-    assert admission["memory_audit_source_bytes"] == archive._event_max_bytes
-    assert admission["memory_audit_source_bytes_max"] == archive._event_max_bytes
+    assert admission["memory_audit_source_headroom_bytes"] == 149
+    assert admission["memory_audit_source_headroom_bytes"] < admission["memory_audit_admission_floor_bytes"]
     # The count still looks like headroom: that is the misleading surface.
     assert admission["memory_audit_source_pending"] < admission["memory_audit_source_pending_max"]
 
@@ -145,6 +158,33 @@ def test_a_full_audit_byte_budget_is_not_ready(harness):
     }]})
     assert response.status_code == 503
     assert response.json()["status"] == "memory_audit_backpressure"
+
+
+def test_audit_headroom_that_fits_an_event_is_ready(harness):
+    """The floor must not close readiness early: real headroom still admits."""
+    b, client = harness
+    archive = b.memory_archive
+    archive._event_bytes = archive._event_max_bytes - archive._min_event_bytes
+
+    admission = client.get("/ready").json()["admission"]
+    assert admission["open"] is True
+    assert admission["blocked_by"] == []
+    assert admission["memory_audit_source_headroom_bytes"] == archive._min_event_bytes
+
+
+def test_the_count_alone_would_call_a_full_buffer_healthy(harness):
+    """Pin the defect the floor exists for: count says 0 %, buffer is full.
+
+    An entry-count predicate reports headroom here; the byte predicate is the
+    one that matches the refusal.
+    """
+    b, client = harness
+    archive = b.memory_archive
+    archive._event_bytes = archive._event_max_bytes - 1
+
+    assert archive.pending_event_count() == 0
+    assert archive.audit_admission_closed() is True
+    assert client.get("/ready").status_code == 503
 
 
 def test_a_full_audit_byte_budget_keeps_liveness(harness):

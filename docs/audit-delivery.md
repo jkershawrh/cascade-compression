@@ -22,10 +22,13 @@ this is the policy:
   `/health` is what allowed a fully blocked instance to report `ok` and stay Ready;
 - the gate has two halves and `/ready` must name both. A pending completion blocks admission, and
   so does a memory-event buffer that cannot queue another event: `process()` answers
-  `memory_audit_backpressure` in that case with no completion pending at all. The buffer's byte
-  budget (16 MB, fixed) engages long before its entry count, so report
-  `memory_audit_source_bytes` against `memory_audit_source_bytes_max` — an entry count alone can
-  show headroom on a full buffer.
+  `memory_audit_backpressure` in that case with no completion pending at all. Two readings of that
+  buffer are misleading. Its byte budget (16 MB, fixed) engages long before its entry count, so an
+  entry count can show headroom on a full buffer. And because the queue rejects the event that
+  would *exceed* the budget, a saturated buffer settles just below the cap — measured live at 54
+  and 149 bytes of headroom on a 16 MB budget — so "bytes ≥ bytes_max" never fires either. Read
+  `memory_audit_source_headroom_bytes` against `memory_audit_admission_floor_bytes`; admission is
+  closed when the headroom cannot fit an event.
 
 Prior behaviour, 2026-11-20T21:27Z to 2026-11-23: this section's constraint was violated in the
 field. With the hosted ledger's read path saturated, both instances held admission closed with no

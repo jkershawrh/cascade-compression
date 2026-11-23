@@ -418,6 +418,14 @@ class MemoryArchive:
         self._event_max_pending = max(
             1000, int(_os.getenv("CASCADE_MEMORY_EVENT_MAX_PENDING", "20000")))
         self._event_max_bytes = 16 * 1024 * 1024
+        # Smallest event this archive can serialise, used as the admission
+        # floor: _queue_events() rejects whatever would exceed the byte
+        # budget, so a saturated buffer sits just below it and a "bytes >=
+        # bytes_max" test never fires. Readiness compares the remaining
+        # headroom against a fixed-shape event instead of guessing.
+        self._min_event_bytes = len(json.dumps(
+            MemoryEvent(UUID(int=0), "", details={}).to_dict(),
+            sort_keys=True).encode())
         self._formed_total = 0
         self._evictions_total = 0
         # Insertion-ordered dict: O(1) membership for the hot eviction and
@@ -895,19 +903,40 @@ class MemoryArchive:
 
     @_archive_locked
     def audit_admission_closed(self):
-        """True when the next _queue_events() would raise backpressure.
+        """True when no realistic MemoryEvent can be queued any more.
 
-        Readiness has to agree with this, or an instance refuses every
-        signal while reporting itself ready. The byte budget is the bound
-        that actually engages: 16 MB fills long before the entry count when
-        events carry content, so a count-only view reports headroom on a
-        buffer that is already full (production, 2026-11-23: 86,919 of an
-        advertised 200,000 entries, refused).
+        Readiness has to agree with `_queue_events()`, or an instance refuses
+        every signal while reporting itself ready. Two things make the naive
+        reading wrong:
+
+        * the byte budget binds long before the entry count, because events
+          carry content (production, 2026-11-23: 86,919 of an advertised
+          200,000 entries, refusing);
+        * `_queue_events()` rejects the event that would *exceed* the budget,
+          so a saturated buffer settles just below the cap and `bytes >=
+          bytes_max` never becomes true. Measured live: 16,777,162 and
+          16,777,067 of 16,777,216 — 54 and 149 bytes of headroom, both
+          refusing. The honest question is therefore not "is it full" but
+          "does the remaining headroom fit an event".
+
+        The floor is the mean queued event size, with the fixed-shape minimum
+        as the floor for an empty buffer. A mean overstates what a markedly
+        small event would cost, but it can only close readiness within one
+        event of the bound — the safe direction — and the structural minimum
+        alone is not enough: cascade-k8s sat at 149 bytes of headroom against
+        a 135-byte minimum while queuing events of ~234 bytes.
         """
         if not self._audit_backpressure:
             return False
-        return (len(self._events) >= self._event_max_pending
-                or self._event_bytes >= self._event_max_bytes)
+        if len(self._events) >= self._event_max_pending:
+            return True
+        headroom = self._event_max_bytes - self._event_bytes
+        return headroom < self._admission_floor_bytes()
+
+    def _admission_floor_bytes(self):
+        if not self._events:
+            return self._min_event_bytes
+        return max(self._min_event_bytes, self._event_bytes // len(self._events))
 
     @_archive_locked
     def audit_capacity(self):
@@ -917,6 +946,8 @@ class MemoryArchive:
             "pending_max": self._event_max_pending,
             "bytes": self._event_bytes,
             "bytes_max": self._event_max_bytes,
+            "headroom_bytes": max(0, self._event_max_bytes - self._event_bytes),
+            "admission_floor_bytes": self._admission_floor_bytes(),
         }
 
     @_archive_locked
