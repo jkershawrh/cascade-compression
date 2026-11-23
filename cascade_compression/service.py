@@ -583,6 +583,11 @@ def consolidate(batch_size: int = 1000):
         batch_size=batch_size,
     )
     _bridge.check_consolidation_meta(result)
+    # Consolidation decays strengths and evicts, and neither advances the
+    # bridge's dirty generation, so before this call an aggregator's
+    # consolidation was never checkpointed and its eviction events were never
+    # handed off (measured 2026-11-23: 143 reverted evictions after a restart).
+    _bridge.flush_memory_events()
     return result
 
 
@@ -801,9 +806,11 @@ def memory_import(data: Dict[str, Any]):
     count = _memory_archive.import_memories(data)
     # Aggregator instances may never process signals themselves, so their normal
     # processing path cannot persist newly federated memories. Persist imports
-    # explicitly to make aggregate state durable across restarts and rollouts.
+    # explicitly to make aggregate state durable across restarts and rollouts,
+    # and hand the resulting events to the ledger here rather than waiting for
+    # the maintenance tick: on an aggregator this endpoint *is* the workload.
     if count and _bridge:
-        _bridge.save_state()
+        _bridge.flush_memory_events()
     return {"imported": count}
 
 

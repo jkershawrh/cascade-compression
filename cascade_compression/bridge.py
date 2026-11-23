@@ -278,6 +278,17 @@ class CascadeBridge(LifecycleControls):
             float(os.getenv("CASCADE_LEDGER_RETRY_MAX_SECONDS", "60")),
         )
         self._ledger_memory_retry_timer = None
+        # Periodic maintenance for instances nobody sends signals to. Every
+        # other flush call site sits on an ingest, LLM or promotion path, and
+        # ``_start_memory_ledger_drain`` self-reschedules only when work is
+        # already pending, so a federation aggregator drains once at boot and
+        # never again (measured 2026-11-23: 174 events flat for two minutes
+        # against a five-minute-old drain, then 1,069 and still flat).
+        self._flush_timer_lock = threading.Lock()
+        self._flush_timer = None
+        self._flush_interval = max(
+            1.0, float(os.getenv("CASCADE_STATE_FLUSH_INTERVAL_SECONDS", "300"))
+        )
         spool_file = os.getenv("CASCADE_LEDGER_MEMORY_SPOOL_FILE", "")
         if not spool_file and self._state_file:
             spool_file = self._state_file + ".ledger-memory.sqlite3"
@@ -515,6 +526,12 @@ class CascadeBridge(LifecycleControls):
         # instead of each paying a full serialization of the archive.
         self._state_gen = 0
         self._saved_gen = 0
+        # Fingerprint of the archive at the last completed snapshot. The
+        # federation import path and consolidation mutate memories from service
+        # endpoints rather than from ``process()``, so they never advance
+        # ``_state_gen``; without this, a settlement check would call a changed
+        # archive "already saved".
+        self._saved_archive_fingerprint = None
         self._state_compression = os.getenv(
             "CASCADE_STATE_COMPRESSION", "none").strip().lower()
         if self._state_compression not in {"none", "gzip"}:
@@ -587,6 +604,7 @@ class CascadeBridge(LifecycleControls):
         if self._ledger_url and self._ledger_receipt_pending_count():
             self._start_ledger_receipt_drain()
         self._start_memory_ledger_drain()
+        self._start_state_flush_timer()
 
     def _qualified_suppression_allowed(self, agent, signal, decision):
         """Lifecycle authority, never a payload-provided approval flag.
@@ -2639,6 +2657,86 @@ class CascadeBridge(LifecycleControls):
             self._ledger_memory_retry_timer = None
         self._start_memory_ledger_drain()
 
+    def _start_state_flush_timer(self):
+        """Arm the periodic maintenance tick.
+
+        Ingesting instances flush on their own road: every ``process()``
+        refusal return, every LLM worker's ``finally`` and every promotion cycle
+        calls ``_flush_memory_events()``. An instance that only receives
+        federated imports reaches none of them, so it needs a clock instead of
+        a signal. Re-armed from the tick itself so a failed pass cannot stop it.
+        """
+        if self._closed or not (self._state_file or self._ledger_url):
+            return
+        with self._flush_timer_lock:
+            if self._flush_timer is not None:
+                return
+            try:
+                timer = threading.Timer(self._flush_interval, self._state_flush_tick)
+                timer.daemon = True
+            except RuntimeError as exc:
+                # An instance that cannot spawn a thread must still serve; the
+                # ingest-path flushes remain, only the idle clock is lost.
+                log.warning("Periodic state flush unavailable: %s", exc)
+                return
+            self._flush_timer = timer
+        try:
+            timer.start()
+        except RuntimeError as exc:
+            with self._flush_timer_lock:
+                self._flush_timer = None
+            log.warning("Periodic state flush unavailable: %s", exc)
+
+    def _state_flush_tick(self):
+        with self._flush_timer_lock:
+            self._flush_timer = None
+        if self._closed:
+            return
+        try:
+            # Hand the buffer over first. ``_stage_memory_events`` checkpoints
+            # the source before it removes a byte, so a tick that hands work off
+            # has already made those bytes durable and does not need a second
+            # serialization of the same state afterwards.
+            handed_off = self._ledger_url and bool(
+                self._memory_source_pending()
+                or self._ledger_memory_pending_count()
+            )
+            if self._ledger_url:
+                self._flush_memory_events()
+            if not handed_off and (self._saved_gen < self._state_gen
+                                   or self._archive_fingerprint() != self._saved_archive_fingerprint):
+                self.save_state()
+        except Exception as exc:
+            log.warning("Periodic state flush failed: %s", exc)
+        finally:
+            self._start_state_flush_timer()
+
+    def _archive_fingerprint(self):
+        """Change evidence for mutations that never advance ``_state_gen``.
+
+        Covers forms, evictions and queued events. A consolidation pass that
+        only decays strengths and evicts nothing moves none of these, which is
+        why the ``/consolidate`` endpoint saves unconditionally instead of
+        relying on this.
+        """
+        archive = self.memory_archive
+        if archive is None:
+            return None
+        return archive.change_token()
+
+    def flush_memory_events(self):
+        """Persist and hand off after an out-of-band archive mutation.
+
+        ``/memories/import`` and ``/consolidate`` change the archive from the
+        service layer, outside ``process()``. They need both halves: a
+        checkpoint, because consolidation can move state without marking it
+        dirty, and a drain, because an aggregator has no ingest path to trigger
+        one.
+        """
+        self._flush_memory_events()
+        self._mark_state_dirty()
+        return self._save_state()
+
     def _drain_memory_ledger_queue(self):
         try:
             from .integrations.ledger import write_memory_events
@@ -2855,6 +2953,7 @@ class CascadeBridge(LifecycleControls):
             saved = self._save_state_locked()
             if saved:
                 self._saved_gen = max(self._saved_gen, target)
+                self._saved_archive_fingerprint = self._archive_fingerprint()
             return saved
 
     def _save_state_locked(self):
@@ -3186,6 +3285,7 @@ class CascadeBridge(LifecycleControls):
         for lock, timer_name in (
             (self._ledger_receipt_lock, "_ledger_receipt_retry_timer"),
             (self._ledger_memory_lock, "_ledger_memory_retry_timer"),
+            (self._flush_timer_lock, "_flush_timer"),
         ):
             with lock:
                 timer = getattr(self, timer_name)

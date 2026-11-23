@@ -931,6 +931,23 @@ class MemoryArchive:
         return len(self._events)
 
     @_archive_locked
+    def change_token(self):
+        """O(1) evidence that the archive moved, for snapshot settlement.
+
+        Generation counters on the bridge only advance on the ingest path, so
+        an archive mutated by a federation import or by consolidation looks
+        unchanged to them. Size and the two running totals move on every form,
+        evict and queued event, and reading them costs no scan — which matters
+        because settlement checks run on every write.
+        """
+        return (
+            len(self._memories),
+            self._formed_total,
+            self._evictions_total,
+            len(self._events),
+        )
+
+    @_archive_locked
     def audit_admission_closed(self):
         """True when no realistic MemoryEvent can be queued any more.
 
