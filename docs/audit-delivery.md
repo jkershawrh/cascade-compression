@@ -89,6 +89,15 @@ The LLM counters split differently, and combining them across a restart produces
 `llm_classified`; use the `llm_signal_outcomes_since_start` block instead, and treat
 `reconciled: false` in that block as disqualifying it for any rate or loss claim.
 
+That block is not per process either. Its five counters are restored from the classifier-work
+checkpoint, so its `started_at` (per process) and its counters (per instance) have different
+horizons. Read `accounting_since` and `accounting_origin_known` for the counter origin, the nested
+`process` block for this process's own flow, and `unattributed` for the signed residual between
+lifetime outcomes and lifetime admissions. Comparing the restored `enqueued` with per-process
+`signals_processed` or `cascade_forwarded` fabricates a burst: on 2026-11-23 `cascade-aap`
+reported 10,409,157 admissions against one processed signal, all of it restored, and
+`unattributed` 91,108 from the same checkpoint.
+
 Capacity rejections are counted transactionally in each SQLite spool and survive process restarts;
 the governed staging gate requires those counters in both audit snapshots with no increase. It
 also recomputes row and serialized-payload utilization from their raw counters and fails closed if

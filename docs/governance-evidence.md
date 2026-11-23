@@ -93,12 +93,20 @@ signals/s would be ~2.7 M entries, and that instance had stopped forming
 memories entirely while still discarding every result that arrived. A larger
 archive before those changes is worse than no change at all.
 
-`llm_signal_outcomes_since_start` is restored verbatim from the state snapshot
-at boot, despite its name and its `started_at`, which is per-process. Its
-`enqueued` and `in_flight` therefore span restarts and cannot be compared with
-per-process `signals_processed` or `cascade_forwarded`; `reconciled` and
-`terminal_complete` are the fields that tell you whether the restored ledger
-closes.
+`llm_signal_outcomes_since_start` is restored from the state snapshot at boot,
+so its five counters span restarts. The block now says which horizon each field
+belongs to rather than leaving it to this document: `started_at` is the current
+process, `accounting_since` is the origin the counters count from
+(`accounting_origin_known: false` for a snapshot written before the origin was
+persisted), and `restored_from_checkpoint` / `restored_at` name the restore.
+The nested `process` block subtracts the restored baseline, and
+`unattributed` is the signed residual between lifetime outcomes and lifetime
+admissions, so `reconciled: false` comes with a magnitude instead of only a
+flag. `queued` and `in_flight` are live gauges; `reconciled` and
+`terminal_complete` describe the restored total, not this process. Its
+`enqueued` and `in_flight` therefore cannot be compared with per-process
+`signals_processed` or `cascade_forwarded`; on 2026-11-23 `cascade-aap`
+reported 10,409,157 admissions against one processed signal, all restored.
 
 ## Reading the promotion trail
 

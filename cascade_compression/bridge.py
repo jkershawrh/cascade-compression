@@ -414,6 +414,17 @@ class CascadeBridge(LifecycleControls):
         self._llm_accounting_succeeded = 0
         self._llm_accounting_failed = 0
         self._llm_accounting_dropped = 0
+        # These five counters are checkpointed with the classifier work, so a
+        # restart resumes them instead of starting from zero. Keep the origin
+        # they actually count from separate from this process's start time:
+        # reporting one under the other is how a lifetime total reads as a
+        # startup burst. Measured 2026-11-23 on cascade-aap: 10.4M "since
+        # start" admissions against one processed signal, because the block's
+        # started_at was per-process and its counters were not.
+        self._llm_accounting_origin = self._llm_accounting_started_at
+        self._llm_accounting_baseline: Dict[str, int] = {}
+        self._llm_accounting_restored_at = ""
+        self._llm_accounting_restored_resolutions = 0
         self._llm_context_noise: Dict[str, int] = defaultdict(int)
         self._llm_context_important: Dict[str, int] = defaultdict(int)
 
@@ -3275,8 +3286,48 @@ class CascadeBridge(LifecycleControls):
                 queued + in_flight + self._llm_accounting_succeeded
                 + self._llm_accounting_failed + self._llm_accounting_dropped
             )
+            # The five counters below resume from the classifier-work
+            # checkpoint, so they span restarts while `started_at` does not.
+            # Report both horizons and name the residual: a restored lifetime
+            # total compared against per-process `cascade_forwarded` once
+            # looked like a 100x startup burst (10.4M admissions against one
+            # processed signal, cascade-aap 2026-11-23).
+            current = {
+                name: getattr(self, '_llm_accounting_' + name)
+                for name in ('enqueued', 'dispatched', 'succeeded', 'failed', 'dropped')
+            }
+            baseline = dict(self._llm_accounting_baseline or {})
+            process = {
+                name: max(0, current[name] - baseline.get(name, 0))
+                for name in current
+            }
+            inherited_open = max(
+                0,
+                baseline.get('dispatched', 0) - baseline.get('succeeded', 0)
+                - baseline.get('failed', 0),
+            )
+            inherited_pending = max(
+                0,
+                baseline.get('enqueued', 0) - baseline.get('dispatched', 0)
+                - baseline.get('dropped', 0),
+            )
+            inherited = bool(baseline) and (
+                any(baseline.values())
+                or self._llm_accounting_restored_resolutions > 0
+            )
+            process_accounted = (
+                queued + in_flight + process['succeeded']
+                + process['failed'] + process['dropped']
+            )
             stats["llm_signal_outcomes_since_start"] = {
                 "started_at": self._llm_accounting_started_at,
+                "accounting_since": (
+                    self._llm_accounting_origin
+                    or self._llm_accounting_started_at
+                ),
+                "accounting_origin_known": bool(self._llm_accounting_origin),
+                "restored_from_checkpoint": bool(self._llm_accounting_restored_at),
+                "restored_at": self._llm_accounting_restored_at,
                 "enqueued": self._llm_accounting_enqueued,
                 "queued": queued,
                 "dispatched": self._llm_accounting_dispatched,
@@ -3284,15 +3335,42 @@ class CascadeBridge(LifecycleControls):
                 "classified": self._llm_accounting_succeeded,
                 "failed": self._llm_accounting_failed,
                 "dropped": self._llm_accounting_dropped,
+                # Signed: lifetime outcomes minus lifetime admissions. Zero
+                # when the restored ledger closes; otherwise it is the size
+                # of the discrepancy, not merely a false `reconciled`.
+                "unattributed": accounted - current['enqueued'],
                 "reconciled": (
-                    in_flight >= 0 and accounted == self._llm_accounting_enqueued
+                    in_flight >= 0 and accounted == current['enqueued']
                 ),
                 "terminal_complete": (
                     not self._classifier_recovery_error and in_flight == 0 and queued == 0
                     and self._llm_accounting_failed == 0
                     and self._llm_accounting_dropped == 0
-                    and accounted == self._llm_accounting_enqueued
+                    and accounted == current['enqueued']
                 ),
+                "process": {
+                    "started_at": self._llm_accounting_started_at,
+                    "enqueued": process['enqueued'],
+                    "dispatched": process['dispatched'],
+                    "classified": process['succeeded'],
+                    "failed": process['failed'],
+                    "dropped": process['dropped'],
+                    "inherited_work": inherited_pending + inherited_open
+                    + self._llm_accounting_restored_resolutions,
+                    "reconciliation": (
+                        "inherited_work" if inherited else "own_work"
+                    ),
+                    # Inherited queue entries and in-flight work are mixed
+                    # into this process's gauges and completions, so a
+                    # per-process closure is only claimed when nothing was
+                    # inherited.
+                    "reconciled": (
+                        not inherited
+                        and in_flight >= 0
+                        and process_accounted == process['enqueued']
+                    ),
+                },
+                "inherited": dict(baseline),
             }
             stats["llm_durable_queue"] = (
                 self._durable_queue.stats() if self._durable_queue is not None

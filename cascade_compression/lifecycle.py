@@ -303,6 +303,7 @@ class LifecycleControls:
             return dict(
                 accounting={name: getattr(self, '_llm_accounting_' + name)
                             for name in ('enqueued', 'dispatched', 'succeeded', 'failed', 'dropped')},
+                accounting_started_at=self._llm_accounting_origin,
                 outstanding=[dict(work_id=e['_work_id'], signal_id=e.get('signal_id'),
                                   signal_type=e.get('signal_type'), phase=phase)
                              for phase, entries in [('queued', self._llm_buffer + self._llm_priority_buffer),
@@ -330,7 +331,19 @@ class LifecycleControls:
                 if type(value) is not int or value < 0:
                     raise ValueError('invalid classifier accounting snapshot')
                 setattr(self, '_llm_accounting_' + name, value)
+            # Snapshots written before the origin was persisted count from an
+            # unknown instant. Say so instead of substituting this process's
+            # start time, which is what made the restored total read as a
+            # startup burst.
+            origin = work.get('accounting_started_at')
+            if isinstance(origin, str) and origin and not valid_time(origin):
+                log.warning(
+                    "Classifier accounting origin %r is not a past timestamp; "
+                    "reporting it as unknown", origin)
+                origin = ""
+            self._llm_accounting_origin = origin if isinstance(origin, str) else ""
             self._accounting_restored_from_snapshot = True
+            resolved_on_restore = 0
             self._classifier_terminal_receipts = list(work.get('terminal_receipts', []))
             self._classifier_terminal_evicted = work.get('terminal_receipts_evicted', 0)
             seen = {receipt['work_id'] for receipt in self._classifier_terminal_receipts}
@@ -353,7 +366,17 @@ class LifecycleControls:
                     name = '_llm_accounting_' + outcome
                     setattr(self, name, getattr(self, name) + 1)
                     seen.add(identifier)
+                    resolved_on_restore += 1
             excess = max(0, len(self._classifier_terminal_receipts) - self._classifier_terminal_max)
             if excess:
                 self._classifier_terminal_evicted += excess
                 self._classifier_terminal_receipts = self._classifier_terminal_receipts[excess:]
+            # Everything above is inherited resolution, not this process's
+            # flow: freeze it as the baseline so a per-process view can be
+            # reported without re-reading a lifetime total as new work.
+            self._llm_accounting_baseline = {
+                name: getattr(self, '_llm_accounting_' + name)
+                for name in ('enqueued', 'dispatched', 'succeeded', 'failed', 'dropped')
+            }
+            self._llm_accounting_restored_at = datetime.now(timezone.utc).isoformat()
+            self._llm_accounting_restored_resolutions = resolved_on_restore

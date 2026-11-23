@@ -20,8 +20,13 @@ preserving the first observation and all unqualified signals. Both profiles
 are opt-in. Validate their workload-specific safety and downstream cost before
 production use.
 
-For bounded evaluations, `/stats` exposes
-`llm_signal_outcomes_since_start`: enqueued, queued, dispatched, in-flight,
-classified, failed, and dropped original-signal counts for the current process,
-plus reconciliation and terminal-completion flags. Do not combine counters
-across restarts without recording the process epoch.
+For bounded evaluations, `/stats` exposes `llm_signal_outcomes_since_start`.
+Its top-level enqueued, dispatched, classified, failed, and dropped counts are
+restored from the classifier-work checkpoint and therefore span restarts:
+`accounting_since` names the instant they count from
+(`accounting_origin_known: false` for a checkpoint written before that field
+existed), while `started_at` names only the current process. Read the nested
+`process` block for this process's own flow, and `unattributed` for the signed
+gap between lifetime outcomes and lifetime admissions. `queued` and `in_flight`
+are live gauges, and `reconciled` / `terminal_complete` apply to the restored
+total. Do not combine counters across restarts without recording the epoch.

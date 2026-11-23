@@ -294,6 +294,76 @@ class TestRestartReplay:
             again.close()
 
 
+class TestOutcomeHorizons:
+    """Restored counters are a lifetime total; the process view is this flow."""
+
+    def test_fresh_process_reports_one_horizon(self, monkeypatch):
+        monkeypatch.setenv("CASCADE_STATE_FILE", "")
+        monkeypatch.setenv("CASCADE_LEDGER_URL", "")
+        bridge = CascadeBridge()
+        try:
+            assert bridge._enqueue_llm_signals([make_signal()])
+            block = bridge.get_stats()["llm_signal_outcomes_since_start"]
+            assert block["restored_from_checkpoint"] is False
+            assert block["accounting_since"] == block["started_at"]
+            assert block["accounting_origin_known"] is True
+            assert block["process"]["started_at"] == block["started_at"]
+            assert block["process"]["enqueued"] == block["enqueued"] == 1
+            assert block["process"]["reconciled"] is True
+            assert block["process"]["reconciliation"] == "own_work"
+            assert block["unattributed"] == 0
+        finally:
+            bridge.close()
+
+    def test_restored_counters_are_not_reported_as_process_flow(self, durable_env):
+        first = CascadeBridge()
+        try:
+            assert first._enqueue_llm_signals(
+                [make_signal(content={"message": f"event {i}"}) for i in range(3)])
+            origin = first.get_stats()[
+                "llm_signal_outcomes_since_start"]["started_at"]
+        finally:
+            first.close()
+
+        again = CascadeBridge()
+        try:
+            block = again.get_stats()["llm_signal_outcomes_since_start"]
+            # The restored total is real, and belongs to the instance.
+            assert block["enqueued"] == 3
+            assert block["reconciled"] is True
+            # It is not this process's flow, and the block now says so.
+            assert block["restored_from_checkpoint"] is True
+            assert block["accounting_since"] == origin
+            assert block["process"]["enqueued"] == 0
+            assert block["process"]["inherited_work"] == 3
+            assert block["process"]["reconciliation"] == "inherited_work"
+            assert block["process"]["reconciled"] is False
+        finally:
+            again.close()
+
+    def test_unattributed_names_a_restored_residual(self, durable_env):
+        """A restored ledger that does not close reports the size, not a flag."""
+        seed = CascadeBridge()
+        try:
+            seed._llm_accounting_enqueued = 10
+            seed._llm_accounting_dispatched = 12
+            seed._llm_accounting_succeeded = 1
+            assert seed._save_state()
+        finally:
+            seed.close()
+
+        again = CascadeBridge()
+        try:
+            block = again.get_stats()["llm_signal_outcomes_since_start"]
+            assert block["enqueued"] == 10
+            # 11 in flight + 1 classified - 10 admitted.
+            assert block["unattributed"] == 2
+            assert block["reconciled"] is False
+            assert block["process"]["enqueued"] == 0
+        finally:
+            again.close()
+
+
 class TestDropAndExpiry:
     def test_backpressure_drop_removes_spool_rows(self, durable_env, monkeypatch):
         bridge = CascadeBridge()
