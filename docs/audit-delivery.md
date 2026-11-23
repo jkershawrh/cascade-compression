@@ -53,7 +53,7 @@ the completion half of the gate only; the archive buffer was never consulted.
 
 A third, 2026-11-23T15:52Z: commit `fd981bb` consulted the archive, but compared `bytes >=
 bytes_max`, which cannot fire because the queue rejects the event that would *exceed* the budget.
-Both instances sat 54 and 149 bytes under a 16 MB cap and still reported `blocked_by: []`. Do not
+Both instances sat 54 and 149 bytes under a 16 MiB cap and still reported `blocked_by: []`. Do not
 treat `blocked_by: []` beside a nearly full buffer as evidence of readiness: check that the build
 closes on headroom against an event-sized floor, and that `memory_audit_source_headroom_bytes` is
 reported at all.
