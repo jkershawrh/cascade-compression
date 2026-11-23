@@ -218,6 +218,37 @@ class _SignalAdapter:
         self.labels = s.labels
 
 
+@app.get("/ready")
+def ready():
+    """Readiness: is this instance accepting signals?
+
+    Deliberately separate from /health. /health is the liveness contract --
+    process, state snapshot, durable queue -- and a failure there should
+    restart the container. A closed admission gate is the opposite case: the
+    process is healthy, and restarting it restores the same blocked state
+    because the completion backlog and the ledger spool are both persisted.
+    The correct platform response is to stop routing work to it.
+
+    Both probes read /health at commit b097f7e, so a fully blocked instance
+    stayed Ready for 21 h while refusing 100% of signals. Readiness now asks
+    the gate itself; liveness still does not, so a blocked instance is
+    de-routed instead of being restarted into the same state.
+    """
+    if _bridge is None:
+        body = {"status": "not_ready", "ready": False,
+                "service": "cascade-compression",
+                "admission": {"open": False, "blocked_by": ["no_bridge"]}}
+        return JSONResponse(status_code=503, content=body)
+    admission = _bridge.admission_state(probe=True)
+    body = {
+        "status": "ready" if admission["open"] else "not_ready",
+        "ready": admission["open"],
+        "service": "cascade-compression",
+        "admission": admission,
+    }
+    return body if admission["open"] else JSONResponse(status_code=503, content=body)
+
+
 @app.get("/health")
 def health():
     snapshot_healthy = getattr(_bridge, "_state_healthy", None) if _bridge else None
@@ -231,6 +262,13 @@ def health():
         _bridge, "_durable_memory_checkpoint_healthy", True,
     ) if _bridge else True
     learning_fence = getattr(_bridge, "_learning_fence_reason", "") if _bridge else ""
+    # Reported, never enforced here: liveness must not fail because admission
+    # is closed. /ready decides that, so the platform de-routes a blocked
+    # instance rather than restarting it into the same state.
+    admission = (
+        getattr(_bridge, "admission_state", None)()
+        if _bridge is not None and hasattr(_bridge, "admission_state") else None
+    )
     if _bridge is None:
         status, code = "not_ready", 503
     elif snapshot_healthy is False:
@@ -254,6 +292,7 @@ def health():
         "learning_fenced": learning_fence or None,
         "nano_profile": _bridge.nano_profile if _bridge else "",
         "classification_queue": queue_health,
+        "admission": admission,
     }
     return body if code == 200 else JSONResponse(status_code=code, content=body)
 

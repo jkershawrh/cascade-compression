@@ -61,6 +61,13 @@ counts exactly those discards and is **per process**, so read it as a live loss
 rate next to `llm_classified` (observations) and
 `llm_signal_outcomes_since_start.classified` (applied successes).
 
+The audit destination produces the same shape of loss from a different cause. If the ledger
+cannot accept the memory event that must accompany a result, the result cannot commit; once it is
+older than `CASCADE_COMPLETION_PENDING_MAX_AGE` (default 900 s) it is discarded exactly as above —
+never applied, never counted as success — and counted in `llm_dropped_audit_unavailable`. Read
+both counters as live per-process loss rates: one for a destination that no longer holds the
+memory, one for a destination that cannot be told about it. Neither belongs in `classified`.
+
 A conveyor outrunning the classifier looks like a healthy but idle lane from the
 outcome block alone: on 2026-11-20 `cascade-aap` held 9,929 of a 10,000 cap,
 evicted 10,334,000 of 10,343,929 formations, discarded 775 results in 40

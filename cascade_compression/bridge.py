@@ -456,6 +456,16 @@ class CascadeBridge(LifecycleControls):
         # Results whose linked memory was capacity-evicted before application.
         # Per-process: this is a live loss rate, not a restored ledger.
         self._llm_dropped_target_evicted = 0
+        # Results whose audit destination stayed unavailable past the bound.
+        # Same terminal shape as the eviction loss above: counted as dropped,
+        # never applied, never reported as success. Without a bound, a hung
+        # ledger holds admission closed for as long as it stays hung --
+        # cascade-k8s refused every signal from 2026-11-21T05:02Z onward --
+        # because completion.resume() can never commit and process() refuses
+        # input while it cannot.
+        self._llm_dropped_audit_unavailable = 0
+        self._completion_pending_max_age = float(
+            os.getenv("CASCADE_COMPLETION_PENDING_MAX_AGE", "900"))
         self._route_counts: Dict[str, int] = defaultdict(int)
         self._llm_calls_by_tier: Dict[str, int] = defaultdict(int)
         self._llm_seconds_by_tier: Dict[str, float] = defaultdict(float)
@@ -604,6 +614,57 @@ class CascadeBridge(LifecycleControls):
                                 for m in self._agent_metrics.values()))
         return False
 
+    def admission_state(self, probe: bool = False) -> Dict:
+        """Describe the ingest gate that process() enforces.
+
+        Readiness has to agree with the gate, so this mirrors the refusal
+        conditions below rather than approximating them. A pending
+        completion set is only a refusal when resume() cannot commit it, so
+        with probe=True this asks exactly what process() asks. The lifecycle
+        lock is taken without blocking, so a readiness probe can never queue
+        behind an ingest call that is itself waiting on the ledger: a busy
+        instance is reported busy, not timed out.
+
+        probe=False is the side-effect-free form for /health, where an
+        unprobed pending set is still reported as blocking -- the gate does
+        refuse until it drains, so that direction cannot overstate
+        readiness.
+        """
+        blocked: list = []
+        if not self.enabled:
+            blocked.append("disabled")
+        if self._classifier_recovery_error:
+            blocked.append("classifier_recovery_error")
+        elif (self.memory_archive is not None and self._durable_queue is not None
+                and not self._state_file):
+            blocked.append("memory_snapshot_required")
+        elif self._completion_pending or self._completion_ack:
+            if not probe:
+                blocked.append("classification_completion_pending")
+            elif not self._lifecycle_lock.acquire(blocking=False):
+                blocked.append("lifecycle_busy")
+            else:
+                try:
+                    drained = completion.resume(self, shed=True)
+                finally:
+                    self._lifecycle_lock.release()
+                if not drained:
+                    self._flush_memory_events()
+                    blocked.append("classification_completion_pending")
+        return {
+            "open": not blocked,
+            "blocked_by": blocked,
+            "probed": bool(probe),
+            "classification_completion_pending": len(self._completion_pending),
+            "classification_ack_pending": len(self._completion_ack),
+            "classifier_recovery_error": self._classifier_recovery_error or None,
+            "memory_audit_source_pending": self._memory_source_pending(),
+            "ledger_memory_pending": len(self._ledger_memory_pending),
+            "ledger_memory_pending_max": self._ledger_memory_pending_max,
+            "ledger_memory_consecutive_failures": (
+                self._ledger_memory_consecutive_failures),
+        }
+
     def process(self, signals: list) -> Dict:
         if not self.enabled or not signals:
             return {"enabled": False}
@@ -614,7 +675,8 @@ class CascadeBridge(LifecycleControls):
         if self.memory_archive is not None and self._durable_queue is not None and not self._state_file:
             return {"enabled": False, "accepted": False, "durable_acceptance": False,
                     "backpressure": True, "status": "memory_snapshot_required"}
-        if (self._completion_pending or self._completion_ack) and not completion.resume(self):
+        if (self._completion_pending or self._completion_ack) and not completion.resume(
+                self, shed=True):
             self._flush_memory_events()
             return {"enabled": False, "accepted": False, "durable_acceptance": False,
                     "backpressure": True, "status": "classification_completion_pending"}
@@ -3104,6 +3166,7 @@ class CascadeBridge(LifecycleControls):
         stats["llm_dropped"] = self._llm_dropped
         stats["llm_dropped_by_severity"] = dict(self._llm_dropped_by_severity)
         stats["llm_dropped_target_evicted"] = self._llm_dropped_target_evicted
+        stats["llm_dropped_audit_unavailable"] = self._llm_dropped_audit_unavailable
         stats["llm_buffer_bytes"] = self._llm_buffer_bytes
         stats["llm_buffer_max_bytes"] = self._llm_max_buffer_bytes
         stats["llm_priority_buffer_bytes"] = self._llm_priority_buffer_bytes

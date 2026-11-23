@@ -1,8 +1,31 @@
 # Durable audit delivery
 
 Cascade's external ledger and GCL integration is optional. When enabled, ledger delivery must not
-share the signal request path: an unavailable ledger cannot stop classification, but it also must
-not silently erase the audit trail.
+share the signal request path, and the two guarantees it serves — keep classifying, and never
+erase the audit trail — must never be traded for one another silently. When those two conflict,
+this is the policy:
+
+- a completed classification is retained until it can be applied together with its audit event;
+- if the ledger cannot accept events (the memory-event spool is at capacity, or the delivery path
+  does not answer), the result cannot commit, and admission is held closed rather than applying a
+  verdict with no provenance event — a verdict without provenance would mutate institutional memory
+  invisibly, which is worse than refusing the signal;
+- that hold is bounded: `CASCADE_COMPLETION_PENDING_MAX_AGE` (default 900 s) discards the unapplied
+  work, counts it in `llm_dropped_audit_unavailable`, and never counts it as success. Read that
+  counter as the price of the bound, next to `llm_dropped_target_evicted`;
+- the bound bounds the hold, not the outage. While the destination is dead an instance admits
+  little, and keeps nothing it admits. That is the intended cost of refusing to fabricate a
+  verdict, and it is not a recovery;
+- admission is observable from outside: `/ready` evaluates the gate and returns 503 when the
+  instance is refusing signals, and `/health` reports the same state in its `admission` block
+  without failing. Keep readiness on `/ready` and liveness on `/health`; serving both from
+  `/health` is what allowed a fully blocked instance to report `ok` and stay Ready.
+
+Prior behaviour, 2026-11-20T21:27Z to 2026-11-23: this section's constraint was violated in the
+field. With the hosted ledger's read path saturated, both instances held admission closed with no
+bound and `/health` answered `ok` throughout; `cascade-k8s` refused 26,708 of 26,708 signals over
+11.5 h. The bound, the `admission` block and the `/ready` split exist because of that, so do not
+treat a build older than them as satisfying this section.
 
 Set `CASCADE_STATE_FILE` to enable the normal persisted Cascade state. Cascade then creates
 separate SQLite write-ahead spools beside that file: one for decision and promotion receipts, and

@@ -75,6 +75,7 @@ def retain(bridge, entry, result):
             ) if k in entry}
             record = dict(result=value, members=members, context=context)
             record["next_member"] = 0
+            record["retained_at"] = datetime.now(timezone.utc).isoformat()
             bridge._completion_pending[work_id] = record
             with bridge._llm_queue_lock:
                 bridge._classifier_inflight[work_id] = entry
@@ -83,7 +84,7 @@ def retain(bridge, entry, result):
         except Exception as exc:
             fence(bridge, f"classification result retention failed: {exc}")
             return False
-        resume(bridge)
+        resume(bridge, shed=True)
         return work_id not in bridge._completion_pending
 
 
@@ -186,14 +187,79 @@ def acknowledge(bridge):
         return True
 
 
-def resume(bridge):
+def resume(bridge, shed=False):
+    """Commit every fully-retained result.
+
+    shed=True bounds the wait for an unreachable destination. It is set on
+    the ingest path, where a permanently un-committable record would hold
+    admission closed forever, and deliberately NOT set in wait_for_llm,
+    which must report incomplete evidence rather than resolve it away.
+    """
     with bridge._lifecycle_lock:
         if bridge._classifier_recovery_error or not acknowledge(bridge):
             return False
         for work_id in list(bridge._completion_pending):
-            if not apply(bridge, work_id):
+            if apply(bridge, work_id):
+                continue
+            # The commit was just attempted and failed. Only here, and only
+            # past the age bound, may the work be discarded -- so the drop
+            # counter names a failure that actually happened in this pass
+            # rather than one inferred from a clock reading.
+            if not shed or not shed_expired(bridge, work_id):
                 return False
         return True
+
+
+def shed_expired(bridge, work_id):
+    """Resolve one completion whose commit just failed and whose bound is past.
+
+    apply() defers indefinitely on MemoryEventBackpressure while admission
+    stays closed, so with the audit destination hung an un-committable
+    record is an unbounded ingest outage whose only escape is discarding
+    the work. The bound (CASCADE_COMPLETION_PENDING_MAX_AGE, default 900 s)
+    keeps a transient outage able to apply its results first; it is not a
+    general expiry, and a healthy destination commits far inside it.
+
+    Resolution mirrors the capacity-eviction discard in apply() exactly --
+    counted, never applied, never reported as success, durable marker
+    deleted -- so the loss is visible in one place rather than inferred.
+    Returns True when the record was resolved away.
+    """
+    record = bridge._completion_pending.get(work_id)
+    if record is None or bridge._classifier_recovery_error:
+        # Already resolved, or the failure was not a destination outage but
+        # an uncertain application that fences the bridge. Never discard
+        # across a fence: the fence is the honest state.
+        return record is None
+    now = datetime.now(timezone.utc)
+    retained_at = record.get("retained_at")
+    if not valid_time(retained_at):
+        # Restored or legacy record: start its clock now rather than
+        # discarding work that may have just been reloaded.
+        record["retained_at"] = now.isoformat()
+        return False
+    age = (now - datetime.fromisoformat(retained_at)).total_seconds()
+    max_age = getattr(bridge, "_completion_pending_max_age", 900.0)
+    if age < max_age:
+        return False
+    unapplied = len(record["members"]) - record["next_member"]
+    log.warning(
+        "Discarding classification %s: commit failed and destination has "
+        "been unavailable for %.0f s (bound %.0f s), %d member(s) never "
+        "applied", work_id, age, max_age, unapplied)
+    del bridge._completion_pending[work_id]
+    with bridge._llm_queue_lock:
+        bridge._classifier_inflight.pop(work_id, None)
+        bridge._llm_accounting_dropped += unapplied
+        bridge._llm_dropped_audit_unavailable += unapplied
+        if bridge._durable_queue is not None:
+            bridge._mark_durable_locked({"_work_id": work_id}, delete=True)
+    if not bridge._save_state():
+        # The durable marker is already deleted, so replay cannot resurrect
+        # the work; only the in-memory discard is at risk, and a restored
+        # record re-ages past the bound on its own.
+        log.warning("Could not checkpoint shed classification %s", work_id)
+    return True
 
 
 def apply(bridge, work_id):
@@ -227,6 +293,7 @@ def apply(bridge, work_id):
                         {"_work_id": work_id}, delete=True)
                 return True
     original = {}
+    prior_fence = bridge._learning_fence_reason
     noise = value["label"] in SUPPRESSIVE_LABELS
     provenance = dict(value["provenance"], classifier_identity=value["classifier_identity"],
                       completed_at=value["completed_at"], cache_hit=value["cache_hit"])
@@ -278,6 +345,16 @@ def apply(bridge, work_id):
                 record["next_member"] = cursor
                 if not noise:
                     bridge._fence_learning("negative classification awaiting audit capacity")
+                if cursor == start and bridge._learning_fence_reason == prior_fence:
+                    # The deferral changed nothing: no member advanced and the
+                    # learning fence already carried this reason, so the
+                    # snapshot would be byte-identical. Making a refused
+                    # signal pay a full checkpoint is also the first place to
+                    # look for cascade-k8s's 127 s per rejection on
+                    # 2026-11-21, before attributing that latency to the
+                    # ledger -- this path runs on every refusal and the
+                    # ledger is contacted on none of them.
+                    return False
             if not bridge._save_state():
                 raise OSError("classification application checkpoint failed")
         except Exception as exc:
