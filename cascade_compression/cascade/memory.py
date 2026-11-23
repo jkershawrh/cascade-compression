@@ -894,6 +894,32 @@ class MemoryArchive:
         return len(self._events)
 
     @_archive_locked
+    def audit_admission_closed(self):
+        """True when the next _queue_events() would raise backpressure.
+
+        Readiness has to agree with this, or an instance refuses every
+        signal while reporting itself ready. The byte budget is the bound
+        that actually engages: 16 MB fills long before the entry count when
+        events carry content, so a count-only view reports headroom on a
+        buffer that is already full (production, 2026-11-23: 86,919 of an
+        advertised 200,000 entries, refused).
+        """
+        if not self._audit_backpressure:
+            return False
+        return (len(self._events) >= self._event_max_pending
+                or self._event_bytes >= self._event_max_bytes)
+
+    @_archive_locked
+    def audit_capacity(self):
+        """Count and byte utilization of the event buffer, for reporting."""
+        return {
+            "pending": len(self._events),
+            "pending_max": self._event_max_pending,
+            "bytes": self._event_bytes,
+            "bytes_max": self._event_max_bytes,
+        }
+
+    @_archive_locked
     def transfer_events(self, accept, limit=1000):
         """Remove only the durably accepted prefix; failures retain the source.
 

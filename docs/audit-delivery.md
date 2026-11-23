@@ -19,13 +19,24 @@ this is the policy:
 - admission is observable from outside: `/ready` evaluates the gate and returns 503 when the
   instance is refusing signals, and `/health` reports the same state in its `admission` block
   without failing. Keep readiness on `/ready` and liveness on `/health`; serving both from
-  `/health` is what allowed a fully blocked instance to report `ok` and stay Ready.
+  `/health` is what allowed a fully blocked instance to report `ok` and stay Ready;
+- the gate has two halves and `/ready` must name both. A pending completion blocks admission, and
+  so does a memory-event buffer that cannot queue another event: `process()` answers
+  `memory_audit_backpressure` in that case with no completion pending at all. The buffer's byte
+  budget (16 MB, fixed) engages long before its entry count, so report
+  `memory_audit_source_bytes` against `memory_audit_source_bytes_max` — an entry count alone can
+  show headroom on a full buffer.
 
 Prior behaviour, 2026-11-20T21:27Z to 2026-11-23: this section's constraint was violated in the
 field. With the hosted ledger's read path saturated, both instances held admission closed with no
 bound and `/health` answered `ok` throughout; `cascade-k8s` refused 26,708 of 26,708 signals over
 11.5 h. The bound, the `admission` block and the `/ready` split exist because of that, so do not
 treat a build older than them as satisfying this section.
+
+A second partial violation, 2026-11-23T15:2xZ: both ledger-coupled instances refused 100 % of
+signals with `memory_audit_backpressure` while `/ready` answered 200. The `/ready` split had closed
+the completion half of the gate only; the archive buffer was never consulted. A build must report
+`memory_audit_backpressure` in `blocked_by` before readiness may be trusted on this path.
 
 Set `CASCADE_STATE_FILE` to enable the normal persisted Cascade state. Cascade then creates
 separate SQLite write-ahead spools beside that file: one for decision and promotion receipts, and
@@ -60,6 +71,14 @@ volume; no local path, device identity, or payload is exposed. Of those, `pendin
 `last_success` still names the last delivery that ever succeeded. To measure an outage that spans a
 restart, read `last_success` with `oldest_age` (the age of the oldest undelivered record), not the
 consecutive count.
+
+The LLM counters split differently, and combining them across a restart produces a false ratio.
+`llm_dropped` is persisted; `llm_classified` and `llm_noise` are per process and restart at zero.
+`noise_pct` is derived from the latter two, so after a restart it reports `0.0` even while
+`top_noise_types` still lists the noise that was recorded. `llm_priority_dropped` is a subset of
+`llm_dropped`, not an alternative count. Do not divide a persisted `llm_dropped` by a per-process
+`llm_classified`; use the `llm_signal_outcomes_since_start` block instead, and treat
+`reconciled: false` in that block as disqualifying it for any rate or loss claim.
 
 Capacity rejections are counted transactionally in each SQLite spool and survive process restarts;
 the governed staging gate requires those counters in both audit snapshots with no increase. It

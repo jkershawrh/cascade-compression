@@ -117,6 +117,48 @@ def test_recovery_error_blocks_readiness(harness):
     assert response.json()["admission"]["blocked_by"] == ["classifier_recovery_error"]
 
 
+def test_a_full_audit_byte_budget_is_not_ready(harness):
+    """The archive buffer is a gate too, and its byte bound binds first.
+
+    cascade-k8s and cascade-aap refused 100 % of signals with
+    `memory_audit_backpressure` on 2026-11-23 while /ready answered 200: the
+    archive held 86,919 of an advertised 200,000 entries, so the count looked
+    healthy while the 16 MB byte budget was full. Readiness must ask the
+    condition that process() actually enforces.
+    """
+    b, client = harness
+    archive = b.memory_archive
+    archive._event_bytes = archive._event_max_bytes
+
+    admission = client.get("/ready").json()["admission"]
+    assert admission["open"] is False
+    assert "memory_audit_backpressure" in admission["blocked_by"]
+    assert admission["memory_audit_source_bytes"] == archive._event_max_bytes
+    assert admission["memory_audit_source_bytes_max"] == archive._event_max_bytes
+    # The count still looks like headroom: that is the misleading surface.
+    assert admission["memory_audit_source_pending"] < admission["memory_audit_source_pending_max"]
+
+    # The gate must actually refuse, or this test pins nothing.
+    response = client.post("/cascade", json={"signals": [{
+        "signal_type": "pod_failed", "severity": "high",
+        "source": "k8s", "namespace": "ns", "content": {},
+    }]})
+    assert response.status_code == 503
+    assert response.json()["status"] == "memory_audit_backpressure"
+
+
+def test_a_full_audit_byte_budget_keeps_liveness(harness):
+    """A saturated buffer de-routes the instance; it must not restart it."""
+    b, client = harness
+    b.memory_archive._event_bytes = b.memory_archive._event_max_bytes
+    response = client.get("/health")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["admission"]["open"] is False
+    assert "memory_audit_backpressure" in body["admission"]["blocked_by"]
+
+
 def test_ready_does_not_queue_behind_a_busy_ingest(harness, monkeypatch):
     """A probe must never wait on the lifecycle lock an ingest call holds."""
     b, client = harness

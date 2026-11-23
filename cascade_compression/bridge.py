@@ -651,6 +651,17 @@ class CascadeBridge(LifecycleControls):
                 if not drained:
                     self._flush_memory_events()
                     blocked.append("classification_completion_pending")
+        # The archive buffer is a second gate: process() refuses with
+        # memory_audit_backpressure when a new lifecycle event cannot be
+        # queued, whether or not any completion is pending. Omitting it here
+        # reproduced the original defect from the other side -- cascade-k8s
+        # and cascade-aap refused 100 % of signals on 2026-11-23 while /ready
+        # answered 200, because the advertised entry count still showed
+        # headroom on a full 16 MB byte budget.
+        if (self.memory_archive is not None
+                and self.memory_archive.audit_admission_closed()):
+            blocked.append("memory_audit_backpressure")
+        capacity = self._memory_source_capacity()
         return {
             "open": not blocked,
             "blocked_by": blocked,
@@ -659,6 +670,9 @@ class CascadeBridge(LifecycleControls):
             "classification_ack_pending": len(self._completion_ack),
             "classifier_recovery_error": self._classifier_recovery_error or None,
             "memory_audit_source_pending": self._memory_source_pending(),
+            "memory_audit_source_pending_max": capacity["pending_max"],
+            "memory_audit_source_bytes": capacity["bytes"],
+            "memory_audit_source_bytes_max": capacity["bytes_max"],
             "ledger_memory_pending": self._reported_ledger_memory_pending(),
             "ledger_memory_pending_max": self._ledger_memory_pending_max,
             "ledger_memory_consecutive_failures": (
@@ -2495,6 +2509,16 @@ class CascadeBridge(LifecycleControls):
 
     def _memory_source_pending(self):
         return self.memory_archive.pending_event_count() if self.memory_archive else 0
+
+    def _memory_source_capacity(self):
+        """Event-buffer count and byte bounds, or zeros with no archive.
+
+        The count bound alone is misleading: the byte budget engages first,
+        so readiness reports both.
+        """
+        if not self.memory_archive:
+            return {"pending": 0, "pending_max": 0, "bytes": 0, "bytes_max": 0}
+        return self.memory_archive.audit_capacity()
 
     def _stage_memory_events(self):
         if not self.memory_archive or not self._ledger_url:
