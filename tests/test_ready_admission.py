@@ -274,3 +274,64 @@ def test_the_byte_budget_defaults_to_16_mib(monkeypatch):
     monkeypatch.delenv("CASCADE_MEMORY_EVENT_MAX_BYTES", raising=False)
     archive = MemoryArchive(audit_backpressure=True)
     assert archive.audit_capacity()["bytes_max"] == 16 * 1024 * 1024
+
+
+def test_the_queue_and_readiness_share_one_rule_at_the_count_boundary(harness):
+    """The gate that refuses and the gate that reports must be one rule.
+
+    Three independent readings of this buffer produced three false readiness
+    claims in one week. Pin the boundary from both sides: one entry of room
+    admits and reports open; the last entry admits and reports closed.
+    """
+    b, client = harness
+    archive = b.memory_archive
+    archive._event_max_pending = 10
+    archive._events = [MemoryEvent(UUID(int=0), "formed")] * 9
+
+    assert archive.audit_admission_closed() is False
+    archive._queue_events([MemoryEvent(UUID(int=0), "formed")])
+    assert archive.pending_event_count() == 10
+    assert archive.audit_admission_closed() is True
+    with pytest.raises(Exception) as refused:
+        archive._queue_events([MemoryEvent(UUID(int=0), "formed")])
+    assert "(count)" in str(refused.value)
+
+
+def test_readiness_closes_exactly_when_the_floor_no_longer_fits(harness):
+    """Closed means "one representative event does not fit", and the queue agrees.
+
+    The floor is the mean queued size (the structural minimum when empty), so
+    it can be smaller than a real event: readiness may stay open while a
+    markedly larger payload is refused. That direction is deliberate — the
+    alternative closes readiness one event early on every instance — and the
+    queue is exact about the payload it is handed.
+    """
+    b, client = harness
+    archive = b.memory_archive
+    archive._events = []
+    archive._event_bytes = archive._event_max_bytes - archive._min_event_bytes + 1
+
+    assert archive.audit_admission_closed() is True
+    with pytest.raises(Exception) as refused:
+        archive._queue_events([MemoryEvent(UUID(int=0), "formed")])
+    assert "(bytes)" in str(refused.value)
+
+    archive._events = []
+    archive._event_bytes = archive._event_max_bytes - archive._min_event_bytes
+    assert archive.audit_admission_closed() is False
+
+
+def test_an_oversized_event_is_refused_without_closing_the_buffer(harness):
+    """The payload rule is exact to the queue: it cannot be predicted from capacity."""
+    b, client = harness
+    archive = b.memory_archive
+    payload = "x" * 70_000
+    event = MemoryEvent(UUID(int=0), "formed", details={"payload": payload})
+
+    with pytest.raises(Exception) as refused:
+        archive._queue_events([event])
+    assert "(oversized)" in str(refused.value)
+    # An empty buffer is still reportable as open: readiness describes capacity,
+    # not the size of whatever a caller happens to send.
+    assert archive.audit_admission_closed() is False
+    assert archive.pending_event_count() == 0

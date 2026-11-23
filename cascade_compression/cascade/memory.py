@@ -872,12 +872,34 @@ class MemoryArchive:
         memory.last_modified_at = timestamp
         return event
 
+    def _admission_decision(self, count, total_bytes, oversized=False):
+        """The one rule that decides whether audit events are admitted.
+
+        `_queue_events()` must raise exactly here, and `audit_admission_closed()`
+        must report closed exactly when this refuses a representative event;
+        `/ready` and `/health` then consume that predicate instead of
+        re-deriving it. Three independent readings of this buffer produced
+        three distinct false readiness claims in one week (2026-11-23), so the
+        rule lives in one place and the reason it refused is returned rather
+        than implied.
+        """
+        if not self._audit_backpressure:
+            return True, None
+        if oversized:
+            return False, "oversized"
+        if len(self._events) + count > self._event_max_pending:
+            return False, "count"
+        if self._event_bytes + total_bytes > self._event_max_bytes:
+            return False, "bytes"
+        return True, None
+
     def _queue_events(self, events):
         sizes = [len(json.dumps(e.to_dict(), sort_keys=True).encode()) for e in events]
-        if self._audit_backpressure and (any(size > 65536 for size in sizes)
-                or len(self._events) + len(events) > self._event_max_pending
-                or self._event_bytes + sum(sizes) > self._event_max_bytes):
-            raise MemoryEventBackpressure("memory audit buffer full or event oversized; retry after delivery")
+        admitted, reason = self._admission_decision(
+            len(events), sum(sizes), oversized=any(size > 65536 for size in sizes))
+        if not admitted:
+            raise MemoryEventBackpressure(
+                f"memory audit buffer cannot admit ({reason}); retry after delivery")
         self._events.extend(events)
         self._event_bytes += sum(sizes)
 
@@ -932,13 +954,15 @@ class MemoryArchive:
         event of the bound — the safe direction — and the structural minimum
         alone is not enough: cascade-k8s sat at 149 bytes of headroom against
         a 135-byte minimum while queuing events of ~234 bytes.
+
+        This delegates to `_admission_decision()` with one representative
+        event, so the queue and readiness cannot drift apart again.
         """
         if not self._audit_backpressure:
             return False
-        if len(self._events) >= self._event_max_pending:
-            return True
-        headroom = self._event_max_bytes - self._event_bytes
-        return headroom < self._admission_floor_bytes()
+        admitted, _ = self._admission_decision(
+            1, self._admission_floor_bytes())
+        return not admitted
 
     def _admission_floor_bytes(self):
         if not self._events:

@@ -35,7 +35,11 @@ this is the policy:
   live one (`count` or `bytes`), so "which setting shuts this instance?" is answered by the payload
   rather than by arithmetic. For any given instance one of the two caps is usually out of reach:
   `cascade-memory` at 19,714 of 20,000 entries held 3.6 MB of its 16 MiB, so its count was binding
-  and its byte budget was ~4.6x away.
+  and its byte budget was ~4.6x away. The queue and readiness evaluate one rule —
+  `audit_admission_closed()` asks the same decision `_queue_events()` enforces — so they cannot drift
+  apart again. The one intentional asymmetry: a single event over 64 KiB is refused regardless of
+  capacity, which `/ready` does not try to predict, because it would have to close for an unbounded
+  payload shape.
 
 Prior behaviour, 2026-11-20T21:27Z to 2026-11-23: this section's constraint was violated in the
 field. With the hosted ledger's read path saturated, both instances held admission closed with no
