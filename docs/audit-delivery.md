@@ -38,8 +38,14 @@ treat a build older than them as satisfying this section.
 
 A second partial violation, 2026-11-23T15:2xZ: both ledger-coupled instances refused 100 % of
 signals with `memory_audit_backpressure` while `/ready` answered 200. The `/ready` split had closed
-the completion half of the gate only; the archive buffer was never consulted. A build must report
-`memory_audit_backpressure` in `blocked_by` before readiness may be trusted on this path.
+the completion half of the gate only; the archive buffer was never consulted.
+
+A third, 2026-11-23T15:52Z: commit `fd981bb` consulted the archive, but compared `bytes >=
+bytes_max`, which cannot fire because the queue rejects the event that would *exceed* the budget.
+Both instances sat 54 and 149 bytes under a 16 MB cap and still reported `blocked_by: []`. Do not
+treat `blocked_by: []` beside a nearly full buffer as evidence of readiness: check that the build
+closes on headroom against an event-sized floor, and that `memory_audit_source_headroom_bytes` is
+reported at all.
 
 Set `CASCADE_STATE_FILE` to enable the normal persisted Cascade state. Cascade then creates
 separate SQLite write-ahead spools beside that file: one for decision and promotion receipts, and
