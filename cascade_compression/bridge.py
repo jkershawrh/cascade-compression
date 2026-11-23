@@ -3311,10 +3311,14 @@ class CascadeBridge(LifecycleControls):
                 baseline.get('enqueued', 0) - baseline.get('dispatched', 0)
                 - baseline.get('dropped', 0),
             )
-            inherited = bool(baseline) and (
-                any(baseline.values())
-                or self._llm_accounting_restored_resolutions > 0
+            inherited_work = (
+                inherited_pending + inherited_open
+                + self._llm_accounting_restored_resolutions
             )
+            # Only open inherited work makes the two horizons inseparable. A
+            # closed restored ledger (everything dispatched and resolved)
+            # still leaves this process's flow accountable on its own.
+            inherited = inherited_work > 0
             process_accounted = (
                 queued + in_flight + process['succeeded']
                 + process['failed'] + process['dropped']
@@ -3355,8 +3359,7 @@ class CascadeBridge(LifecycleControls):
                     "classified": process['succeeded'],
                     "failed": process['failed'],
                     "dropped": process['dropped'],
-                    "inherited_work": inherited_pending + inherited_open
-                    + self._llm_accounting_restored_resolutions,
+                    "inherited_work": inherited_work,
                     "reconciliation": (
                         "inherited_work" if inherited else "own_work"
                     ),

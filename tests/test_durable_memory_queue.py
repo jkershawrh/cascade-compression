@@ -363,6 +363,29 @@ class TestOutcomeHorizons:
         finally:
             again.close()
 
+    def test_closed_inherited_ledger_leaves_the_process_view_reconciled(
+            self, durable_env):
+        """A fully resolved restored ledger does not taint this process."""
+        seed = CascadeBridge()
+        try:
+            seed._llm_accounting_enqueued = 5
+            seed._llm_accounting_dispatched = 5
+            seed._llm_accounting_failed = 5
+            assert seed._save_state()
+        finally:
+            seed.close()
+
+        again = CascadeBridge()
+        try:
+            block = again.get_stats()["llm_signal_outcomes_since_start"]
+            assert block["reconciled"] is True
+            assert block["unattributed"] == 0
+            assert block["process"]["inherited_work"] == 0
+            assert block["process"]["reconciliation"] == "own_work"
+            assert block["process"]["reconciled"] is True
+        finally:
+            again.close()
+
 
 class TestDropAndExpiry:
     def test_backpressure_drop_removes_spool_rows(self, durable_env, monkeypatch):
