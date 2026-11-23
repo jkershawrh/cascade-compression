@@ -3758,8 +3758,8 @@ class CascadeBridge(LifecycleControls):
             "important": self.stats.llm_important,
             # `max(1, classified)` used to turn an empty denominator into a
             # perfect 0.0 % score. No observations is an unknown ratio, not a
-            # good one, and after a restart this process has observed nothing
-            # even though `top_noise_types` still lists the restored counts.
+            # good one: `llm_noise_counts` is restored from the checkpoint while
+            # `stats.llm_noise`/`stats.llm_classified` are not.
             "noise_pct": (
                 round(self.stats.llm_noise / classified * 100, 1)
                 if classified else None
@@ -3770,7 +3770,10 @@ class CascadeBridge(LifecycleControls):
                 "noise_count": v,
                 "activated": k in self._activated_types,
             } for k, v in top_noise],
-            "top_noise_types_scope": "restored_checkpoint",
+            # These counts are the checkpoint's, then this process's: the dict is
+            # restored and every new noise verdict increments it. So the list
+            # spans both horizons and still cannot be divided by `classified`.
+            "top_noise_types_scope": "restored_checkpoint_plus_process",
             "activated_types": list(self._activated_types),
             "activated_contexts": {k: sorted(v) for k, v in self._activated_contexts.items()},
             "contextual_suppressor_count": sum(len(v) for v in self._activated_contexts.values()),

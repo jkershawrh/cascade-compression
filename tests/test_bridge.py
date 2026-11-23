@@ -159,7 +159,7 @@ class TestBridgeStats:
         # reported a perfect 0.0 %, which a dashboard then displayed as good.
         assert summary["noise_pct"] is None
         assert summary["counters_since"] == bridge.stats.started_at
-        assert summary["top_noise_types_scope"] == "restored_checkpoint"
+        assert summary["top_noise_types_scope"] == "restored_checkpoint_plus_process"
 
     def test_restored_noise_types_do_not_fabricate_a_ratio(self):
         """The 2026-11-23 symptom: restored counts beside per-process zeros."""
@@ -169,6 +169,18 @@ class TestBridgeStats:
         assert summary["top_noise_types"][0]["noise_count"] == 35041
         assert summary["classified"] == 0
         assert summary["noise_pct"] is None
+
+    def test_noise_type_counts_span_both_horizons(self):
+        """The list is restored, then incremented — the scope label says so."""
+        bridge = CascadeBridge()
+        bridge._llm_noise_counts["pool_low"] = 35041
+        bridge.stats.llm_classified = 2
+        bridge.stats.llm_noise = 1
+        bridge._llm_noise_counts["pool_low"] += 1
+        summary = bridge.get_llm_summary()
+        assert summary["top_noise_types"][0]["noise_count"] == 35042
+        assert summary["noise_pct"] == 50.0
+        assert summary["top_noise_types_scope"] == "restored_checkpoint_plus_process"
 
     def test_noise_pct_uses_this_processes_observations(self):
         bridge = CascadeBridge()
