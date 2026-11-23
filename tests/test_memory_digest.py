@@ -273,17 +273,21 @@ def test_federated_import_persists_aggregate_state(monkeypatch):
             return 2
 
     class Bridge:
-        saved = False
+        flushed = False
 
-        def save_state(self):
-            self.saved = True
+        # The endpoint must do both halves: checkpoint the imported archive and
+        # hand its events to the ledger. On an aggregator this endpoint is the
+        # workload, so waiting for the maintenance tick would be a delay on the
+        # only path that drains it.
+        def flush_memory_events(self):
+            self.flushed = True
 
     bridge = Bridge()
     monkeypatch.setattr(service, "_memory_archive", Archive())
     monkeypatch.setattr(service, "_bridge", bridge)
 
     assert service.memory_import({"instance_id": "source", "memories": []}) == {"imported": 2}
-    assert bridge.saved is True
+    assert bridge.flushed is True
 
 
 # ---------------------------------------------------------------------------
