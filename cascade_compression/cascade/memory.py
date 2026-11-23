@@ -417,7 +417,14 @@ class MemoryArchive:
         import os as _os
         self._event_max_pending = max(
             1000, int(_os.getenv("CASCADE_MEMORY_EVENT_MAX_PENDING", "20000")))
-        self._event_max_bytes = 16 * 1024 * 1024
+        # The byte budget is the cap that binds on content-carrying events:
+        # measured live on 2026-11-23, cascade-k8s sat at 16,777,067 of
+        # 16,777,216 bytes while its advertised 100,000-entry cap was ~1.4x
+        # out of reach, and cascade-aap at 86,919 of 200,000 (~2.3x out of
+        # reach). It used to be a constant, which meant the binding limit on
+        # the failing instances could not be tuned at all.
+        self._event_max_bytes = max(1024, int(_os.getenv(
+            "CASCADE_MEMORY_EVENT_MAX_BYTES", str(16 * 1024 * 1024))))
         # Smallest event this archive can serialise, used as the admission
         # floor: _queue_events() rejects whatever would exceed the byte
         # budget, so a saturated buffer sits just below it and a "bytes >=
@@ -938,6 +945,23 @@ class MemoryArchive:
             return self._min_event_bytes
         return max(self._min_event_bytes, self._event_bytes // len(self._events))
 
+    def _binding_limit(self):
+        """The cap that admits the fewest further events: "count" or "bytes".
+
+        Two caps guard one buffer, and for any given instance one of them is
+        usually out of reach. Measured 2026-11-23: cascade-k8s held 71,594 of
+        100,000 entries at 16,777,067 of 16,777,216 bytes, so bytes were
+        binding and the entry count was unreachable; cascade-memory held
+        19,714 of 20,000 entries at 3.6 MB of 16 MiB, so count was binding and
+        the byte budget was ~4.6x out of reach. Reporting the binding cap
+        turns "which knob shuts me?" into a question the payload answers.
+        """
+        count_room = max(0, self._event_max_pending - len(self._events))
+        floor = max(1, self._admission_floor_bytes())
+        byte_room = max(
+            0, (self._event_max_bytes - self._event_bytes) // floor)
+        return "count" if count_room <= byte_room else "bytes"
+
     @_archive_locked
     def audit_capacity(self):
         """Count and byte utilization of the event buffer, for reporting."""
@@ -948,6 +972,7 @@ class MemoryArchive:
             "bytes_max": self._event_max_bytes,
             "headroom_bytes": max(0, self._event_max_bytes - self._event_bytes),
             "admission_floor_bytes": self._admission_floor_bytes(),
+            "binding_limit": self._binding_limit(),
         }
 
     @_archive_locked

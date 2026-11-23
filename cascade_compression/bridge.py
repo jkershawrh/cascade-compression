@@ -686,6 +686,7 @@ class CascadeBridge(LifecycleControls):
             "memory_audit_source_bytes_max": capacity["bytes_max"],
             "memory_audit_source_headroom_bytes": capacity["headroom_bytes"],
             "memory_audit_admission_floor_bytes": capacity["admission_floor_bytes"],
+            "memory_audit_binding_limit": capacity.get("binding_limit"),
             "ledger_memory_pending": self._reported_ledger_memory_pending(),
             "ledger_memory_pending_max": self._ledger_memory_pending_max,
             "ledger_memory_consecutive_failures": (
@@ -2531,7 +2532,8 @@ class CascadeBridge(LifecycleControls):
         """
         if not self.memory_archive:
             return {"pending": 0, "pending_max": 0, "bytes": 0, "bytes_max": 0,
-                    "headroom_bytes": 0, "admission_floor_bytes": 0}
+                    "headroom_bytes": 0, "admission_floor_bytes": 0,
+                    "binding_limit": None}
         return self.memory_archive.audit_capacity()
 
     def _stage_memory_events(self):

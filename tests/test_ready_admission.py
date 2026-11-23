@@ -15,7 +15,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from cascade_compression.bridge import CascadeBridge
-from cascade_compression.cascade.memory import MemoryEvent
+from cascade_compression.cascade.memory import MemoryArchive, MemoryEvent
 import cascade_compression.classification_completion as completion
 import cascade_compression.service as service
 
@@ -225,3 +225,52 @@ def test_ready_does_not_queue_behind_a_busy_ingest(harness, monkeypatch):
     assert response.status_code == 503
     assert response.json()["admission"]["blocked_by"] == ["lifecycle_busy"]
     assert elapsed < 2.0
+
+
+def test_binding_limit_names_the_byte_cap_on_the_measured_k8s_geometry(harness):
+    """Two caps guard one buffer; say which one is actually refusing.
+
+    cascade-k8s held 71,594 of an advertised 100,000 entries at 16,777,067 of
+    16,777,216 bytes. The entry cap needed ~23.4 MB, so it was unreachable and
+    no amount of raising `CASCADE_MEMORY_EVENT_MAX_PENDING` would have moved
+    the gate. Reporting the binding cap makes that answerable from the payload.
+    """
+    b, client = harness
+    archive = b.memory_archive
+    archive._events = [MemoryEvent(UUID(int=0), "formed")] * 71594
+    archive._event_max_pending = 100000
+    archive._event_bytes = archive._event_max_bytes - 149
+
+    admission = client.get("/ready").json()["admission"]
+    assert admission["memory_audit_binding_limit"] == "bytes"
+    assert admission["memory_audit_source_pending"] < admission["memory_audit_source_pending_max"]
+
+
+def test_binding_limit_names_the_count_cap_when_bytes_are_out_of_reach(harness):
+    """The inverse geometry: cascade-memory at 19,714 of 20,000, 3.6 MB of 16 MiB.
+
+    Here the count binds and the byte budget is ~4.6x away, so the same code
+    reports the opposite binding cap on a healthy instance.
+    """
+    b, client = harness
+    archive = b.memory_archive
+    archive._events = [MemoryEvent(UUID(int=0), "formed")] * 19714
+    archive._event_max_pending = 20000
+    archive._event_bytes = 3572687
+
+    admission = client.get("/ready").json()["admission"]
+    assert admission["memory_audit_binding_limit"] == "count"
+    assert admission["open"] is True
+
+
+def test_the_byte_budget_is_configurable(monkeypatch):
+    """The cap that binds on the failing instances used to be a constant."""
+    monkeypatch.setenv("CASCADE_MEMORY_EVENT_MAX_BYTES", str(1024 * 1024))
+    archive = MemoryArchive(audit_backpressure=True)
+    assert archive.audit_capacity()["bytes_max"] == 1024 * 1024
+
+
+def test_the_byte_budget_defaults_to_16_mib(monkeypatch):
+    monkeypatch.delenv("CASCADE_MEMORY_EVENT_MAX_BYTES", raising=False)
+    archive = MemoryArchive(audit_backpressure=True)
+    assert archive.audit_capacity()["bytes_max"] == 16 * 1024 * 1024
