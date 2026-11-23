@@ -93,12 +93,15 @@ restart, read `last_success` with `oldest_age` (the age of the oldest undelivere
 consecutive count.
 
 The LLM counters split differently, and combining them across a restart produces a false ratio.
-`llm_dropped` is persisted; `llm_classified` and `llm_noise` are per process and restart at zero.
-`noise_pct` is derived from the latter two, so after a restart it reports `0.0` even while
-`top_noise_types` still lists the noise that was recorded. `llm_priority_dropped` is a subset of
-`llm_dropped`, not an alternative count. Do not divide a persisted `llm_dropped` by a per-process
-`llm_classified`; use the `llm_signal_outcomes_since_start` block instead, and treat
-`reconciled: false` in that block as disqualifying it for any rate or loss claim.
+`llm_dropped` is persisted; `llm_classified`, `llm_noise` and `llm_important` are per process and
+restart at zero. `noise_pct` is derived from the first two and is reported as `null`, **not `0.0`**,
+when this process has observed nothing: an empty denominator is no measurement, not a perfect score.
+`top_noise_types` is restored from the checkpoint, so read it with `top_noise_types_scope`
+(`restored_checkpoint`) and compare it with `counters_since` (this process), never with `noise_pct`.
+`llm_priority_dropped` is a subset of `llm_dropped`, not an alternative count. Do not divide a
+persisted `llm_dropped` by a per-process `llm_classified`; use the
+`llm_signal_outcomes_since_start` block instead, and treat `reconciled: false` in that block as
+disqualifying it for any rate or loss claim.
 
 That block is not per process either. Its five counters are restored from the classifier-work
 checkpoint, so its `started_at` (per process) and its counters (per instance) have different

@@ -488,7 +488,10 @@ async function fetchStats() {
 
     if (d.llm) {
       document.getElementById('llm-classified').textContent = fmt(d.llm.classified || 0);
-      document.getElementById('llm-sub').textContent = (d.llm.noise_pct || 0) + '% noise';
+      const noisePct = d.llm.noise_pct;
+      document.getElementById('llm-sub').textContent = noisePct == null
+        ? 'noise not measured yet'
+        : noisePct + '% noise';
 
       const list = document.getElementById('agent-list');
       const types = d.llm.top_noise_types || [];

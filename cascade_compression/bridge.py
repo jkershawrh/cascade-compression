@@ -3751,16 +3751,26 @@ class CascadeBridge(LifecycleControls):
 
     def get_llm_summary(self) -> Dict:
         top_noise = sorted(self._llm_noise_counts.items(), key=lambda x: -x[1])[:10]
+        classified = self.stats.llm_classified
         return {
-            "classified": self.stats.llm_classified,
+            "classified": classified,
             "noise": self.stats.llm_noise,
             "important": self.stats.llm_important,
-            "noise_pct": round(self.stats.llm_noise / max(1, self.stats.llm_classified) * 100, 1),
+            # `max(1, classified)` used to turn an empty denominator into a
+            # perfect 0.0 % score. No observations is an unknown ratio, not a
+            # good one, and after a restart this process has observed nothing
+            # even though `top_noise_types` still lists the restored counts.
+            "noise_pct": (
+                round(self.stats.llm_noise / classified * 100, 1)
+                if classified else None
+            ),
+            "counters_since": self.stats.started_at or None,
             "top_noise_types": [{
                 "signal_type": k,
                 "noise_count": v,
                 "activated": k in self._activated_types,
             } for k, v in top_noise],
+            "top_noise_types_scope": "restored_checkpoint",
             "activated_types": list(self._activated_types),
             "activated_contexts": {k: sorted(v) for k, v in self._activated_contexts.items()},
             "contextual_suppressor_count": sum(len(v) for v in self._activated_contexts.values()),
