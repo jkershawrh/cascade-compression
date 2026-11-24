@@ -197,6 +197,7 @@ def resume(bridge, shed=False):
     """
     with bridge._lifecycle_lock:
         if bridge._classifier_recovery_error or not acknowledge(bridge):
+            _note_drain(bridge, False, "acknowledge")
             return False
         for work_id in list(bridge._completion_pending):
             if apply(bridge, work_id):
@@ -206,8 +207,20 @@ def resume(bridge, shed=False):
             # counter names a failure that actually happened in this pass
             # rather than one inferred from a clock reading.
             if not shed or not shed_expired(bridge, work_id):
+                _note_drain(bridge, False, "apply")
                 return False
+        _note_drain(bridge, True)
         return True
+
+
+def _note_drain(bridge, ok, reason=""):
+    """Tell the gate what this attempt found, if the bridge keeps a gate.
+
+    Readiness reads that verdict instead of attempting a drain of its own.
+    """
+    note = getattr(bridge, "note_completion_drain", None)
+    if note is not None:
+        note(ok, reason)
 
 
 def shed_expired(bridge, work_id):

@@ -512,6 +512,20 @@ class CascadeBridge(LifecycleControls):
         self._executing_work_ids = set()
         self._completion_pending = {}
         self._completion_ack = set()
+        # The verdict of the last real drain, and the member set it was
+        # computed over. Readiness reads it; only completion.resume() writes
+        # it. Keeping the members means a verdict cannot outlive the work it
+        # was about: queue anything new and the gate is unknown again until a
+        # drain has actually seen it.
+        self._completion_gate: Dict = {"verdict": "unknown", "at": None,
+                                       "reason": "", "members": frozenset()}
+        self._completion_timer_lock = threading.Lock()
+        self._completion_timer = None
+        # Short on purpose: a pending set is normally committed in
+        # milliseconds, and an instance with no ingest path has nothing else to
+        # start the clock. Readiness may start this clock; it never does the
+        # work, so it can neither block on the lifecycle lock nor shed.
+        self._completion_drain_interval = 2.0
         self._classifier_recovery_error = ""
         self._ledger_memory_handoff_failures = 0
         self._ledger_memory_handoff_healthy = True
@@ -647,17 +661,27 @@ class CascadeBridge(LifecycleControls):
         """Describe the ingest gate that process() enforces.
 
         Readiness has to agree with the gate, so this mirrors the refusal
-        conditions below rather than approximating them. A pending
-        completion set is only a refusal when resume() cannot commit it, so
-        with probe=True this asks exactly what process() asks. The lifecycle
-        lock is taken without blocking, so a readiness probe can never queue
-        behind an ingest call that is itself waiting on the ledger: a busy
-        instance is reported busy, not timed out.
+        conditions below rather than approximating them. It is a *read* on
+        every path: it takes no lock and commits nothing. It may arm a clock
+        for the drain those paths own (see ``_start_completion_drain_timer``),
+        which is the difference between asking for work and doing it.
 
-        probe=False is the side-effect-free form for /health, where an
-        unprobed pending set is still reported as blocking -- the gate does
-        refuse until it drains, so that direction cannot overstate
-        readiness.
+        It used to do both, and the shape of that mistake is worth keeping:
+        with a pending completion set the probe called completion.resume()
+        under a non-blocking `_lifecycle_lock`, so a probe landing inside
+        process()'s checkpoint answered `503 lifecycle_busy`. process() never
+        makes that refusal -- it waits for the lock -- so readiness was
+        reporting a state the gate does not have, and the platform withdrew a
+        serving endpoint because it had won the race. Measured on cascade-aap:
+        91 % of 4 Hz samples, ~10 min with no endpoints. Draining in a probe
+        was the same error from the other side: past the age bound resume()
+        discards work and deletes its durable marker, so the kubelet could
+        have resolved evidence away.
+
+        A pending set is therefore judged by the verdict of the last *real*
+        drain, recorded in ``_completion_gate`` by resume() and bound to the
+        member set it was computed over. An unattempted or stale set is
+        reported blocking, so this direction never overstates readiness.
         """
         blocked: list = []
         if not self.enabled:
@@ -668,18 +692,12 @@ class CascadeBridge(LifecycleControls):
                 and not self._state_file):
             blocked.append("memory_snapshot_required")
         elif self._completion_pending or self._completion_ack:
-            if not probe:
+            if not self._completion_gate_open():
                 blocked.append("classification_completion_pending")
-            elif not self._lifecycle_lock.acquire(blocking=False):
-                blocked.append("lifecycle_busy")
-            else:
-                try:
-                    drained = completion.resume(self, shed=True)
-                finally:
-                    self._lifecycle_lock.release()
-                if not drained:
-                    self._flush_memory_events()
-                    blocked.append("classification_completion_pending")
+                # Nothing has attempted this set yet, or the last attempt
+                # failed. Either way somebody has to try, and it is not the
+                # probe: arm the clock that owns the drain.
+                self._start_completion_drain_timer()
         # The archive buffer is a second gate: process() refuses with
         # memory_audit_backpressure when a new lifecycle event cannot be
         # queued, whether or not any completion is pending. Omitting it here
@@ -691,12 +709,18 @@ class CascadeBridge(LifecycleControls):
                 and self.memory_archive.audit_admission_closed()):
             blocked.append("memory_audit_backpressure")
         capacity = self._memory_source_capacity()
+        gate = self._completion_gate
         return {
             "open": not blocked,
             "blocked_by": blocked,
             "probed": bool(probe),
             "classification_completion_pending": len(self._completion_pending),
             "classification_ack_pending": len(self._completion_ack),
+            "classification_completion_gate": (
+                gate["verdict"] if gate["members"] == self._completion_members()
+                else "unknown"),
+            "classification_completion_drain_reason": gate["reason"] or None,
+            "classification_completion_drain_at": gate["at"],
             "classifier_recovery_error": self._classifier_recovery_error or None,
             "memory_audit_source_pending": self._memory_source_pending(),
             "memory_audit_source_pending_max": capacity["pending_max"],
@@ -710,6 +734,79 @@ class CascadeBridge(LifecycleControls):
             "ledger_memory_consecutive_failures": (
                 self._ledger_memory_consecutive_failures),
         }
+
+    def _completion_members(self) -> frozenset:
+        """The work ids a drain verdict is about."""
+        return frozenset(self._completion_pending) | frozenset(self._completion_ack)
+
+    def _completion_gate_open(self) -> bool:
+        """True only when the last drain committed exactly the current set."""
+        gate = self._completion_gate
+        return bool(
+            gate["verdict"] == "open"
+            and gate["members"] == self._completion_members()
+            and not self._classifier_recovery_error
+        )
+
+    def note_completion_drain(self, ok: bool, reason: str = "") -> None:
+        """Record what a real drain attempt found.
+
+        Called by completion.resume() on both exits, so the verdict names a
+        commit that happened rather than one inferred from a clock reading.
+        """
+        self._completion_gate = {
+            "verdict": "open" if ok else "closed",
+            "at": datetime.now(timezone.utc).isoformat(),
+            "reason": "" if ok else reason,
+            "members": self._completion_members(),
+        }
+
+    def _start_completion_drain_timer(self) -> None:
+        """Arm the clock that attempts a pending completion set.
+
+        The drain has to happen somewhere: an instance that only receives
+        federated imports never reaches process(), and a restored pending set
+        would otherwise hold the gate closed with nothing to advance it. It
+        used to happen inside readiness, which made the kubelet an ingest path
+        and put a lock acquisition in front of a serving endpoint. Here the
+        probe only starts a clock; the timer thread calls exactly the drain
+        the ingest path calls, with the same shed bound.
+
+        Idempotent: at most one attempt is in flight. A set that keeps failing
+        is retried by the next reader or by the maintenance tick -- never
+        inside the reader, and never more than once per interval.
+        """
+        if self._closed:
+            return
+        with self._completion_timer_lock:
+            if self._completion_timer is not None:
+                return
+            try:
+                timer = threading.Timer(
+                    max(0.01, float(self._completion_drain_interval)),
+                    self._completion_drain_tick,
+                )
+                timer.daemon = True
+            except RuntimeError as exc:
+                log.warning("Completion drain clock unavailable: %s", exc)
+                return
+            self._completion_timer = timer
+        try:
+            timer.start()
+        except RuntimeError as exc:
+            with self._completion_timer_lock:
+                self._completion_timer = None
+            log.warning("Completion drain clock unavailable: %s", exc)
+
+    def _completion_drain_tick(self) -> None:
+        with self._completion_timer_lock:
+            self._completion_timer = None
+        if self._closed or not (self._completion_pending or self._completion_ack):
+            return
+        try:
+            completion.resume(self, shed=True)
+        except Exception as exc:
+            log.warning("Completion drain failed: %s", exc)
 
     def process(self, signals: list) -> Dict:
         if not self.enabled or not signals:
@@ -2693,6 +2790,18 @@ class CascadeBridge(LifecycleControls):
         if self._closed:
             return
         try:
+            # An instance that only receives federated imports never reaches
+            # process(), and process() is where a pending completion set is
+            # committed. The probe used to cover that gap by draining inside
+            # readiness, which made the kubelet an ingest path and put a
+            # non-blocking lock acquisition in front of a serving endpoint.
+            # The clock owns it instead: same call, same shed bound, on the
+            # same thread that already exists for the idle flush.
+            if self._completion_pending or self._completion_ack:
+                try:
+                    completion.resume(self, shed=True)
+                except Exception as exc:
+                    log.warning("Periodic completion drain failed: %s", exc)
             # Hand the buffer over first. ``_stage_memory_events`` checkpoints
             # the source before it removes a byte, so a tick that hands work off
             # has already made those bytes durable and does not need a second
@@ -3286,6 +3395,7 @@ class CascadeBridge(LifecycleControls):
             (self._ledger_receipt_lock, "_ledger_receipt_retry_timer"),
             (self._ledger_memory_lock, "_ledger_memory_retry_timer"),
             (self._flush_timer_lock, "_flush_timer"),
+            (self._completion_timer_lock, "_completion_timer"),
         ):
             with lock:
                 timer = getattr(self, timer_name)

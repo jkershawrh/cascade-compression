@@ -5,7 +5,15 @@ snapshot, the durable queue and the learning fence but never admission. An
 instance that refused 100 % of signals for 21 h therefore reported ok and
 ready the whole time, so the platform never restarted or de-routed it.
 
-These tests pin the split: /ready asks the gate, /health only reports it.
+These tests pin the split: /ready asks the gate, /health only reports it --
+and both only *read* it. A readiness probe that drains, sheds or adopts the
+lifecycle lock is making work its own, and a probe that reports a held lock as
+a closed gate is reporting a refusal the ingest path does not have.
+
+Measured on the f4d4fe6 fleet, that second error cost cascade-aap 91 % of 4 Hz
+readiness samples and its only endpoint for ~10 minutes: process() blocks on
+_lifecycle_lock across its checkpoint rather than refusing, so a probe landing
+in that window was withdrawn from service for doing its job.
 """
 import threading
 import time
@@ -51,6 +59,7 @@ def test_closed_gate_is_not_ready(harness, monkeypatch):
     b, client = harness
     monkeypatch.setattr(completion, "resume", lambda bridge, shed=False: False)
     b._completion_pending["work-1"] = {}
+    b.note_completion_drain(False, "apply")
     response = client.get("/ready")
     assert response.status_code == 503
     admission = response.json()["admission"]
@@ -58,6 +67,39 @@ def test_closed_gate_is_not_ready(harness, monkeypatch):
     assert admission["blocked_by"] == ["classification_completion_pending"]
     assert admission["classification_completion_pending"] == 1
     assert admission["probed"] is True
+    assert admission["classification_completion_gate"] == "closed"
+
+
+def test_an_unattempted_pending_set_is_blocking(harness):
+    """No drain has run, so nothing has shown the work can be committed.
+
+    The gap between "queued" and "drained" is where the old probe did the
+    draining. Without that, the only honest reading of an unattempted set is
+    closed: this direction must never claim readiness it cannot show.
+    """
+    b, client = harness
+    b._completion_pending["work-1"] = {}
+    admission = client.get("/ready").json()["admission"]
+    assert admission["open"] is False
+    assert admission["classification_completion_gate"] == "unknown"
+
+
+def test_a_successful_drain_opens_the_gate_for_exactly_that_set(harness):
+    """A stale verdict must not cover work queued after it.
+
+    The verdict records the members it was computed over, so the moment new
+    work is queued the old "open" no longer applies and readiness closes until
+    a real drain has seen the new set.
+    """
+    b, client = harness
+    b._completion_pending["work-1"] = {}
+    b.note_completion_drain(True)
+    assert client.get("/ready").status_code == 200
+
+    b._completion_pending["work-2"] = {}
+    admission = client.get("/ready").json()["admission"]
+    assert admission["open"] is False
+    assert admission["classification_completion_gate"] == "unknown"
 
 
 def test_health_stays_live_when_the_gate_is_closed(harness, monkeypatch):
@@ -65,20 +107,82 @@ def test_health_stays_live_when_the_gate_is_closed(harness, monkeypatch):
     b, client = harness
     monkeypatch.setattr(completion, "resume", lambda bridge, shed=False: False)
     b._completion_pending["work-1"] = {}
+    b.note_completion_drain(False, "apply")
     response = client.get("/health")
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
     assert body["admission"]["open"] is False
     assert body["admission"]["blocked_by"] == ["classification_completion_pending"]
+    # One verdict, two routes. /health reported `ready: true` beside
+    # `admission.open: false` on cascade-aap at 22:56Z, after readiness had
+    # been pointed at it; that is the contradiction, not a property of /health.
+    assert body["ready"] is False
 
 
-def test_ready_recovers_without_an_ingest_request(harness, monkeypatch):
-    """The probe may drain the backlog, so a transient pending set cannot
-    strand the instance unready with nothing left to trigger recovery."""
+def test_the_tick_drains_an_idle_instance_and_the_probe_does_not(harness, monkeypatch):
+    """A stranded pending set is cleared by the clock, never by the probe.
+
+    The probe used to call completion.resume() itself, so a transient pending
+    set could not strand an instance with nothing to trigger recovery. That
+    made the kubelet an ingest path: it applied work, took the lifecycle lock,
+    and past the age bound it discarded records and deleted their durable
+    markers. The maintenance tick owns that job instead.
+    """
     b, client = harness
+
+    def drain(bridge, shed=False):
+        bridge._completion_pending.clear()
+        bridge.note_completion_drain(True)
+        return True
+
+    monkeypatch.setattr(completion, "resume", drain)
     b._completion_pending["work-1"] = {}
-    monkeypatch.setattr(completion, "resume", lambda bridge, shed=False: True)
+    assert client.get("/ready").status_code == 503, "unattempted is blocking"
+    b._state_flush_tick()
+    assert client.get("/ready").status_code == 200
+
+
+def test_readiness_does_not_run_the_drain_inline(harness, monkeypatch):
+    """The probe is a read; committing and shedding belong to the drain."""
+    b, client = harness
+    b._completion_drain_interval = 60.0   # keep the armed clock out of this test
+    calls = []
+    monkeypatch.setattr(
+        completion, "resume",
+        lambda bridge, shed=False: calls.append(shed) or True,
+    )
+    b._completion_pending["work-1"] = {}
+    client.get("/ready")
+    client.get("/health")
+    assert calls == []
+    assert list(b._completion_pending) == ["work-1"]
+
+
+def test_the_probe_arms_a_clock_that_drains(harness, monkeypatch):
+    """An idle instance must still recover, without the probe doing the work.
+
+    The old behaviour was the right outcome by the wrong means: readiness
+    called resume() itself, so the backlog cleared but the kubelet was an
+    ingest path and a probe could collide with a checkpoint. The clock gives
+    the same recovery with neither.
+    """
+    b, client = harness
+    b._completion_drain_interval = 0.05
+
+    def drain(bridge, shed=False):
+        bridge._completion_pending.clear()
+        bridge.note_completion_drain(True)
+        return True
+
+    monkeypatch.setattr(completion, "resume", drain)
+    b._completion_pending["work-1"] = {}
+    assert client.get("/ready").status_code == 503
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if client.get("/ready").status_code == 200:
+            break
+        time.sleep(0.05)
     assert client.get("/ready").status_code == 200
 
 
@@ -199,11 +303,23 @@ def test_a_full_audit_byte_budget_keeps_liveness(harness):
     assert "memory_audit_backpressure" in body["admission"]["blocked_by"]
 
 
-def test_ready_does_not_queue_behind_a_busy_ingest(harness, monkeypatch):
-    """A probe must never wait on the lifecycle lock an ingest call holds."""
+def test_a_probe_during_a_checkpoint_is_not_a_refusal(harness):
+    """The flap, pinned: a held lifecycle lock is not a closed gate.
+
+    process() acquires _lifecycle_lock and *waits*; it never refuses because
+    the lock is held. /ready acquired it non-blocking and answered
+    `503 lifecycle_busy` when it lost -- a refusal the ingest path does not
+    have, reported as unreadiness and acted on by withdrawing the endpoint.
+    Measured on cascade-aap: 91 % of 4 Hz samples, roughly ten minutes with no
+    endpoints, 31 of 40 Service calls refused as uncounted ECONNREFUSED.
+    """
     b, client = harness
-    monkeypatch.setattr(completion, "resume", lambda bridge, shed=False: True)
     b._completion_pending["work-1"] = {}
+    # What a real drain records. Guarded so the test still exercises the old
+    # engine as a behavioural red rather than dying on a missing method.
+    note = getattr(b, "note_completion_drain", None)
+    if note is not None:
+        note(True)
     entered = threading.Event()
     release = threading.Event()
 
@@ -219,12 +335,15 @@ def test_ready_does_not_queue_behind_a_busy_ingest(harness, monkeypatch):
         started = time.monotonic()
         response = client.get("/ready")
         elapsed = time.monotonic() - started
+        health = client.get("/health")
     finally:
         release.set()
         thread.join()
-    assert response.status_code == 503
-    assert response.json()["admission"]["blocked_by"] == ["lifecycle_busy"]
-    assert elapsed < 2.0
+    assert elapsed < 2.0, "a probe must not wait on the lock"
+    assert response.status_code == 200
+    assert response.json()["admission"]["blocked_by"] == []
+    assert "lifecycle_busy" not in response.json()["admission"]["blocked_by"]
+    assert health.json()["admission"]["open"] is True
 
 
 def test_binding_limit_names_the_byte_cap_on_the_measured_k8s_geometry(harness):

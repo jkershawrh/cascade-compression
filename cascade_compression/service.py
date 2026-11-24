@@ -233,6 +233,15 @@ def ready():
     stayed Ready for 21 h while refusing 100% of signals. Readiness now asks
     the gate itself; liveness still does not, so a blocked instance is
     de-routed instead of being restarted into the same state.
+
+    The gate is *read*, never advanced. An earlier version drained a pending
+    completion set here so an idle instance could recover without an ingest
+    request; that made the kubelet an ingest path and made a probe landing in
+    process()'s checkpoint answer `503 lifecycle_busy` -- a refusal process()
+    does not make, because it waits for the lock. On cascade-aap that cost
+    91 % of readiness samples and the only endpoint for ~10 minutes. Draining
+    belongs to process() and to the maintenance tick; a probe that only reads
+    cannot collide with a checkpoint or shed evidence.
     """
     if _bridge is None:
         body = {"status": "not_ready", "ready": False,
@@ -287,7 +296,13 @@ def health():
         "status": status,
         "service": "cascade-compression",
         "enabled": enabled,
-        "ready": status == "ok",
+        # The code and `status` carry the liveness contract; `ready` carries
+        # readiness, so it cannot contradict `admission` in the same payload.
+        # It did: cascade-aap answered `ready: true, status: ok` beside
+        # `admission.open: false` at 22:56Z on 2026-11-23, after the platform
+        # had been pointed at this route for readiness. One verdict, two
+        # routes -- /ready decides, /health reports the same answer.
+        "ready": admission["open"] if admission else status == "ok",
         "state_snapshot_healthy": snapshot_healthy,
         "learning_fenced": learning_fence or None,
         "nano_profile": _bridge.nano_profile if _bridge else "",

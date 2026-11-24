@@ -172,5 +172,11 @@ def test_shedding_reopens_admission(bridge, monkeypatch):
     record["retained_at"] = (
         datetime.now(timezone.utc)
         - timedelta(seconds=bridge._completion_pending_max_age + 60)).isoformat()
+    # Readiness only reads. If the probe discarded past the bound, the kubelet
+    # would be resolving evidence away; the drain path owns that.
+    assert bridge.admission_state(probe=True)["open"] is False, (
+        "a probe must not shed")
+    assert record is bridge._completion_pending["work-1"]
+    assert completion.resume(bridge, shed=True) is True
     assert bridge.admission_state(probe=True)["open"] is True
     assert bridge._llm_dropped_audit_unavailable == 1
