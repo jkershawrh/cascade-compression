@@ -84,12 +84,15 @@ def test_an_unattempted_pending_set_is_blocking(harness):
     assert admission["classification_completion_gate"] == "unknown"
 
 
-def test_a_successful_drain_opens_the_gate_for_exactly_that_set(harness):
-    """A stale verdict must not cover work queued after it.
+def test_a_new_completion_does_not_close_the_gate(harness):
+    """A fresh success covers the destination, not only the ids it saw.
 
-    The verdict records the members it was computed over, so the moment new
-    work is queued the old "open" no longer applies and readiness closes until
-    a real drain has seen the new set.
+    cascade-aap 2026-11-24: the classifier landed a result about once a second
+    against a 2 s drain interval, so a member-bound verdict was stale in 355
+    of 361 samples and the kubelet withdrew the endpoint for 3 min 20 s from an
+    instance that was accepting 150 signals/s. process() drains inline and then
+    accepts, so the gate it enforces was open throughout; readiness was
+    reporting a refusal that does not exist. Membership stays reported.
     """
     b, client = harness
     b._completion_pending["work-1"] = {}
@@ -97,9 +100,29 @@ def test_a_successful_drain_opens_the_gate_for_exactly_that_set(harness):
     assert client.get("/ready").status_code == 200
 
     b._completion_pending["work-2"] = {}
+    response = client.get("/ready")
+    assert response.status_code == 200
+    admission = response.json()["admission"]
+    assert admission["open"] is True
+    assert admission["classification_completion_gate"] == "open"
+    assert admission["classification_completion_gate_covered"] is False
+
+
+def test_a_success_older_than_the_bound_stops_counting(harness):
+    """Evidence expires: a success nobody has repeated is not a current fact.
+
+    The drain clock retries every interval while work is pending, so a verdict
+    this old means attempts stopped, and readiness must not lean on it.
+    """
+    b, client = harness
+    b._completion_verdict_max_age = 0.05
+    b._completion_pending["work-1"] = {}
+    b.note_completion_drain(True)
+    assert client.get("/ready").status_code == 200
+    time.sleep(0.1)
     admission = client.get("/ready").json()["admission"]
     assert admission["open"] is False
-    assert admission["classification_completion_gate"] == "unknown"
+    assert admission["blocked_by"] == ["classification_completion_pending"]
 
 
 def test_health_stays_live_when_the_gate_is_closed(harness, monkeypatch):

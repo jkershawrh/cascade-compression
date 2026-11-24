@@ -514,11 +514,21 @@ class CascadeBridge(LifecycleControls):
         self._completion_ack = set()
         # The verdict of the last real drain, and the member set it was
         # computed over. Readiness reads it; only completion.resume() writes
-        # it. Keeping the members means a verdict cannot outlive the work it
-        # was about: queue anything new and the gate is unknown again until a
-        # drain has actually seen it.
+        # it. The verdict describes the *destination*: a drain that committed
+        # proves results can be committed now. Membership is kept for
+        # provenance, not as a precondition -- binding it to the exact ids
+        # made every new arrival invalidate the verdict, and on a classifier
+        # landing a result a second against a 2 s drain interval that is every
+        # arrival, which is a permanently unknown gate on a working instance.
         self._completion_gate: Dict = {"verdict": "unknown", "at": None,
-                                       "reason": "", "members": frozenset()}
+                                       "reason": "", "members": frozenset(),
+                                       "monotonic": None}
+        # How long a successful verdict keeps counting. Three readiness
+        # periods: the drain clock retries every _completion_drain_interval
+        # while work is pending, so a success this old means attempts stopped
+        # happening, and the absence of evidence stops counting as evidence.
+        self._completion_verdict_max_age = max(
+            1.0, float(os.getenv("CASCADE_COMPLETION_VERDICT_MAX_AGE", "30")))
         self._completion_timer_lock = threading.Lock()
         self._completion_timer = None
         # Short on purpose: a pending set is normally committed in
@@ -679,9 +689,20 @@ class CascadeBridge(LifecycleControls):
         have resolved evidence away.
 
         A pending set is therefore judged by the verdict of the last *real*
-        drain, recorded in ``_completion_gate`` by resume() and bound to the
-        member set it was computed over. An unattempted or stale set is
-        reported blocking, so this direction never overstates readiness.
+        drain, recorded in ``_completion_gate`` by resume(). That verdict is
+        about the commit destination -- did a drain just commit results -- and
+        it is not invalidated by a new arrival, because process() does not
+        refuse over one: it drains inline and proceeds. Binding the verdict to
+        the exact member set it was computed over made every new completion
+        reopen the question, and on cascade-aap, where the classifier lands a
+        result roughly once a second against a 2 s drain interval, the gate
+        read closed in 355 of 361 samples on an instance accepting 150
+        signals/s -- the kubelet withdrew the endpoint for 3 min 20 s at
+        16:46:48Z (2026-11-24). That is the same defect in the mirror: a
+        reported refusal the ingest path does not make. What blocks now is a
+        failed attempt, or no attempt at all, or a success older than
+        ``_completion_verdict_max_age`` -- each of which is a state in which
+        nothing has shown the destination still commits.
         """
         blocked: list = []
         if not self.enabled:
@@ -710,15 +731,21 @@ class CascadeBridge(LifecycleControls):
             blocked.append("memory_audit_backpressure")
         capacity = self._memory_source_capacity()
         gate = self._completion_gate
+        gate_age = (None if gate["monotonic"] is None
+                    else round(time.monotonic() - gate["monotonic"], 3))
         return {
             "open": not blocked,
             "blocked_by": blocked,
             "probed": bool(probe),
             "classification_completion_pending": len(self._completion_pending),
             "classification_ack_pending": len(self._completion_ack),
-            "classification_completion_gate": (
-                gate["verdict"] if gate["members"] == self._completion_members()
-                else "unknown"),
+            "classification_completion_gate": gate["verdict"],
+            # Provenance, not a precondition. False beside open admission is
+            # the ordinary state of a working classifier: the destination is
+            # proven and there is work it has not seen yet.
+            "classification_completion_gate_covered": (
+                gate["members"] == self._completion_members()),
+            "classification_completion_gate_age_seconds": gate_age,
             "classification_completion_drain_reason": gate["reason"] or None,
             "classification_completion_drain_at": gate["at"],
             "classifier_recovery_error": self._classifier_recovery_error or None,
@@ -740,13 +767,22 @@ class CascadeBridge(LifecycleControls):
         return frozenset(self._completion_pending) | frozenset(self._completion_ack)
 
     def _completion_gate_open(self) -> bool:
-        """True only when the last drain committed exactly the current set."""
+        """True when a recent real drain showed results can be committed.
+
+        No attempt, a failed attempt, or a success old enough that the clock
+        has stopped retrying are all states in which nothing currently shows
+        the destination works, so they read closed. A new arrival is none of
+        those: it is work the destination has not been asked to commit yet,
+        and process() accepts it after draining inline, so readiness must not
+        refuse on it alone.
+        """
         gate = self._completion_gate
-        return bool(
-            gate["verdict"] == "open"
-            and gate["members"] == self._completion_members()
-            and not self._classifier_recovery_error
-        )
+        if self._classifier_recovery_error or gate["verdict"] != "open":
+            return False
+        if gate["monotonic"] is None:
+            return False
+        return (time.monotonic() - gate["monotonic"]
+                <= self._completion_verdict_max_age)
 
     def note_completion_drain(self, ok: bool, reason: str = "") -> None:
         """Record what a real drain attempt found.
@@ -757,6 +793,7 @@ class CascadeBridge(LifecycleControls):
         self._completion_gate = {
             "verdict": "open" if ok else "closed",
             "at": datetime.now(timezone.utc).isoformat(),
+            "monotonic": time.monotonic(),
             "reason": "" if ok else reason,
             "members": self._completion_members(),
         }
